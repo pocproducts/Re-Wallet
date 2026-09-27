@@ -39,9 +39,14 @@ const idToken = z.string().min(1, 'idToken es requerido');
  * Written by hand rather than with zValidator so the failure path produces the
  * same `{ ok:false, error, message, code }` envelope as everything else instead
  * of Hono's default, and so the parsed value is statically typed at the call
- * site without casting.
+ * site without casting. Exported because `routes/me.ts` needs the identical
+ * behaviour, and two copies of "how a body is rejected" is how one endpoint ends
+ * up answering `http_error` while its neighbours answer `validation_failed`.
  */
-async function readBody<S extends z.ZodTypeAny>(c: Context, schema: S): Promise<z.infer<S>> {
+export async function readBody<S extends z.ZodTypeAny>(
+  c: Context,
+  schema: S,
+): Promise<z.infer<S>> {
   let raw: unknown;
   try {
     raw = await c.req.json();
@@ -68,7 +73,15 @@ const profileBody = z.object({
 /** The handle a name implies. Same rules the client previews, from @bestpath/shared. */
 const suggestTagFor = (first: string, last: string) => suggestTag(`${first} ${last}`);
 
-const toUser = (a: {
+/**
+ * The user projection every endpoint answers with.
+ *
+ * Exported because `routes/me.ts` answers with the SAME shape: the recovery
+ * patch returns the user it just wrote, and a second projection here would be a
+ * second place for the two to drift — a field added to one and forgotten in the
+ * other is how a client ends up reading `undefined` off a successful response.
+ */
+export const toUser = (a: {
   id: string; name: string; firstName: string; lastName: string; tag: string;
   recoveryEmail: string | null; recoveryPhone: string | null;
 }) => ({
