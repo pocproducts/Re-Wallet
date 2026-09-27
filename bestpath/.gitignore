@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+# Cubre .env.bak-*, .env.produccion, cualquier .env.<algo>. El orden importa:
+# la negacion va DESPUES, y un patron sin slash solo matchea el nombre exacto,
+# asi que `.env` no cubria `.env.bak-pre-custodia` — un archivo con la private
+# key de la authorization key de Privy.
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+coverage/
+playwright-report/
+test-results/
+# Local Pi runtime state
+.atl/

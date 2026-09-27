@@ -1,0 +1,5 @@
+# Local Pi runtime state
+.atl/
+
+# Estado local del runtime
+.pi/

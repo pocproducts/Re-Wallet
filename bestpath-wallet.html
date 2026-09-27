@@ -1,0 +1,1887 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0A0A0B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<title>BestPath Wallet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --color-bg-primary:#0A0A0B;--color-bg-secondary:#141416;--color-bg-tertiary:#1C1C1F;
+  --color-text-primary:#F5F5F7;--color-text-secondary:#A1A1A6;--color-text-tertiary:#6E6E73;
+  --color-accent-primary:#5B4DFF;--color-accent-hover:#4A3EE6;--color-accent-soft:rgba(91,77,255,.12);
+  --color-success:#34C759;--color-success-bg:rgba(52,199,89,.12);
+  --color-warning:#FFB020;--color-warning-bg:rgba(255,176,32,.12);
+  --color-error:#FF6B5B;--color-error-bg:rgba(255,107,91,.12);
+  --color-border:rgba(255,255,255,.08);--color-border-strong:rgba(255,255,255,.16);
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;--space-8:32px;--space-12:48px;
+  --radius-sm:8px;--radius-md:12px;--radius-lg:16px;--radius-xl:24px;--radius-full:9999px;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3);--shadow-md:0 4px 12px rgba(0,0,0,.4);--shadow-lg:0 12px 32px rgba(0,0,0,.5);
+  --duration-fast:150ms;--duration-base:250ms;--duration-slow:400ms;
+  --easing-standard:cubic-bezier(.2,0,0,1);--easing-decelerate:cubic-bezier(0,0,0,1);--easing-spring:cubic-bezier(.34,1.56,.64,1);
+  --safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:22px;color:var(--color-text-primary);background:#08080A;-webkit-font-smoothing:antialiased;overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;touch-action:manipulation}
+input,textarea{font:inherit;color:inherit;background:none;border:none;outline:none;width:100%}
+a{color:inherit;text-decoration:none}ul{list-style:none}svg{display:block;flex:none}
+:focus-visible{outline:2px solid var(--color-accent-primary);outline-offset:2px;border-radius:6px}
+
+.device{position:relative;width:100%;height:100dvh;background:var(--color-bg-primary);overflow:hidden;display:flex;flex-direction:column;isolation:isolate}
+@media (min-width:520px){
+  body{display:grid;place-items:center;min-height:100dvh;padding:28px 16px;background:radial-gradient(900px 600px at 50% -10%,rgba(91,77,255,.10),transparent 60%),#08080A}
+  .device{width:390px;height:min(844px,calc(100dvh - 56px));border-radius:46px;box-shadow:0 0 0 11px #131316,0 0 0 12px rgba(255,255,255,.07),0 44px 90px -20px rgba(0,0,0,.85),0 0 90px rgba(91,77,255,.10);--safe-top:46px}
+  .device::before{content:'';position:absolute;top:11px;left:50%;transform:translateX(-50%);width:104px;height:27px;background:#000;border-radius:16px;z-index:200;pointer-events:none}
+}
+.app{position:relative;flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.screens{position:relative;flex:1;min-height:0}
+.layer{position:absolute;inset:0;pointer-events:none;z-index:100;display:flex;flex-direction:column}
+.layer > *{pointer-events:auto}
+.screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;display:flex;flex-direction:column;background:var(--color-bg-primary);will-change:transform,opacity}
+.screen__inner{flex:1;display:flex;flex-direction:column;padding:calc(var(--safe-top) + 8px) var(--space-5) calc(var(--safe-bottom) + 20px);min-height:0}
+.screen.enter-forward{animation:slideInRight var(--duration-slow) var(--easing-decelerate) both}
+.screen.leave-forward{animation:slideOutLeft var(--duration-slow) var(--easing-standard) both}
+.screen.enter-back{animation:slideInLeft var(--duration-slow) var(--easing-decelerate) both}
+.screen.leave-back{animation:slideOutRight var(--duration-slow) var(--easing-standard) both}
+.screen.enter-fade{animation:fadeIn var(--duration-base) var(--easing-standard) both}
+.screen.leave-fade{animation:fadeOut var(--duration-fast) var(--easing-standard) both}
+@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}
+@keyframes slideOutLeft{from{transform:translateX(0);opacity:1}to{transform:translateX(-28%);opacity:0}}
+@keyframes slideInLeft{from{transform:translateX(-28%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes slideOutRight{from{transform:translateX(0)}to{transform:translateX(100%)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes fadeOut{from{opacity:1}to{opacity:0}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+.t-display{font-size:44px;line-height:50px;font-weight:700;letter-spacing:-.02em}
+.t-h1{font-size:28px;line-height:34px;font-weight:700;letter-spacing:-.01em}
+.t-h2{font-size:20px;line-height:26px;font-weight:600;letter-spacing:-.01em}
+.t-h3{font-size:16px;line-height:22px;font-weight:600}
+.t-body{font-size:15px;line-height:22px}.t-body-sm{font-size:14px;line-height:20px}
+.t-caption{font-size:13px;line-height:18px}.t-micro{font-size:11px;line-height:14px;font-weight:500;letter-spacing:.02em}
+.t-secondary{color:var(--color-text-secondary)}.t-tertiary{color:var(--color-text-tertiary)}
+.t-mono{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);font-size:15px;font-weight:600;letter-spacing:-.01em;border-radius:var(--radius-lg);padding:0 var(--space-6);height:48px;position:relative;transition:background var(--duration-fast) var(--easing-standard),transform var(--duration-fast) var(--easing-standard),opacity var(--duration-fast);white-space:nowrap;user-select:none}
+.btn:active:not(:disabled){transform:scale(.97)}
+.btn--lg{height:56px;font-size:15px}.btn--sm{height:36px;font-size:14px;border-radius:var(--radius-md);padding:0 var(--space-4)}
+.btn--block{width:100%}
+.btn--primary{background:var(--color-accent-primary);color:#fff}.btn--primary:hover:not(:disabled){background:var(--color-accent-hover)}
+.btn--secondary{background:var(--color-bg-tertiary);color:var(--color-text-primary);border:1px solid var(--color-border)}.btn--secondary:hover:not(:disabled){background:#232327}
+.btn--ghost{color:var(--color-accent-primary);background:transparent}
+.btn--danger{background:var(--color-error);color:#fff}
+.btn:disabled,.btn[aria-disabled="true"]{opacity:.4;cursor:not-allowed}
+.btn.is-loading{color:transparent !important;pointer-events:none}
+.btn.is-loading::after{content:'';position:absolute;width:16px;height:16px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.link{font-size:14px;color:var(--color-text-secondary);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--color-border-strong);transition:color var(--duration-fast)}
+.link:hover{color:var(--color-text-primary)}
+.icon-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:var(--radius-md);color:var(--color-text-secondary);transition:background var(--duration-fast),color var(--duration-fast)}
+.icon-btn:hover{background:var(--color-bg-tertiary);color:var(--color-text-primary)}
+.icon-btn--sm{width:36px;height:36px}
+.screen-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-2);min-height:44px}
+.screen-head__title{font-size:15px;color:var(--color-text-secondary)}
+
+.field{position:relative;margin-bottom:var(--space-3)}
+.field__input{width:100%;height:56px;padding:22px var(--space-4) 8px;background:var(--color-bg-tertiary);border:1px solid var(--color-border);border-radius:var(--radius-md);font-size:15px;color:var(--color-text-primary);transition:border-color var(--duration-fast),box-shadow var(--duration-fast);appearance:none}
+.field__input::placeholder{color:transparent}
+.field__label{position:absolute;left:var(--space-4);top:50%;transform:translateY(-50%);font-size:15px;color:var(--color-text-tertiary);pointer-events:none;transition:all var(--duration-fast) var(--easing-standard)}
+.field__input:focus{border-color:var(--color-accent-primary);box-shadow:0 0 0 3px rgba(91,77,255,.15)}
+.field__input:focus + .field__label,.field__input:not(:placeholder-shown) + .field__label{top:15px;transform:translateY(0);font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--color-text-secondary)}
+.field__input:focus + .field__label{color:var(--color-accent-primary)}
+.field__helper{font-size:13px;line-height:18px;color:var(--color-text-tertiary);margin-top:6px;padding-left:2px;min-height:18px}
+.field.is-error .field__input{border-color:var(--color-error)}
+.field.is-error .field__input:focus{box-shadow:0 0 0 3px rgba(255,107,91,.15)}
+.field.is-error .field__helper{color:var(--color-error)}
+
+.badge{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 var(--space-3);border-radius:var(--radius-full);font-size:13px;font-weight:500;white-space:nowrap}
+.badge--success{background:var(--color-success-bg);color:var(--color-success)}
+.badge--neutral{background:var(--color-bg-tertiary);color:var(--color-text-secondary)}
+.badge--warning{background:var(--color-warning-bg);color:var(--color-warning)}
+.badge--error{background:var(--color-error-bg);color:var(--color-error)}
+.badge--accent{background:var(--color-accent-soft);color:#8F84FF}
+
+.chip{height:40px;padding:0 var(--space-5);border-radius:var(--radius-full);display:inline-flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;background:var(--color-bg-tertiary);color:var(--color-text-secondary);border:1px solid var(--color-border);transition:all var(--duration-base) var(--easing-spring)}
+.chip[aria-pressed="true"]{background:var(--color-accent-primary);color:#fff;border-color:transparent}
+
+.movement{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) 0;border-bottom:1px solid var(--color-border);cursor:pointer}
+.movement:last-child{border-bottom:none}
+.movement__icon{width:36px;height:36px;border-radius:var(--radius-md);display:grid;place-items:center;flex:none}
+.movement__icon--deposit{background:var(--color-success-bg);color:var(--color-success)}
+.movement__icon--send{background:var(--color-error-bg);color:var(--color-error)}
+.movement__icon--yield{background:var(--color-accent-soft);color:#8F84FF}
+.movement__main{flex:1;min-width:0}
+.movement__title{font-size:15px;font-weight:500;letter-spacing:-.01em}
+.movement__time{font-size:13px;color:var(--color-text-tertiary);margin-top:1px}
+.movement__amount{font-size:15px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+.movement__amount--pos{color:var(--color-success)}
+
+.tabbar{display:grid;grid-template-columns:repeat(3,1fr);padding:var(--space-2) var(--space-2) calc(var(--safe-bottom) + 6px);border-top:1px solid var(--color-border);background:rgba(10,10,11,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.tabbar__item{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;font-size:11px;font-weight:500;letter-spacing:.02em;color:var(--color-text-tertiary);border-radius:var(--radius-md);transition:color var(--duration-fast)}
+.tabbar__item[aria-current="page"]{color:var(--color-accent-primary)}
+.tabbar__item:active{transform:scale(.95)}
+
+.illo{width:120px;height:120px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 50% 40%,rgba(91,77,255,.18),rgba(91,77,255,.02) 70%);border:1px solid rgba(91,77,255,.22);flex:none}
+
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:fadeIn var(--duration-base) var(--easing-standard) both;z-index:110}
+.scrim.closing{animation:fadeOut var(--duration-fast) var(--easing-standard) both}
+.sheet{position:absolute;left:0;right:0;bottom:0;z-index:120;background:var(--color-bg-tertiary);border-radius:var(--radius-xl) var(--radius-xl) 0 0;border-top:1px solid var(--color-border-strong);padding:var(--space-2) var(--space-5) calc(var(--safe-bottom) + var(--space-6));animation:sheetIn var(--duration-slow) var(--easing-decelerate) both;max-height:90%;overflow-y:auto}
+.sheet.closing{animation:sheetOut var(--duration-base) var(--easing-standard) both}
+@keyframes sheetIn{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes sheetOut{from{transform:translateY(0)}to{transform:translateY(100%)}}
+.sheet__handle{width:40px;height:4px;border-radius:2px;background:var(--color-border-strong);margin:0 auto var(--space-4);cursor:grab}
+.sheet__head{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-5)}
+.amount-display{text-align:center;margin-bottom:var(--space-6)}
+.amount-display__value{font-size:40px;line-height:46px;font-weight:700;letter-spacing:-.02em;display:flex;align-items:center;justify-content:center;gap:2px}
+.amount-display__input{width:auto;max-width:220px;text-align:center;font-size:40px;line-height:46px;font-weight:700;letter-spacing:-.02em;color:var(--color-text-primary);caret-color:var(--color-accent-primary);field-sizing:content}
+
+.toast-stack{position:absolute;left:var(--space-4);right:var(--space-4);bottom:calc(var(--safe-bottom) + 84px);z-index:150;display:flex;flex-direction:column;gap:var(--space-2);pointer-events:none}
+.toast{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);background:rgba(28,28,31,.96);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);box-shadow:var(--shadow-lg);font-size:14px;line-height:20px;pointer-events:auto;animation:toastIn var(--duration-base) var(--easing-spring) both}
+.toast.closing{animation:toastOut var(--duration-fast) var(--easing-standard) both}
+@keyframes toastIn{from{opacity:0;transform:translateY(12px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes toastOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(8px)}}
+.toast__dot{width:7px;height:7px;border-radius:50%;flex:none}
+.toast__dot--info{background:var(--color-accent-primary)}
+.toast__dot--success{background:var(--color-success)}
+.toast__dot--warning{background:var(--color-warning)}
+.toast__dot--error{background:var(--color-error)}
+
+.banner{position:absolute;top:0;left:0;right:0;z-index:160;padding:calc(var(--safe-top) + 10px) var(--space-4) 10px;display:flex;align-items:center;gap:var(--space-3);font-size:14px;line-height:20px;animation:bannerIn var(--duration-base) var(--easing-decelerate) both}
+.banner.closing{animation:bannerOut var(--duration-fast) var(--easing-standard) both}
+@keyframes bannerIn{from{transform:translateY(-100%)}to{transform:translateY(0)}}
+@keyframes bannerOut{from{transform:translateY(0)}to{transform:translateY(-100%)}}
+.banner--warning{background:#2A2210;color:var(--color-warning);border-bottom:1px solid rgba(255,176,32,.2)}
+.banner--error{background:#2A1614;color:var(--color-error);border-bottom:1px solid rgba(255,107,91,.2)}
+.banner--info{background:#171533;color:#9C93FF;border-bottom:1px solid rgba(91,77,255,.25)}
+
+.biometric{position:absolute;inset:0;z-index:180;background:rgba(10,10,11,.94);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-6);animation:fadeIn var(--duration-base) var(--easing-standard) both}
+.biometric.closing{animation:fadeOut var(--duration-base) var(--easing-standard) both}
+.face-id{width:96px;height:96px;border-radius:26px;display:grid;place-items:center;border:1.5px solid rgba(91,77,255,.4);background:rgba(91,77,255,.08);color:#8F84FF;animation:facePulse 1.6s var(--easing-standard) infinite}
+.face-id.done{animation:none;border-color:rgba(52,199,89,.5);background:var(--color-success-bg);color:var(--color-success)}
+@keyframes facePulse{0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(91,77,255,.35)}50%{transform:scale(1.04);box-shadow:0 0 0 16px rgba(91,77,255,0)}}
+
+.pulse{position:relative;width:120px;height:120px;display:grid;place-items:center}
+.pulse__ring{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(91,77,255,.5);animation:pulseRing 2s var(--easing-standard) infinite}
+.pulse__ring:nth-child(2){animation-delay:.66s}.pulse__ring:nth-child(3){animation-delay:1.33s}
+@keyframes pulseRing{0%{transform:scale(.45);opacity:.9}100%{transform:scale(1);opacity:0}}
+.pulse__core{width:56px;height:56px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#7A6EFF,#4A3EE6);box-shadow:0 0 40px rgba(91,77,255,.5)}
+.progress{width:200px;height:3px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden;position:relative}
+.progress::after{content:'';position:absolute;top:0;bottom:0;width:42%;border-radius:2px;background:var(--color-accent-primary);animation:indeterminate 1.5s var(--easing-standard) infinite}
+.progress.paused::after{animation-play-state:paused;opacity:.4}
+@keyframes indeterminate{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
+
+.stack{display:flex;flex-direction:column}
+.stack-1{gap:var(--space-1)}.stack-2{gap:var(--space-2)}.stack-3{gap:var(--space-3)}.stack-4{gap:var(--space-4)}.stack-5{gap:var(--space-5)}.stack-6{gap:var(--space-6)}
+.row{display:flex;align-items:center}.row-between{display:flex;align-items:center;justify-content:space-between}
+.grow{flex:1}.text-center{text-align:center}
+.mt-1{margin-top:var(--space-1)}.mt-2{margin-top:var(--space-2)}.mt-3{margin-top:var(--space-3)}.mt-4{margin-top:var(--space-4)}.mt-6{margin-top:var(--space-6)}
+.mb-2{margin-bottom:var(--space-2)}.mb-4{margin-bottom:var(--space-4)}.mb-6{margin-bottom:var(--space-6)}
+.hidden{display:none !important}.divider{height:1px;background:var(--color-border);margin:var(--space-4) 0}
+.dual{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3)}
+
+/* ===== v0.4 — Fase 3 ===== */
+.toggle{position:relative;width:51px;height:31px;border-radius:15.5px;background:var(--color-bg-tertiary);border:1px solid var(--color-border);transition:background var(--duration-base) var(--easing-standard);cursor:pointer;flex:none}
+.toggle[aria-checked="true"]{background:var(--color-accent-primary);border-color:transparent}
+.toggle::after{content:'';position:absolute;top:2px;left:2px;width:25px;height:25px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform var(--duration-base) var(--easing-spring)}
+.toggle[aria-checked="true"]::after{transform:translateX(20px)}
+
+.list-item{display:flex;align-items:center;gap:var(--space-3);padding:14px 0;border-bottom:1px solid var(--color-border);cursor:pointer;transition:background var(--duration-fast);width:100%;text-align:left}
+.list-item:last-child{border-bottom:none}
+.list-item:active{background:var(--color-bg-secondary);margin:0 -12px;padding:14px 12px;border-radius:10px;border-color:transparent}
+.list-item__icon{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:var(--color-bg-tertiary);color:var(--color-text-secondary);flex:none}
+.list-item__main{flex:1;min-width:0}
+.list-item__label{font-size:15px;font-weight:500;letter-spacing:-.01em}
+.list-item__sub{font-size:13px;color:var(--color-text-tertiary);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list-item__value{font-size:14px;color:var(--color-text-secondary);display:flex;align-items:center;gap:6px}
+
+.section-label{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-text-tertiary);margin:var(--space-6) 0 var(--space-2);padding-left:2px}
+.section-label:first-child{margin-top:0}
+
+.segmented{display:grid;grid-template-columns:1fr 1fr;background:var(--color-bg-tertiary);border-radius:var(--radius-md);padding:3px;gap:2px;margin-bottom:var(--space-5)}
+.segmented__btn{height:40px;border-radius:9px;font-size:14px;font-weight:500;color:var(--color-text-secondary);transition:all var(--duration-base) var(--easing-standard)}
+.segmented__btn.is-active{background:var(--color-bg-primary);color:var(--color-text-primary);box-shadow:var(--shadow-sm)}
+.segmented__btn:disabled{opacity:.35;cursor:not-allowed}
+
+.chart{display:flex;align-items:flex-end;gap:8px;height:140px;padding:16px 0;justify-content:space-between}
+.chart__bar{flex:1;background:linear-gradient(180deg,rgba(91,77,255,.65),rgba(91,77,255,.25));border-radius:6px 6px 3px 3px;position:relative;min-height:6px;transition:all var(--duration-base) var(--easing-standard)}
+.chart__bar.is-today{background:linear-gradient(180deg,#7A6EFF,var(--color-accent-primary));box-shadow:0 0 16px rgba(91,77,255,.4)}
+.chart__labels{display:flex;gap:8px;justify-content:space-between;margin-top:var(--space-2)}
+.chart__label{flex:1;text-align:center;font-size:11px;color:var(--color-text-tertiary);font-weight:500}
+.chart__label.is-today{color:var(--color-accent-primary)}
+
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);margin-bottom:var(--space-6)}
+.stat-card{background:var(--color-bg-secondary);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:var(--space-4)}
+.stat-card__label{font-size:12px;color:var(--color-text-tertiary);letter-spacing:.02em;margin-bottom:6px}
+.stat-card__value{font-size:20px;font-weight:700;letter-spacing:-.01em}
+.stat-card__value--accent{color:var(--color-success)}
+
+.qr-frame{display:grid;place-items:center;color:#0A0A0B;background:#fff;border-radius:16px;padding:16px;width:232px;height:232px;margin:0 auto}
+.link-box{background:var(--color-bg-secondary);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:var(--space-4);display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4)}
+.link-box__url{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:13px;color:var(--color-accent-primary);word-break:break-all;flex:1;line-height:18px}
+
+.contact-row{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-2);border-radius:var(--radius-md);cursor:pointer;transition:background var(--duration-fast);width:100%;text-align:left}
+.contact-row:active{background:var(--color-bg-secondary)}
+.contact-avatar{border-radius:50%;display:grid;place-items:center;font-weight:600;color:#fff;flex:none;letter-spacing:-.02em}
+
+.filter-row{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.filter-row::-webkit-scrollbar{display:none}
+.filter-chip{height:34px;padding:0 14px;border-radius:var(--radius-full);font-size:13px;font-weight:500;background:var(--color-bg-tertiary);color:var(--color-text-secondary);border:1px solid var(--color-border);white-space:nowrap;transition:all var(--duration-base) var(--easing-standard)}
+.filter-chip.is-active{background:var(--color-accent-primary);color:#fff;border-color:transparent}
+.date-group{margin-bottom:var(--space-6)}
+.date-group__label{font-size:12px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--color-text-tertiary);margin-bottom:var(--space-2);padding-left:2px}
+.detail-row{display:flex;align-items:center;justify-content:space-between;padding:4px 0;gap:12px}
+
+/* ===== v0.5 — Perfil + fix tabs ===== */
+.profile-header{display:flex;align-items:center;gap:var(--space-4);padding:var(--space-2) 0 var(--space-6)}
+.profile-photo{flex:none}
+.profile-info{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+.profile-name{font-size:22px;font-weight:600;letter-spacing:-.015em;color:var(--color-text-primary);line-height:1.2}
+.profile-tag{font-size:14px;color:var(--color-text-tertiary)}
+
+[data-activity-list]{flex:1;min-height:0}
+[data-recv-pane]{flex:1;min-height:0}
+
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}}
+.screen::-webkit-scrollbar{width:0}
+</style>
+</head>
+<body>
+
+<div class="device" id="device">
+  <div class="app">
+    <div class="screens" id="screens" role="main"></div>
+    <div class="layer" id="layer"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+const BP = window.BP = {};
+
+BP.config = {
+  version: '0.4',
+  storageKey: 'bp_wallet_state_v1',
+  currency: 'USD',
+  locale: 'en-US',
+  minAmount: 1,
+  defaultAmount: 100,
+  processingMinMs: 3200,
+  processingMaxMs: 5200,
+  sendMinMs: 2400,
+  sendMaxMs: 3800,
+  yieldTickMs: 9000,
+  yieldPerTick: [0.008, 0.024],
+  annualYieldRate: 0.042,
+  maxContacts: 20
+};
+
+const U = BP.utils = {
+  money(n){ return new Intl.NumberFormat(BP.config.locale,{style:'currency',currency:BP.config.currency,minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n)||0); },
+  moneyPlain(n){ return new Intl.NumberFormat(BP.config.locale,{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(Number(n)||0)); },
+  timeAgo(ts){
+    const s = Math.max(1, Math.floor((Date.now() - ts)/1000));
+    if (s < 60) return `hace ${s} s`;
+    const m = Math.floor(s/60); if (m < 60) return `hace ${m} min`;
+    const h = Math.floor(m/60); if (h < 24) return `hace ${h} h`;
+    const d = Math.floor(h/24); return `hace ${d} d`;
+  },
+  uid(){ return Math.random().toString(36).slice(2,10); },
+  reducedMotion(){ return window.matchMedia('(prefers-reduced-motion: reduce)').matches; },
+  esc(str){ return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); },
+  isEmail(v){ return /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(String(v).trim()); },
+  isEthAddress(v){ return /^0x[a-fA-F0-9]{40}$/.test(String(v).trim()); },
+  isSolAddress(v){ return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(v).trim()); },
+  isAddress(v){ return U.isEthAddress(v) || U.isSolAddress(v); },
+  haptic(ms = 8){ if (navigator.vibrate){ try{ navigator.vibrate(ms); }catch(e){} } },
+  countUp(el, to, duration = 600, from = 0){
+    if (!el) return;
+    if (U.reducedMotion()){ el.textContent = U.money(to); return; }
+    const start = performance.now(); const delta = to - from;
+    (function frame(now){
+      const t = Math.min(1, (now - start)/duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = U.money(from + delta*eased);
+      if (t < 1) requestAnimationFrame(frame);
+      else el.textContent = U.money(to);
+    })(start);
+  },
+  wait(ms){ return new Promise(r => setTimeout(r, ms)); },
+  rand(min,max){ return Math.random()*(max-min)+min; },
+  initialsFrom(name){ return String(name||'?').split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); },
+  colorFrom(seed){
+    const colors = ['#5B4DFF','#FF6B5B','#34C759','#FFB020','#FF6BAE','#41B5FF','#A56BFF','#FF8F6B'];
+    let h = 0; for (const c of String(seed)) h = (h*31 + c.charCodeAt(0)) | 0;
+    return colors[Math.abs(h) % colors.length];
+  }
+};
+
+const DEFAULT_STATE = {
+  version: BP.config.version,
+  onboardingComplete: false,
+  session: true,
+  userName: 'Ana',
+  bpTag: '@ana',
+  recoveryEmail: '',
+  recoveryPhone: '',
+  balance: 0,
+  movements: [],
+  contacts: [
+    { id:'c1', name:'Carlos Méndez', tag:'@carlos', initials:'CM', color:'#FF6B5B' },
+    { id:'c2', name:'María López',   tag:'@maria',  initials:'ML', color:'#34C759' },
+    { id:'c3', name:'Julián Ruiz',   tag:'@julian', initials:'JR', color:'#FFB020' },
+    { id:'c4', name:'Sofía Chen',    tag:'@sofia',  initials:'SC', color:'#5B4DFF' }
+  ],
+  settings: { biometricEnabled: true, notificationsEnabled: true },
+  yieldStartedAt: null,
+  createdAt: Date.now(),
+  lastYieldAt: Date.now()
+};
+
+const Store = BP.store = {
+  _state: null,
+  _listeners: new Set(),
+  load(){
+    try {
+      const raw = localStorage.getItem(BP.config.storageKey);
+      if (raw){
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.version === '0.2'){
+          this._state = Object.assign({}, DEFAULT_STATE, parsed, { version:'0.4', session:true, settings: DEFAULT_STATE.settings });
+          this.save(); return this._state;
+        }
+        if (parsed && parsed.version === '0.3'){
+          this._state = Object.assign({}, DEFAULT_STATE, parsed, { version:'0.4', session:true, settings: Object.assign({}, DEFAULT_STATE.settings, parsed.settings||{}) });
+          this.save(); return this._state;
+        }
+        if (parsed && parsed.version === BP.config.version){
+          this._state = Object.assign({}, DEFAULT_STATE, parsed, { settings: Object.assign({}, DEFAULT_STATE.settings, parsed.settings||{}) });
+          return this._state;
+        }
+      }
+    } catch(e){ console.warn('[BP] No se pudo leer el estado guardado.', e); }
+    this._state = JSON.parse(JSON.stringify(DEFAULT_STATE));
+    return this._state;
+  },
+  save(){ try { localStorage.setItem(BP.config.storageKey, JSON.stringify(this._state)); } catch(e){ console.warn('[BP] save falló', e); } },
+  get(){ return this._state; },
+  set(patch){ Object.assign(this._state, patch); this.save(); this._emit(); },
+  setSetting(key, value){ this._state.settings[key] = value; this.save(); this._emit(); },
+  reset(){ try { localStorage.removeItem(BP.config.storageKey); }catch(e){} this._state = JSON.parse(JSON.stringify(DEFAULT_STATE)); this.save(); this._emit(); },
+  subscribe(fn){ this._listeners.add(fn); return () => this._listeners.delete(fn); },
+  _emit(){ this._listeners.forEach(fn => { try{ fn(this._state); }catch(e){ console.error(e); } }); }
+};
+
+BP.api = {
+  async addMoney(amount, asset){
+    await U.wait(200);
+    if (!navigator.onLine) return { ok:false, error:'offline' };
+    if (!(amount >= BP.config.minAmount)) return { ok:false, error:'amount' };
+    return { ok:true, amount:Number(amount), asset: asset || 'USDC' };
+  },
+  async sendMoney(amount, recipient){
+    await U.wait(200);
+    if (!navigator.onLine) return { ok:false, error:'offline' };
+    const s = Store.get();
+    if (amount > s.balance) return { ok:false, error:'insufficient' };
+    return { ok:true, amount, recipient };
+  },
+  async accrueYield(){
+    const [min,max] = BP.config.yieldPerTick;
+    return Number(U.rand(min,max).toFixed(4));
+  },
+  async createPaymentRequest(amount, tag){
+    await U.wait(300);
+    const url = `https://bestpath.app/pay/${tag.replace('@','')}/${amount.toFixed(2)}`;
+    return { ok:true, url, id:U.uid(), amount, tag };
+  }
+};
+
+const layer = document.getElementById('layer');
+
+const UI = BP.ui = {
+  toast(message, variant = 'info', duration = 4000){
+    let stack = layer.querySelector('.toast-stack');
+    if (!stack){ stack = document.createElement('div'); stack.className = 'toast-stack'; layer.appendChild(stack); }
+    const el = document.createElement('div');
+    el.className = 'toast'; el.setAttribute('role','status');
+    el.innerHTML = `<span class="toast__dot toast__dot--${variant}"></span><span class="grow">${U.esc(message)}</span>`;
+    stack.appendChild(el);
+    const remove = () => { el.classList.add('closing'); setTimeout(() => { el.remove(); if (!stack.children.length) stack.remove(); }, 200); };
+    const timer = setTimeout(remove, duration);
+    el.addEventListener('click', () => { clearTimeout(timer); remove(); });
+    return remove;
+  },
+  _banner: null,
+  banner(message, variant = 'warning', autoHide = 0){
+    UI.clearBanner();
+    const el = document.createElement('div');
+    el.className = `banner banner--${variant}`; el.setAttribute('role','alert');
+    el.innerHTML = `<span class="grow">${U.esc(message)}</span>`;
+    layer.appendChild(el); UI._banner = el;
+    if (autoHide) setTimeout(() => UI.clearBanner(), autoHide);
+  },
+  clearBanner(){
+    if (!UI._banner) return;
+    const el = UI._banner; UI._banner = null;
+    el.classList.add('closing'); setTimeout(() => el.remove(), 250);
+  },
+  sheet({ title, content, onMount, dismissible = true }){
+    return new Promise(resolve => {
+      const scrim = document.createElement('div'); scrim.className = 'scrim';
+      const sheet = document.createElement('div');
+      sheet.className = 'sheet'; sheet.setAttribute('role','dialog'); sheet.setAttribute('aria-modal','true');
+      sheet.innerHTML = `
+        <div class="sheet__handle"></div>
+        <div class="sheet__head">
+          <h2 class="t-h2">${U.esc(title)}</h2>
+          <button class="icon-btn icon-btn--sm" data-sheet-close aria-label="Cerrar">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="sheet__body">${content}</div>`;
+      layer.appendChild(scrim); layer.appendChild(sheet);
+      const screens = document.getElementById('screens');
+      const prevOverflow = screens.style.overflow;
+      screens.style.overflow = 'hidden';
+      let closed = false;
+      const close = (result) => {
+        if (closed) return; closed = true;
+        scrim.classList.add('closing'); sheet.classList.add('closing');
+        screens.style.overflow = prevOverflow;
+        setTimeout(() => { scrim.remove(); sheet.remove(); resolve(result); }, 260);
+      };
+      scrim.addEventListener('click', () => { if (dismissible) close(null); });
+      sheet.querySelector('[data-sheet-close]').addEventListener('click', () => close(null));
+      const handle = sheet.querySelector('.sheet__handle');
+      let startY = 0, currentY = 0, dragging = false;
+      const onStart = (e) => { if (!dismissible) return; dragging = true; startY = (e.touches ? e.touches[0].clientY : e.clientY); sheet.style.transition = 'none'; };
+      const onMove = (e) => { if (!dragging) return; currentY = (e.touches ? e.touches[0].clientY : e.clientY) - startY; if (currentY > 0) sheet.style.transform = `translateY(${currentY}px)`; };
+      const onEnd = () => { if (!dragging) return; dragging = false; sheet.style.transition = ''; if (currentY > 90) close(null); else sheet.style.transform = ''; currentY = 0; };
+      handle.addEventListener('touchstart', onStart, {passive:true}); handle.addEventListener('touchmove', onMove, {passive:true}); handle.addEventListener('touchend', onEnd);
+      handle.addEventListener('mousedown', onStart); window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onEnd);
+      const focusable = sheet.querySelector('input,button');
+      if (focusable) setTimeout(() => focusable.focus({preventScroll:true}), 320);
+      if (onMount) onMount(sheet, close);
+    });
+  },
+  async biometric(label = 'Face ID'){
+    return new Promise(resolve => {
+      const el = document.createElement('div'); el.className = 'biometric';
+      el.innerHTML = `
+        <div class="face-id" data-face>
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 8V6a2 2 0 0 1 2-2h2M20 8V6a2 2 0 0 0-2-2h-2M4 16v2a2 2 0 0 0 2 2h2M20 16v2a2 2 0 0 1-2 2h-2"/>
+            <path d="M9 10v1.5M15 10v1.5M9.5 15a3.5 3.5 0 0 0 5 0"/>
+          </svg>
+        </div>
+        <div class="text-center">
+          <div class="t-h3" data-label>${U.esc(label)}</div>
+          <div class="t-body-sm t-tertiary mt-1">Verificando…</div>
+        </div>`;
+      layer.appendChild(el);
+      const face = el.querySelector('[data-face]');
+      const lbl  = el.querySelector('[data-label]');
+      const finish = (ok) => {
+        if (ok){
+          face.classList.add('done');
+          face.innerHTML = `<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`;
+          lbl.textContent = 'Listo';
+          el.querySelector('.t-body-sm').textContent = 'Identidad verificada';
+        }
+        setTimeout(() => { el.classList.add('closing'); setTimeout(() => { el.remove(); resolve(ok); }, 260); }, ok ? 420 : 200);
+      };
+      setTimeout(() => finish(true), 1200);
+    });
+  },
+  async confirm({ title, message, confirmLabel = 'Sí', cancelLabel = 'No', danger = false }){
+    return UI.sheet({
+      title,
+      content: `<p class="t-body t-secondary mb-6">${U.esc(message)}</p>
+        <div class="dual">
+          <button class="btn btn--secondary btn--lg" data-confirm="no">${U.esc(cancelLabel)}</button>
+          <button class="btn btn--${danger?'danger':'primary'} btn--lg" data-confirm="yes">${U.esc(confirmLabel)}</button>
+        </div>`,
+      onMount(sheet, close){
+        sheet.querySelectorAll('[data-confirm]').forEach(btn => {
+          btn.addEventListener('click', () => close(btn.dataset.confirm === 'yes'));
+        });
+      }
+    });
+  },
+  qrCode(text, size = 200){
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+    const cells = 25, cellSize = size / cells;
+    let seed = Math.abs(hash) || 1;
+    const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+    let rects = '';
+    const finder = (x, y) => {
+      rects += `<rect x="${x*cellSize}" y="${y*cellSize}" width="${7*cellSize}" height="${7*cellSize}"/>`;
+      rects += `<rect x="${(x+1)*cellSize}" y="${(y+1)*cellSize}" width="${5*cellSize}" height="${5*cellSize}" fill="#fff"/>`;
+      rects += `<rect x="${(x+2)*cellSize}" y="${(y+2)*cellSize}" width="${3*cellSize}" height="${3*cellSize}"/>`;
+    };
+    finder(0,0); finder(cells-7,0); finder(0,cells-7);
+    for (let y = 0; y < cells; y++){
+      for (let x = 0; x < cells; x++){
+        if (x < 8 && y < 8) continue;
+        if (x >= cells-8 && y < 8) continue;
+        if (x < 8 && y >= cells-8) continue;
+        if (rand() > 0.5) rects += `<rect x="${x*cellSize}" y="${y*cellSize}" width="${cellSize}" height="${cellSize}"/>`;
+      }
+    }
+    return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" fill="currentColor">${rects}</svg>`;
+  },
+  haptic: U.haptic
+};
+
+const screensEl = document.getElementById('screens');
+
+const Router = BP.router = {
+  routes: {}, stack: [], current: null, busy: false,
+  register(name, config){ Router.routes[name] = Object.assign({ render: () => '', transition: 'forward', replaceable: false }, config); return Router; },
+  go(name, opts = {}){
+    const route = Router.routes[name];
+    if (!route){ console.warn('[BP] Ruta desconocida:', name); return; }
+    if (Router.busy) return;
+    const transition = opts.transition || route.transition;
+    const replace = opts.replace || route.replaceable;
+    Router.busy = true;
+    const next = document.createElement('section');
+    next.className = 'screen'; next.dataset.screen = name;
+    next.innerHTML = `<div class="screen__inner">${route.render(opts.params || {})}</div>`;
+    const prev = Router.current;
+    if (prev){
+      prev.classList.add(transition === 'forward' ? 'leave-forward' : transition === 'back' ? 'leave-back' : 'leave-fade');
+      const prevEl = prev; setTimeout(() => prevEl.remove(), 420);
+    }
+    next.classList.add(transition === 'forward' ? 'enter-forward' : transition === 'back' ? 'enter-back' : 'enter-fade');
+    screensEl.appendChild(next);
+    if (replace && Router.stack.length) Router.stack[Router.stack.length - 1] = name;
+    else Router.stack.push(name);
+    Router.current = next;
+    next.scrollTop = 0;
+    if (location.hash !== '#/' + name) history.pushState({ screen:name }, '', '#/' + name);
+    if (route.onMount) requestAnimationFrame(() => route.onMount(next, opts.params || {}));
+    setTimeout(() => { Router.busy = false; }, 420);
+    return next;
+  },
+  back(){
+    if (Router.stack.length <= 1) return;
+    Router.stack.pop();
+    const target = Router.stack[Router.stack.length - 1];
+    Router.stack.pop();
+    Router.go(target, { transition:'back' });
+  },
+  replace(name, opts = {}){ Router.go(name, Object.assign({}, opts, { replace:true })); },
+  init(fallback){
+    const fromHash = (location.hash || '').replace('#/','');
+    const start = Router.routes[fromHash] ? fromHash : fallback;
+    Router.go(start, { transition:'fade' });
+    window.addEventListener('popstate', () => {
+      const name = (location.hash || '').replace('#/','');
+      if (!Router.routes[name]) return;
+      if (name === Router.current?.dataset.screen) return;
+      Router.stack.pop(); Router.stack.pop();
+      Router.go(name, { transition:'back' });
+    });
+  }
+};
+
+const Icons = {
+  back: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>`,
+  gear: `<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+  arrowDown: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>`,
+  arrowUp: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`,
+  trend: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l5-5 4 3 7-7"/></svg>`,
+  trendUpSm: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M17 7H9M17 7v8"/></svg>`,
+  home: `<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>`,
+  activity: `<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>`,
+  user: `<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`,
+  wallet: `<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18M7 15h3"/></svg>`,
+  logo: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none"><path d="M4 18L9.5 12.5L13.5 16L20 6" stroke="#7A6EFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20" cy="6" r="2.2" fill="#5B4DFF"/></svg>`,
+  copy: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`,
+  share: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 8l5-5 5 5M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>`,
+  chevronRight: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>`,
+  plus: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
+  trash: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`,
+  shield: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,
+  users: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+  warning: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>`,
+  chart: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 14l3-3 4 4 5-7"/></svg>`,
+  lock: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 1 1 8 0v4"/></svg>`,
+  logout: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>`
+};
+
+function tabbar(active = 'home'){
+  const item = (key, label, icon) => `<button class="tabbar__item" ${active===key?'aria-current="page"':''} data-action="tab" data-tab="${key}">${icon}<span>${label}</span></button>`;
+  return `<nav class="tabbar" aria-label="Navegación principal">
+    ${item('home','Inicio',Icons.home)}
+    ${item('activity','Actividad',Icons.activity)}
+    ${item('account','Cuenta',Icons.user)}
+  </nav>`;
+}
+
+function contactAvatar(contact, size = 40){
+  const c = contact.color || U.colorFrom(contact.tag || contact.name || 'x');
+  const initials = contact.initials || U.initialsFrom(contact.name) || '?';
+  return `<div class="contact-avatar" style="width:${size}px;height:${size}px;background:${c};font-size:${Math.round(size*0.35)}px">${U.esc(initials)}</div>`;
+}
+
+function contactRow(contact, withChevron = true){
+  return `<div class="contact-row" data-contact-id="${contact.id}" role="button" tabindex="0">
+    ${contactAvatar(contact, 40)}
+    <div class="grow" style="min-width:0">
+      <div class="t-body-sm" style="font-weight:500">${U.esc(contact.name)}</div>
+      <div class="t-caption t-tertiary">${U.esc(contact.tag)}</div>
+    </div>
+    ${withChevron ? `<span style="color:var(--color-text-tertiary)">${Icons.chevronRight}</span>` : ''}
+  </div>`;
+}
+
+function movementRow(m){
+  const iconMap = {
+    deposit: { cls:'deposit', svg:Icons.arrowDown },
+    send:    { cls:'send',    svg:Icons.arrowUp },
+    yield:   { cls:'yield',   svg:Icons.trend }
+  };
+  const ic = iconMap[m.type] || iconMap.deposit;
+  const sign = m.amount >= 0 ? '+' : '−';
+  return `<div class="movement" data-movement-id="${m.id}">
+    <div class="movement__icon movement__icon--${ic.cls}">${ic.svg}</div>
+    <div class="movement__main">
+      <div class="movement__title">${U.esc(m.title)}</div>
+      <div class="movement__time" data-time="${m.at}">${U.timeAgo(m.at)}</div>
+    </div>
+    <div class="movement__amount ${m.amount >= 0 ? 'movement__amount--pos' : ''}">
+      ${sign}$${U.moneyPlain(m.amount)}
+    </div>
+  </div>`;
+}
+
+function groupByDate(movements){
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 86400000;
+  const startOfWeek = startOfToday - 7 * 86400000;
+  const buckets = { today: [], yesterday: [], week: [], older: [] };
+  movements.forEach(m => {
+    if (m.at >= startOfToday) buckets.today.push(m);
+    else if (m.at >= startOfYesterday) buckets.yesterday.push(m);
+    else if (m.at >= startOfWeek) buckets.week.push(m);
+    else buckets.older.push(m);
+  });
+  const labels = { today:'Hoy', yesterday:'Ayer', week:'Esta semana', older:'Anteriores' };
+  return Object.keys(buckets).filter(k => buckets[k].length).map(k => ({ label:labels[k], items:buckets[k] }));
+}
+
+/* ---------- Pantalla 1: Bienvenida ---------- */
+Router.register('welcome', {
+  transition:'fade',
+  render(){
+    return `
+      <div class="grow"></div>
+      <div class="text-center" style="animation:fadeUp var(--duration-slow) var(--easing-decelerate) both">
+        <div class="illo" style="width:78px;height:78px;margin:0 auto var(--space-4);border-radius:22px;background:rgba(91,77,255,.10)">${Icons.logo}</div>
+        <div class="t-micro t-tertiary" style="letter-spacing:.16em">BESTPATH</div>
+      </div>
+      <div style="height:var(--space-12)"></div>
+      <div class="text-center" style="animation:fadeUp var(--duration-slow) var(--easing-decelerate) 80ms both">
+        <h1 class="t-h1">Tu dinero,<br>siempre creciendo.</h1>
+        <p class="t-body t-secondary mt-4">Sin frases semilla.<br>Sin comisiones ocultas.</p>
+      </div>
+      <div class="grow" style="flex:1.3"></div>
+      <div class="stack stack-4" style="animation:fadeUp var(--duration-slow) var(--easing-decelerate) 160ms both">
+        <button class="btn btn--primary btn--lg btn--block" data-action="go" data-screen="passkey" data-mode="onboarding">Empezar</button>
+        <div class="text-center">
+          <button class="link" data-action="login">Ya tengo una cuenta</button>
+        </div>
+      </div>`;
+  }
+});
+
+/* ---------- Pantalla 2: Passkey ---------- */
+function detectBiometricLabel(){
+  const ua = navigator.userAgent;
+  if (/Windows/i.test(ua)) return 'Windows Hello';
+  if (/Android/i.test(ua)) return 'huella';
+  return 'Face ID';
+}
+
+Router.register('passkey', {
+  transition:'forward',
+  render(params = {}){
+    const mode = params.mode || 'onboarding';
+    const isLogin = mode === 'login';
+    const platform = detectBiometricLabel();
+
+    if (isLogin){
+      return `
+        <div class="screen-head"><span></span><span></span></div>
+        <div class="grow" style="flex:.6"></div>
+        <div class="text-center">
+          <div class="illo" style="width:110px;height:110px;margin:0 auto">
+            <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#7A6EFF" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 8V6a2 2 0 0 1 2-2h2M20 8V6a2 2 0 0 0-2-2h-2M4 16v2a2 2 0 0 0 2 2h2M20 16v2a2 2 0 0 1-2 2h-2"/>
+              <path d="M9 10v1.5M15 10v1.5M9.5 15a3.5 3.5 0 0 0 5 0"/>
+            </svg>
+          </div>
+          <h1 class="t-h1 mt-6" style="font-size:26px">Hola de nuevo.</h1>
+          <p class="t-body t-secondary mt-3">Verificá tu identidad<br>para volver a entrar.</p>
+        </div>
+        <div class="grow" style="flex:1.4"></div>
+        <div class="stack stack-4">
+          <button class="btn btn--primary btn--lg btn--block" data-action="biometric" data-label="${platform}" data-mode="login">Usar ${platform}</button>
+          <div class="text-center"><button class="link" data-action="biometric" data-label="PIN" data-mode="login">Usar PIN en su lugar</button></div>
+          <div class="text-center mt-2"><button class="link" style="font-size:13px;color:var(--color-text-tertiary)" data-action="switch-account">Usar otra cuenta</button></div>
+        </div>`;
+    }
+
+    return `
+      <div class="screen-head"><button class="icon-btn" data-action="back" aria-label="Volver">${Icons.back}</button><span></span></div>
+      <div class="grow" style="flex:.6"></div>
+      <div class="text-center">
+        <div class="illo" style="width:110px;height:110px;margin:0 auto">
+          <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#7A6EFF" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 8V6a2 2 0 0 1 2-2h2M20 8V6a2 2 0 0 0-2-2h-2M4 16v2a2 2 0 0 0 2 2h2M20 16v2a2 2 0 0 1-2 2h-2"/>
+            <path d="M9 10v1.5M15 10v1.5M9.5 15a3.5 3.5 0 0 0 5 0"/>
+          </svg>
+        </div>
+        <h1 class="t-h1 mt-6" style="font-size:26px">Entra con tu cara<br>o tu huella.</h1>
+        <p class="t-body t-secondary mt-3">Tu dispositivo guarda tu<br>llave. Nosotros no la vemos.</p>
+      </div>
+      <div class="grow" style="flex:1.4"></div>
+      <div class="stack stack-4">
+        <button class="btn btn--primary btn--lg btn--block" data-action="biometric" data-label="${platform}" data-mode="onboarding">Usar ${platform}</button>
+        <div class="text-center"><button class="link" data-action="biometric" data-label="PIN" data-mode="onboarding">Usar PIN en su lugar</button></div>
+      </div>`;
+  }
+});
+
+/* ---------- Pantalla 3: Recuperación ---------- */
+Router.register('recovery', {
+  transition:'forward',
+  render(){
+    return `
+      <div class="screen-head"><button class="icon-btn" data-action="back" aria-label="Volver">${Icons.back}</button><span></span></div>
+      <div class="mt-4">
+        <h1 class="t-h1" style="font-size:26px">Protege tu cuenta</h1>
+        <p class="t-body t-secondary mt-3">Si pierdes tu teléfono, podemos ayudarte a recuperar tu cuenta con esto.</p>
+      </div>
+      <div class="mt-6">
+        <div class="field" data-field="email">
+          <input class="field__input" type="email" id="inp-email" placeholder=" " autocomplete="email" inputmode="email" aria-describedby="help-email">
+          <label class="field__label" for="inp-email">tu@correo.com</label>
+        </div>
+        <div class="field__helper" id="help-email"></div>
+        <div class="field" data-field="phone" style="margin-top:var(--space-4)">
+          <input class="field__input" type="tel" id="inp-phone" placeholder=" " autocomplete="tel" inputmode="tel">
+          <label class="field__label" for="inp-phone">+54 11 0000 0000 · opcional</label>
+        </div>
+        <div class="field__helper"></div>
+      </div>
+      <div class="grow"></div>
+      <div class="stack stack-3">
+        <button class="btn btn--primary btn--lg btn--block" data-action="submit-recovery" disabled>Continuar</button>
+        <p class="t-caption t-tertiary text-center">Puedes cambiarlo después.</p>
+      </div>`;
+  },
+  onMount(root){
+    const emailField = root.querySelector('[data-field="email"]');
+    const emailInput = root.querySelector('#inp-email');
+    const emailHelp  = root.querySelector('#help-email');
+    const submit     = root.querySelector('[data-action="submit-recovery"]');
+    const validate = () => {
+      const email = emailInput.value.trim();
+      const valid = U.isEmail(email);
+      emailField.classList.toggle('is-error', email.length > 0 && !valid);
+      emailHelp.textContent = email.length === 0 ? '' : valid ? '' : 'Revisa este correo.';
+      submit.disabled = !valid || !navigator.onLine;
+      submit.textContent = !navigator.onLine ? 'Sin conexión' : 'Continuar';
+    };
+    emailInput.addEventListener('input', validate);
+    emailInput.addEventListener('blur', validate);
+    validate();
+    setTimeout(() => emailInput.focus({preventScroll:true}), 420);
+  }
+});
+
+/* ---------- Home ---------- */
+let _lastShownBalance = 0;
+
+Router.register('home', {
+  transition:'fade',
+  render(){
+    const s = Store.get();
+    const hasBalance = s.balance > 0;
+    const header = `<div class="screen-head">
+      <span class="screen-head__title">Hola, ${U.esc(s.userName)}</span>
+      <button class="icon-btn icon-btn--sm" data-action="settings" aria-label="Perfil">${Icons.gear}</button>
+    </div>`;
+
+    if (!hasBalance){
+      return `${header}
+        <div class="grow" style="flex:.5"></div>
+        <div class="text-center">
+          <div class="t-display" data-balance>$0.00</div>
+          <p class="t-body-sm t-secondary mt-2">Tu dinero aparecerá aquí.</p>
+        </div>
+        <div class="grow" style="flex:.9"></div>
+        <div class="text-center">
+          <div class="illo" style="width:112px;height:112px;margin:0 auto;background:radial-gradient(circle at 50% 40%,rgba(255,255,255,.05),transparent 70%);border-color:var(--color-border);color:var(--color-text-tertiary)">${Icons.wallet}</div>
+        </div>
+        <div class="grow" style="flex:.9"></div>
+        <button class="btn btn--primary btn--lg btn--block" data-action="open-add">Añadir dinero</button>
+        ${tabbar('home')}`;
+    }
+
+    const movements = s.movements.slice(0, 6);
+    const movementsHTML = movements.length
+      ? movements.map(m => movementRow(m)).join('')
+      : `<div class="text-center t-body-sm t-tertiary" style="padding:var(--space-8) 0">Aquí verás tus movimientos.</div>`;
+
+    return `${header}
+      <div class="grow" style="flex:.42"></div>
+      <div class="text-center">
+        <div class="t-display" style="font-size:40px" data-balance>${U.money(s.balance)}</div>
+        <div class="mt-3" data-badge>
+          <button class="badge badge--success" data-action="go" data-screen="yield-detail" style="border:none;cursor:pointer">
+            ${Icons.trendUpSm} Ganando 4.2% anual
+          </button>
+        </div>
+      </div>
+      <div class="grow" style="flex:.5"></div>
+      <div class="dual">
+        <button class="btn btn--secondary btn--lg" data-action="send">Enviar</button>
+        <button class="btn btn--secondary btn--lg" data-action="receive">Recibir</button>
+      </div>
+      <div class="grow" style="flex:.55"></div>
+      <div class="row-between" style="margin-bottom:var(--space-1)">
+        <div class="t-body-sm" style="font-weight:600">Movimientos recientes</div>
+        <button class="link" style="font-size:13px" data-action="tab" data-tab="activity">Ver todo</button>
+      </div>
+      <div data-movements>${movementsHTML}</div>
+      ${tabbar('home')}`;
+  },
+  onMount(root){
+    const s = Store.get();
+    const balanceEl = root.querySelector('[data-balance]');
+    if (balanceEl && s.balance > 0) U.countUp(balanceEl, s.balance, 600, _lastShownBalance);
+    _lastShownBalance = s.balance;
+    if (s.balance > 0) BP.flow.startYieldTicker();
+    BP.flow.startTimeRefresher();
+  }
+});
+
+/* ---------- Actividad ---------- */
+Router.register('activity', {
+  transition:'fade',
+  render(){
+    const s = Store.get();
+    const filters = [
+      { key:'all', label:'Todos' },
+      { key:'send', label:'Envíos' },
+      { key:'deposit', label:'Depósitos' },
+      { key:'yield', label:'Rendimiento' }
+    ];
+    const groups = groupByDate(s.movements);
+    const groupsHTML = groups.length
+      ? groups.map(g => `<div class="date-group"><div class="date-group__label">${g.label}</div>${g.items.map(m => movementRow(m)).join('')}</div>`).join('')
+      : `<div class="empty">
+           <div class="illo" style="width:88px;height:88px;background:radial-gradient(circle at 50% 40%,rgba(255,255,255,.05),transparent 70%);border-color:var(--color-border);color:var(--color-text-tertiary)">${Icons.activity}</div>
+           <div class="t-h3 mt-4">Sin movimientos</div>
+           <div class="t-body-sm t-tertiary">Aquí verás toda tu actividad.</div>
+         </div>`;
+
+    return `
+      <div class="screen-head">
+        <span class="t-h2">Actividad</span>
+        <button class="icon-btn icon-btn--sm" data-action="settings" aria-label="Perfil">${Icons.gear}</button>
+      </div>
+      <div class="filter-row" style="margin-top:12px;margin-bottom:20px">
+        ${filters.map(f => `<button class="filter-chip ${f.key==='all'?'is-active':''}" data-filter="${f.key}">${f.label}</button>`).join('')}
+      </div>
+      <div data-activity-list style="flex:1;min-height:0">${groupsHTML}</div>
+      ${tabbar('activity')}`;
+  },
+  onMount(root){
+    root.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        root.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('is-active'));
+        chip.classList.add('is-active');
+        const filter = chip.dataset.filter;
+        const s = Store.get();
+        const filtered = filter === 'all' ? s.movements : s.movements.filter(m => m.type === filter);
+        const groups = groupByDate(filtered);
+        const listEl = root.querySelector('[data-activity-list]');
+        listEl.innerHTML = groups.length
+          ? groups.map(g => `<div class="date-group"><div class="date-group__label">${g.label}</div>${g.items.map(m => movementRow(m)).join('')}</div>`).join('')
+          : `<div class="empty" style="padding:40px 20px"><div class="t-h3">Sin movimientos</div><div class="t-body-sm t-tertiary mt-1">No hay nada en este filtro.</div></div>`;
+      });
+    });
+    root.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-movement-id]');
+      if (!row) return;
+      BP.flow.openMovementDetail(row.dataset.movementId);
+    });
+  }
+});
+
+/* ---------- Procesamiento ---------- */
+Router.register('processing', {
+  transition:'fade', replaceable:true,
+  render(params = {}){
+    const type = params.type || 'deposit';
+    const config = {
+      deposit: { title:'Añadiendo tu dinero...', sub:'Estamos encontrando la<br>mejor forma de hacerlo crecer.' },
+      send:    { title:'Enviando...',             sub:'Estamos confirmando la<br>operación de forma segura.' }
+    }[type] || { title:'Procesando...', sub:'Un momento.' };
+    return `
+      <div class="grow"></div>
+      <div class="text-center">
+        <div class="pulse" style="margin:0 auto">
+          <span class="pulse__ring"></span><span class="pulse__ring"></span><span class="pulse__ring"></span>
+          <span class="pulse__core"></span>
+        </div>
+        <h2 class="t-h2 mt-6" style="font-size:18px">${config.title}</h2>
+        <p class="t-body-sm t-secondary mt-3" data-processing-sub>${config.sub}</p>
+        <div class="progress mt-6" style="margin-left:auto;margin-right:auto" data-progress></div>
+        <div class="mt-6" data-processing-actions></div>
+      </div>
+      <div class="grow"></div>`;
+  }
+});
+
+/* ---------- Recibir / Pedir ---------- */
+Router.register('receive', {
+  transition:'forward',
+  render(){
+    const s = Store.get();
+    return `
+      <div class="screen-head">
+        <button class="icon-btn" data-action="back" aria-label="Volver">${Icons.back}</button>
+        <span class="t-h2">Recibir</span>
+        <span></span>
+      </div>
+
+      <div class="segmented" role="tablist">
+        <button class="segmented__btn is-active" data-recv-tab="tag" role="tab">Mi tag</button>
+        <button class="segmented__btn" data-recv-tab="request" role="tab">Pedir monto</button>
+      </div>
+
+      <div data-recv-pane="tag">
+        <p class="t-body-sm t-secondary text-center mb-4">Compartí este código para que te envíen dinero.</p>
+        <div class="qr-frame">${UI.qrCode(s.bpTag, 200)}</div>
+        <div class="text-center mt-6 mb-6">
+          <div class="t-h3">${U.esc(s.bpTag)}</div>
+          <div class="t-caption t-tertiary mt-1">Tu identificador BestPath</div>
+        </div>
+        <div class="dual mb-4">
+          <button class="btn btn--secondary btn--lg" data-action="copy-tag">${Icons.copy} Copiar</button>
+          <button class="btn btn--secondary btn--lg" data-action="share-tag">${Icons.share} Compartir</button>
+        </div>
+      </div>
+
+      <div data-recv-pane="request" class="hidden">
+        <p class="t-body-sm t-secondary text-center mb-6">Generá un link de cobro por un monto específico.</p>
+
+        <div class="field">
+          <input class="field__input" type="text" id="req-amount" placeholder=" " inputmode="decimal" value="50.00">
+          <label class="field__label" for="req-amount">Monto a pedir</label>
+        </div>
+
+        <div class="row" style="gap:8px;margin-bottom:20px">
+          <button class="chip" data-quick-amount="10">$10</button>
+          <button class="chip" data-quick-amount="25">$25</button>
+          <button class="chip" data-quick-amount="50">$50</button>
+          <button class="chip" data-quick-amount="100">$100</button>
+        </div>
+
+        <button class="btn btn--primary btn--lg btn--block mt-4" data-action="create-request">Generar link</button>
+
+        <div data-request-result class="mt-6 hidden">
+          <div class="divider"></div>
+          <p class="t-micro t-tertiary mb-2" style="letter-spacing:.06em">LINK DE COBRO</p>
+          <div class="link-box">
+            <span class="link-box__url" data-request-url>—</span>
+          </div>
+          <div class="dual">
+            <button class="btn btn--secondary btn--lg" data-action="copy-request">${Icons.copy} Copiar</button>
+            <button class="btn btn--primary btn--lg" data-action="share-request">${Icons.share} Compartir</button>
+          </div>
+        </div>
+      </div>`;
+  },
+  onMount(root){
+    const tabs = root.querySelectorAll('[data-recv-tab]');
+    const panes = root.querySelectorAll('[data-recv-pane]');
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        tabs.forEach(t => t.classList.remove('is-active'));
+        tab.classList.add('is-active');
+        panes.forEach(p => p.classList.toggle('hidden', p.dataset.recvPane !== tab.dataset.recvTab));
+      });
+    });
+
+    root.querySelectorAll('[data-quick-amount]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        root.querySelector('#req-amount').value = chip.dataset.quickAmount + '.00';
+        chip.setAttribute('aria-pressed','true');
+        setTimeout(() => chip.removeAttribute('aria-pressed'), 300);
+      });
+    });
+  }
+});
+
+/* ---------- Yield Detail ---------- */
+Router.register('yield-detail', {
+  transition:'forward',
+  render(){
+    const s = Store.get();
+    const totalYield = s.movements.filter(m => m.type === 'yield').reduce((sum, m) => sum + m.amount, 0);
+    const rate = (BP.config.annualYieldRate * 100).toFixed(1);
+    const projected = s.balance * BP.config.annualYieldRate;
+
+    const history = [];
+    let seed = Math.abs(Math.floor(s.balance * 100)) || 42;
+    const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+    for (let i = 6; i >= 0; i--){
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const label = i === 0 ? 'Hoy' : ['D','L','M','M','J','V','S'][d.getDay()];
+      const base = s.balance * BP.config.annualYieldRate / 365;
+      const value = Math.max(0.001, base * (0.6 + rand() * 0.8));
+      history.push({ label, value, isToday: i === 0 });
+    }
+    const maxVal = Math.max(...history.map(h => h.value));
+    const bars = history.map(h => {
+      const heightPct = maxVal > 0 ? (h.value / maxVal) * 100 : 0;
+      return `<div class="chart__bar ${h.isToday?'is-today':''}" style="height:${Math.max(6, heightPct)}%" title="${U.money(h.value)}"></div>`;
+    }).join('');
+    const labels = history.map(h => `<div class="chart__label ${h.isToday?'is-today':''}">${h.label}</div>`).join('');
+
+    return `
+      <div class="screen-head">
+        <button class="icon-btn" data-action="back" aria-label="Volver">${Icons.back}</button>
+        <span class="t-h2">Rendimiento</span>
+        <span></span>
+      </div>
+
+      <div class="text-center mt-4 mb-6">
+        <div class="t-caption t-tertiary">Ganado hasta hoy</div>
+        <div class="t-display" style="font-size:36px;margin-top:6px;color:var(--color-success)">+${U.money(totalYield)}</div>
+        <div class="badge badge--success mt-3">${Icons.trendUpSm} ${rate}% anual</div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-card__label">Saldo actual</div>
+          <div class="stat-card__value">${U.money(s.balance)}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Proyección 1 año</div>
+          <div class="stat-card__value stat-card__value--accent">+${U.money(projected)}</div>
+        </div>
+      </div>
+
+      <div class="section-label">Últimos 7 días</div>
+      <div class="chart">${bars}</div>
+      <div class="chart__labels">${labels}</div>
+
+      <div class="divider mt-6"></div>
+
+      <p class="t-body-sm t-secondary" style="line-height:22px">
+        Tu dinero genera <b style="color:var(--color-text-primary)">${rate}% anual</b> automáticamente.
+        No tenés que hacer nada: se acredita todos los días y podés retirarlo cuando quieras.
+      </p>
+
+      <div class="mt-6" style="background:var(--color-bg-secondary);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:var(--space-4)">
+        <div class="row" style="gap:12px">
+          <div class="list-item__icon" style="background:var(--color-accent-soft);color:#8F84FF">${Icons.chart}</div>
+          <div class="grow">
+            <div class="t-body-sm" style="font-weight:500">Sin locks, sin mínimos</div>
+            <div class="t-caption t-tertiary mt-1">Retirá cuando quieras. No hay penalidades.</div>
+          </div>
+        </div>
+      </div>`;
+  }
+});
+
+/* ---------- Perfil (Settings) — v0.5 ---------- */
+Router.register('settings', {
+  transition:'forward',
+  render(){
+    const s = Store.get();
+    return `
+      <div class="screen-head">
+        <button class="icon-btn" data-action="back" aria-label="Volver">${Icons.back}</button>
+        <span class="t-h2">Perfil</span>
+        <span></span>
+      </div>
+
+      <div class="profile-header">
+        <div class="profile-photo">
+          ${contactAvatar({ name:s.userName, color:'#5B4DFF', initials:U.initialsFrom(s.userName) }, 72)}
+        </div>
+        <div class="profile-info">
+          <div class="profile-name">${U.esc(s.userName)}</div>
+          <div class="profile-tag t-mono">${U.esc(s.bpTag)}</div>
+        </div>
+      </div>
+
+      <div class="section-label">Contactos</div>
+      <button class="list-item" data-action="go" data-screen="contacts">
+        <div class="list-item__icon">${Icons.users}</div>
+        <div class="list-item__main">
+          <div class="list-item__label">Contactos guardados</div>
+          <div class="list-item__sub">${s.contacts.length} de ${BP.config.maxContacts}</div>
+        </div>
+        <div class="list-item__value"><span style="color:var(--color-text-tertiary)">${Icons.chevronRight}</span></div>
+      </button>
+
+      <div class="section-label">Seguridad</div>
+      <div class="list-item" style="cursor:default">
+        <div class="list-item__icon">${Icons.lock}</div>
+        <div class="list-item__main">
+          <div class="list-item__label">Face ID</div>
+          <div class="list-item__sub">Confirmar operaciones</div>
+        </div>
+        <button class="toggle" role="switch" aria-checked="${s.settings.biometricEnabled}" data-action="toggle-biometric"></button>
+      </div>
+      <button class="list-item" data-action="edit-recovery">
+        <div class="list-item__icon">${Icons.shield}</div>
+        <div class="list-item__main">
+          <div class="list-item__label">Recuperación</div>
+          <div class="list-item__sub">${s.recoveryEmail ? U.esc(s.recoveryEmail) : 'Sin configurar'}</div>
+        </div>
+        <div class="list-item__value"><span style="color:var(--color-text-tertiary)">${Icons.chevronRight}</span></div>
+      </button>
+
+      <div class="section-label">Sesión</div>
+      <button class="list-item" data-action="logout">
+        <div class="list-item__icon" style="color:var(--color-error)">${Icons.logout}</div>
+        <div class="list-item__main">
+          <div class="list-item__label" style="color:var(--color-error)">Cerrar sesión</div>
+          <div class="list-item__sub">Volver a la pantalla de inicio</div>
+        </div>
+      </button>
+
+      <div class="mt-6 text-center">
+        <p class="t-caption t-tertiary">BestPath Wallet v${BP.config.version}</p>
+        <p class="t-caption t-tertiary">Tu dinero, siempre creciendo.</p>
+      </div>`;
+  }
+});
+
+/* ---------- Contactos ---------- */
+Router.register('contacts', {
+  transition:'forward',
+  render(){
+    const s = Store.get();
+    const canAdd = s.contacts.length < BP.config.maxContacts;
+    const list = s.contacts.length
+      ? s.contacts.map(c => `
+          <div class="row-between" style="border-bottom:1px solid var(--color-border);padding:6px 0">
+            <div class="contact-row" style="flex:1" data-contact-id="${c.id}">
+              ${contactAvatar(c, 40)}
+              <div class="grow" style="min-width:0">
+                <div class="t-body-sm" style="font-weight:500">${U.esc(c.name)}</div>
+                <div class="t-caption t-tertiary">${U.esc(c.tag)}</div>
+              </div>
+            </div>
+            <button class="icon-btn icon-btn--sm" data-action="remove-contact" data-contact-id="${c.id}" aria-label="Eliminar" style="color:var(--color-text-tertiary)">
+              ${Icons.trash}
+            </button>
+          </div>`).join('')
+      : `<div class="empty" style="padding:40px 20px">
+           <div class="t-h3">Sin contactos</div>
+           <div class="t-body-sm t-tertiary mt-1">Agregá uno para enviarle dinero.</div>
+         </div>`;
+
+    return `
+      <div class="screen-head">
+        <button class="icon-btn" data-action="back" aria-label="Volver">${Icons.back}</button>
+        <span class="t-h2">Contactos</span>
+        <button class="icon-btn icon-btn--sm" data-action="add-contact" ${canAdd?'':'disabled'} aria-label="Agregar">${Icons.plus}</button>
+      </div>
+
+      <p class="t-body-sm t-secondary mt-2 mb-6">Guardá a las personas a las que les enviás dinero seguido.</p>
+
+      <div>${list}</div>
+
+      ${!canAdd ? `<p class="t-caption t-tertiary text-center mt-6">Llegaste al límite de ${BP.config.maxContacts} contactos.</p>` : ''}`;
+  }
+});
+
+/* =========================================================
+   BP.flow
+   ========================================================= */
+const Flow = BP.flow = {
+  _yieldTimer: null,
+  _timeTimer: null,
+
+  async addMoney(amount, asset){
+    Router.go('processing', { transition:'fade', params:{ type:'deposit' } });
+    const root = Router.current;
+    const subEl = root.querySelector('[data-processing-sub]');
+    const actionsEl = root.querySelector('[data-processing-actions]');
+    const progressEl = root.querySelector('[data-progress]');
+    const t1 = setTimeout(() => { if (subEl) subEl.innerHTML = 'Casi listo...'; }, 3000);
+    const t2 = setTimeout(() => { if (subEl) subEl.innerHTML = 'Esto puede tardar un poco más de lo normal.<br>Puedes dejar la app abierta.'; }, 10000);
+    const [result] = await Promise.all([
+      BP.api.addMoney(amount, asset),
+      U.wait(U.rand(BP.config.processingMinMs, BP.config.processingMaxMs))
+    ]);
+    clearTimeout(t1); clearTimeout(t2);
+    if (!result.ok){
+      if (subEl) subEl.innerHTML = 'Algo no salió como esperábamos.<br>Puedes reintentar.';
+      if (progressEl) progressEl.classList.add('paused');
+      if (actionsEl) actionsEl.innerHTML = `
+        <div class="dual" style="max-width:320px;margin:0 auto">
+          <button class="btn btn--secondary btn--lg" data-action="back">Volver</button>
+          <button class="btn btn--primary btn--lg" data-action="retry-add" data-amount="${amount}" data-asset="${U.esc(asset)}">Reintentar</button>
+        </div>`;
+      return;
+    }
+    const s = Store.get();
+    const newBalance = Number((s.balance + result.amount).toFixed(4));
+    Store.set({
+      balance: newBalance,
+      movements: [{ id:U.uid(), type:'deposit', title:`Añadiste ${U.money(result.amount)}`, amount:result.amount, at:Date.now() }, ...s.movements],
+      lastYieldAt: Date.now()
+    });
+    U.haptic(12);
+    Router.replace('home', { transition:'fade' });
+  },
+
+  async sendMoney(){
+    const s = Store.get();
+    if (s.balance <= 0){ UI.toast('Añade dinero primero para poder enviar.', 'info'); return; }
+
+    const recipient = await Flow._pickRecipient();
+    if (!recipient) return;
+
+    const payload = await Flow._pickAmount(recipient);
+    if (!payload) return;
+
+    const confirmed = await UI.confirm({
+      title:'¿Confirmás el envío?',
+      message:`Vas a enviar ${U.money(payload.amount)} a ${recipient.name}${recipient.type==='address'?' ('+recipient.tag+')':''}.`,
+      confirmLabel:'Enviar',
+      cancelLabel:'Cancelar'
+    });
+    if (!confirmed) return;
+
+    await Flow._processSend(recipient, payload.amount);
+  },
+
+  async _pickRecipient(){
+    const s = Store.get();
+    const recent = s.contacts.slice(0, 4);
+
+    return UI.sheet({
+      title:'Enviar dinero',
+      content: `
+        <div class="field">
+          <input class="field__input" type="text" id="recipient-input" placeholder=" " autocomplete="off" data-recipient-input>
+          <label class="field__label" for="recipient-input">Nombre, @usuario o correo</label>
+        </div>
+        <div class="field__helper" id="recipient-help">Escribí un @usuario, correo o teléfono.</div>
+        <div class="divider"></div>
+        <p class="t-micro t-tertiary" style="letter-spacing:.06em;margin-bottom:var(--space-2)">RECIENTES</p>
+        <div class="stack stack-2" data-recent>${recent.map(c => contactRow(c)).join('')}</div>`,
+      onMount(sheet, close){
+        const input = sheet.querySelector('#recipient-input');
+        const helpEl = sheet.querySelector('#recipient-help');
+        const recentEl = sheet.querySelector('[data-recent]');
+
+        recentEl.addEventListener('click', (e) => {
+          const row = e.target.closest('[data-contact-id]');
+          if (!row) return;
+          const contact = s.contacts.find(c => c.id === row.dataset.contactId);
+          if (contact){ U.haptic(8); close({ type:'contact', ...contact }); }
+        });
+
+        input.addEventListener('input', () => {
+          const v = input.value.trim();
+          if (!v){ helpEl.textContent = 'Escribí un @usuario, correo o teléfono.'; helpEl.style.color = ''; return; }
+          const resolved = Flow._resolveRecipient(v);
+          helpEl.textContent = `Enviar a ${resolved.name}`;
+          helpEl.style.color = 'var(--color-accent-primary)';
+        });
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter'){
+            const v = input.value.trim();
+            if (v){ U.haptic(8); close(Flow._resolveRecipient(v)); }
+          }
+        });
+
+        setTimeout(() => input.focus({preventScroll:true}), 400);
+      }
+    });
+  },
+
+  _resolveRecipient(value){
+    const s = Store.get();
+    const trimmed = String(value).trim();
+    const lower = trimmed.toLowerCase();
+    const clean = lower.startsWith('@') ? lower : '@' + lower;
+    const match = s.contacts.find(c => c.tag.toLowerCase() === clean || c.name.toLowerCase().includes(lower));
+    if (match) return { type:'contact', ...match };
+    if (U.isEmail(trimmed)){
+      return { type:'email', id:U.uid(), name:trimmed.split('@')[0], tag:trimmed, initials:trimmed[0].toUpperCase(), color:U.colorFrom(trimmed) };
+    }
+    const digits = trimmed.replace(/\D/g,'');
+    if (digits.length >= 8){
+      return { type:'phone', id:U.uid(), name:'Contacto ' + digits.slice(-4), tag:trimmed, initials:'#', color:'#A1A1A6' };
+    }
+    return { type:'tag', id:U.uid(), name:clean, tag:clean, initials:(clean[1] || '?').toUpperCase(), color:U.colorFrom(clean) };
+  },
+
+  async _pickAmount(recipient){
+    let amount = 0;
+    const s = Store.get();
+    const max = s.balance;
+
+    return UI.sheet({
+      title:'Monto',
+      content: `
+        <div class="row" style="gap:12px;margin-bottom:20px">
+          ${contactAvatar(recipient, 40)}
+          <div class="grow" style="min-width:0">
+            <div class="t-body-sm" style="font-weight:500">${U.esc(recipient.name)}</div>
+            <div class="t-caption t-tertiary t-mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${U.esc(recipient.tag)}</div>
+          </div>
+        </div>
+        <div class="amount-display">
+          <div class="amount-display__value"><span>$</span>
+            <input class="amount-display__input" type="text" inputmode="decimal" value="0.00" data-amount-input aria-label="Monto a enviar">
+          </div>
+        </div>
+        <p class="t-body-sm t-tertiary text-center mb-6" data-balance-hint>${U.money(max)} disponibles</p>
+        <button class="btn btn--primary btn--lg btn--block" data-submit disabled>Continuar</button>`,
+      onMount(sheet, close){
+        const input = sheet.querySelector('[data-amount-input]');
+        const submit = sheet.querySelector('[data-submit]');
+        const hint = sheet.querySelector('[data-balance-hint]');
+        const sync = () => {
+          const val = parseFloat(String(input.value).replace(',','.')) || 0;
+          amount = val;
+          const valid = val > 0 && val <= max;
+          submit.disabled = !valid;
+          if (val > max){ hint.textContent = 'Saldo insuficiente'; hint.style.color = 'var(--color-error)'; }
+          else if (val > 0){ hint.textContent = `${U.money(max - val)} restantes`; hint.style.color = ''; }
+          else { hint.textContent = `${U.money(max)} disponibles`; hint.style.color = ''; }
+        };
+        input.addEventListener('input', () => { input.value = input.value.replace(/[^\d.,]/g,''); sync(); });
+        input.addEventListener('blur', () => { const v = parseFloat(String(input.value).replace(',','.')) || 0; input.value = v > 0 ? v.toFixed(2) : '0.00'; sync(); });
+        input.addEventListener('focus', () => setTimeout(() => input.select(), 50));
+        submit.addEventListener('click', () => { if (submit.disabled) return; U.haptic(10); close({ amount }); });
+        setTimeout(() => { input.focus({preventScroll:true}); input.select(); }, 380);
+        sync();
+      }
+    });
+  },
+
+  async _processSend(recipient, amount){
+    Router.go('processing', { transition:'fade', params:{ type:'send', recipient, amount } });
+    const root = Router.current;
+    const subEl = root.querySelector('[data-processing-sub]');
+    const actionsEl = root.querySelector('[data-processing-actions]');
+    const progressEl = root.querySelector('[data-progress]');
+    const t1 = setTimeout(() => { if (subEl) subEl.innerHTML = 'Casi listo...'; }, 2500);
+    const [result] = await Promise.all([
+      BP.api.sendMoney(amount, recipient),
+      U.wait(U.rand(BP.config.sendMinMs, BP.config.sendMaxMs))
+    ]);
+    clearTimeout(t1);
+    if (!result.ok){
+      if (subEl) subEl.innerHTML = 'Algo no salió como esperábamos.<br>Podés reintentar.';
+      if (progressEl) progressEl.classList.add('paused');
+      if (actionsEl) actionsEl.innerHTML = `
+        <div class="dual" style="max-width:320px;margin:0 auto">
+          <button class="btn btn--secondary btn--lg" data-action="back">Volver</button>
+          <button class="btn btn--primary btn--lg" data-action="retry-send">Reintentar</button>
+        </div>`;
+      return;
+    }
+    const s = Store.get();
+    const newBalance = Number((s.balance - amount).toFixed(4));
+    Store.set({
+      balance: newBalance,
+      movements: [{
+        id:U.uid(), type:'send',
+        title:`Enviaste a ${recipient.name}`,
+        amount:-amount, at:Date.now(),
+        meta:{ recipient: recipient.tag, type: recipient.type, status:'completed' }
+      }, ...s.movements]
+    });
+    U.haptic(14);
+    Router.replace('home', { transition:'fade' });
+    setTimeout(() => UI.toast(`Enviaste ${U.money(amount)} a ${recipient.name}.`, 'success'), 500);
+  },
+
+  async openMovementDetail(id){
+    const s = Store.get();
+    const m = s.movements.find(x => x.id === id);
+    if (!m) return;
+    const typeLabels = { deposit:'Depósito', send:'Envío', yield:'Rendimiento' };
+    await UI.sheet({
+      title: typeLabels[m.type] || 'Movimiento',
+      content: `
+        <div class="text-center mb-6">
+          <div class="t-display" style="font-size:36px;line-height:42px">
+            ${m.amount >= 0 ? '+' : '−'}${U.money(Math.abs(m.amount))}
+          </div>
+          <div class="t-body-sm t-secondary mt-2">${U.esc(m.title)}</div>
+        </div>
+        <div class="stack stack-3">
+          <div class="detail-row"><span class="t-body-sm t-secondary">Fecha</span><span class="t-body-sm">${new Date(m.at).toLocaleString('es-AR',{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'})}</span></div>
+          <div class="detail-row"><span class="t-body-sm t-secondary">Estado</span><span class="badge badge--success" style="height:22px;font-size:12px">Completado</span></div>
+          ${m.meta?.recipient ? `<div class="detail-row"><span class="t-body-sm t-secondary">Destinatario</span><span class="t-body-sm t-mono" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;max-width:60%">${U.esc(m.meta.recipient)}</span></div>` : ''}
+          <div class="detail-row"><span class="t-body-sm t-secondary">ID</span><span class="t-caption t-tertiary t-mono">${m.id}</span></div>
+        </div>
+        <div class="divider" style="margin-top:20px"></div>
+        <button class="btn btn--ghost btn--lg btn--block" data-action="toast" data-message="Comprobante listo para compartir.">Compartir comprobante</button>`
+    });
+  },
+
+  startYieldTicker(){
+    Flow.stopYieldTicker();
+    const s = Store.get();
+    if (s.balance <= 0) return;
+    Flow._yieldTimer = setInterval(async () => {
+      const st = Store.get();
+      if (st.balance <= 0 || !navigator.onLine) return;
+      const gain = await BP.api.accrueYield();
+      const newBalance = Number((st.balance + gain).toFixed(4));
+      const balanceEl = document.querySelector('[data-balance]');
+      if (balanceEl) balanceEl.textContent = U.money(newBalance);
+      const last = st.movements[0];
+      let movements;
+      if (last && last.type === 'yield' && Date.now() - last.at < 30000){
+        const merged = Object.assign({}, last, { amount:Number((last.amount + gain).toFixed(4)), at:Date.now() });
+        movements = [merged, ...st.movements.slice(1)];
+      } else {
+        movements = [{ id:U.uid(), type:'yield', title:'Rendimiento', amount:gain, at:Date.now() }, ...st.movements];
+      }
+      Store.set({ balance:newBalance, movements, lastYieldAt:Date.now() });
+      Flow.refreshMovements();
+    }, BP.config.yieldTickMs);
+  },
+  stopYieldTicker(){ if (Flow._yieldTimer){ clearInterval(Flow._yieldTimer); Flow._yieldTimer = null; } },
+  refreshMovements(){
+    const container = document.querySelector('[data-movements]');
+    if (!container) return;
+    const s = Store.get();
+    container.innerHTML = s.movements.slice(0,6).map(m => movementRow(m)).join('');
+  },
+  startTimeRefresher(){
+    if (Flow._timeTimer) return;
+    Flow._timeTimer = setInterval(() => {
+      document.querySelectorAll('[data-time]').forEach(el => { el.textContent = U.timeAgo(Number(el.dataset.time)); });
+    }, 30000);
+  },
+
+  async openAddMoney(){
+    if (!navigator.onLine){ UI.toast('Revisa tu conexión para continuar.','warning'); return; }
+    let selectedAsset = 'USDC';
+    let amount = BP.config.defaultAmount;
+    const result = await UI.sheet({
+      title:'Añadir dinero',
+      content: `
+        <div class="amount-display">
+          <div class="amount-display__value"><span>$</span>
+            <input class="amount-display__input" type="text" inputmode="decimal" value="${amount.toFixed(2)}" data-amount-input aria-label="Monto a añadir">
+          </div>
+        </div>
+        <div class="row" style="gap:var(--space-2);justify-content:center;margin-bottom:var(--space-5)" data-chips role="group">
+          <button class="chip" aria-pressed="true" data-chip="USDC">USDC</button>
+          <button class="chip" aria-pressed="false" data-chip="USDT">USDT</button>
+          <button class="chip" aria-pressed="false" data-chip="Otro">Otro</button>
+        </div>
+        <div class="text-center mb-6">
+          <p class="t-body-sm t-secondary">Llegará al instante.</p>
+          <p class="t-body-sm t-secondary">Empezará a crecer solo.</p>
+        </div>
+        <button class="btn btn--primary btn--lg btn--block" data-submit>Añadir</button>`,
+      onMount(sheet, close){
+        const input = sheet.querySelector('[data-amount-input]');
+        const chips = sheet.querySelectorAll('[data-chip]');
+        const submit = sheet.querySelector('[data-submit]');
+        const sync = () => {
+          const val = parseFloat(String(input.value).replace(',','.')) || 0;
+          amount = val;
+          const valid = val >= BP.config.minAmount;
+          submit.disabled = !valid;
+          submit.textContent = valid ? 'Añadir' : `Añade al menos $${BP.config.minAmount}`;
+        };
+        input.addEventListener('input', () => { input.value = input.value.replace(/[^\d.,]/g,''); sync(); });
+        input.addEventListener('blur', () => { const v = parseFloat(String(input.value).replace(',','.')) || 0; input.value = v.toFixed(2); sync(); });
+        input.addEventListener('focus', () => setTimeout(() => input.select(), 50));
+        chips.forEach(chip => {
+          chip.addEventListener('click', () => {
+            chips.forEach(c => c.setAttribute('aria-pressed','false'));
+            chip.setAttribute('aria-pressed','true');
+            selectedAsset = chip.dataset.chip;
+            U.haptic(6);
+          });
+        });
+        submit.addEventListener('click', () => { if (submit.disabled) return; U.haptic(10); close({ amount, asset:selectedAsset }); });
+        setTimeout(() => { input.focus({preventScroll:true}); input.select(); }, 380);
+        sync();
+      }
+    });
+    if (result && result.amount >= BP.config.minAmount) Flow.addMoney(result.amount, result.asset);
+  },
+
+  async editName(){
+    const s = Store.get();
+    const result = await UI.sheet({
+      title:'Tu nombre',
+      content: `
+        <div class="field">
+          <input class="field__input" type="text" id="edit-name-input" placeholder=" " value="${U.esc(s.userName)}" maxlength="30" autocomplete="name">
+          <label class="field__label" for="edit-name-input">Nombre</label>
+        </div>
+        <button class="btn btn--primary btn--lg btn--block mt-4" data-save>Guardar</button>`,
+      onMount(sheet, close){
+        const input = sheet.querySelector('#edit-name-input');
+        const save = sheet.querySelector('[data-save]');
+        save.addEventListener('click', () => {
+          const v = input.value.trim();
+          if (v.length < 2){ UI.toast('El nombre es muy corto.','warning'); return; }
+          close(v);
+        });
+        setTimeout(() => { input.focus({preventScroll:true}); input.select(); }, 380);
+      }
+    });
+    if (result){ Store.set({ userName:result }); UI.toast('Nombre actualizado.','success'); Router.replace('settings',{transition:'fade'}); }
+  },
+
+  async editRecovery(){
+    const s = Store.get();
+    const result = await UI.sheet({
+      title:'Recuperación',
+      content: `
+        <p class="t-body-sm t-secondary mb-4">Si perdés tu teléfono, usamos esto para recuperar tu cuenta.</p>
+        <div class="field">
+          <input class="field__input" type="email" id="edit-email" placeholder=" " value="${U.esc(s.recoveryEmail)}" autocomplete="email">
+          <label class="field__label" for="edit-email">tu@correo.com</label>
+        </div>
+        <button class="btn btn--primary btn--lg btn--block mt-4" data-save>Guardar</button>`,
+      onMount(sheet, close){
+        const input = sheet.querySelector('#edit-email');
+        const save = sheet.querySelector('[data-save]');
+        save.addEventListener('click', () => {
+          const v = input.value.trim();
+          if (!U.isEmail(v)){ UI.toast('Revisá este correo.','warning'); return; }
+          close(v);
+        });
+        setTimeout(() => { input.focus({preventScroll:true}); input.select(); }, 380);
+      }
+    });
+    if (result){ Store.set({ recoveryEmail:result }); UI.toast('Correo actualizado.','success'); Router.replace('settings',{transition:'fade'}); }
+  },
+
+  async addContact(){
+    const s = Store.get();
+    if (s.contacts.length >= BP.config.maxContacts){ UI.toast('Llegaste al límite de contactos.','warning'); return; }
+    const result = await UI.sheet({
+      title:'Nuevo contacto',
+      content: `
+        <div class="field">
+          <input class="field__input" type="text" id="new-name" placeholder=" " autocomplete="off" maxlength="40">
+          <label class="field__label" for="new-name">Nombre</label>
+        </div>
+        <div class="field">
+          <input class="field__input t-mono" type="text" id="new-tag" placeholder=" " autocomplete="off" maxlength="30">
+          <label class="field__label" for="new-tag" style="font-family:inherit">@usuario, correo o teléfono</label>
+        </div>
+        <button class="btn btn--primary btn--lg btn--block mt-4" data-save>Guardar</button>`,
+      onMount(sheet, close){
+        const nameInput = sheet.querySelector('#new-name');
+        const tagInput = sheet.querySelector('#new-tag');
+        const save = sheet.querySelector('[data-save]');
+        save.addEventListener('click', () => {
+          const name = nameInput.value.trim();
+          let tag = tagInput.value.trim();
+          if (name.length < 2){ UI.toast('El nombre es muy corto.','warning'); return; }
+          if (!tag){ UI.toast('Agregá un tag o correo.','warning'); return; }
+          if (!tag.startsWith('@') && !U.isEmail(tag) && !/^\+?\d{8,}$/.test(tag.replace(/\s/g,''))) tag = '@' + tag;
+          close({ name, tag });
+        });
+        setTimeout(() => nameInput.focus({preventScroll:true}), 380);
+      }
+    });
+    if (result){
+      const newContact = {
+        id: U.uid(),
+        name: result.name,
+        tag: result.tag,
+        initials: U.initialsFrom(result.name),
+        color: U.colorFrom(result.tag)
+      };
+      Store.set({ contacts: [...s.contacts, newContact] });
+      UI.toast('Contacto guardado.','success');
+      Router.replace('contacts',{transition:'fade'});
+    }
+  },
+
+  async removeContact(id){
+    const s = Store.get();
+    const contact = s.contacts.find(c => c.id === id);
+    if (!contact) return;
+    const ok = await UI.confirm({
+      title:'¿Eliminar contacto?',
+      message:`Se eliminará a ${contact.name} de tu lista.`,
+      confirmLabel:'Eliminar',
+      cancelLabel:'Cancelar',
+      danger:true
+    });
+    if (ok){
+      Store.set({ contacts: s.contacts.filter(c => c.id !== id) });
+      UI.toast('Contacto eliminado.','success');
+      Router.replace('contacts',{transition:'fade'});
+    }
+  },
+
+  async logout(){
+    const ok = await UI.confirm({
+      title:'¿Cerrar sesión?',
+      message:'Vas a salir de tu cuenta. Tus datos quedan guardados y podés volver a entrar cuando quieras.',
+      confirmLabel:'Cerrar sesión',
+      cancelLabel:'Cancelar',
+      danger:true
+    });
+    if (!ok) return;
+
+    Flow.stopYieldTicker();
+    _lastShownBalance = 0;
+
+    const s = Store.get();
+    Store.set({ session:false });
+
+    Router.stack = [];
+
+    if (s.onboardingComplete){
+      Router.go('passkey', { transition:'fade', params:{ mode:'login' } });
+    } else {
+      Router.go('welcome', { transition:'fade' });
+    }
+
+    UI.toast('Sesión cerrada.','success');
+  },
+
+  completeOnboarding({ email, phone }){
+    Store.set({ onboardingComplete:true, session:true, recoveryEmail:email, recoveryPhone:phone });
+    Router.replace('home', { transition:'fade' });
+  }
+};
+
+/* =========================================================
+   BP.actions
+   ========================================================= */
+const Actions = BP.actions = {
+
+  'go'(el){
+    const target = el.dataset.screen;
+    if (!target) return;
+    const params = el.dataset.mode ? { mode: el.dataset.mode } : {};
+    Router.go(target, { transition: el.dataset.transition || 'forward', params });
+  },
+
+  'back'(){ Router.back(); },
+
+  'toast'(el){ UI.toast(el.dataset.message || 'Próximamente.', el.dataset.variant || 'info'); },
+
+  async 'biometric'(el){
+    const label = el.dataset.label || 'Face ID';
+    const mode  = el.dataset.mode  || 'onboarding';
+    U.haptic(10);
+    const ok = await UI.biometric(label);
+    if (!ok){ UI.toast('Puedes intentarlo cuando quieras.','warning'); return; }
+
+    if (mode === 'login'){
+      Store.set({ session:true });
+      Router.go('home', { transition:'fade' });
+    } else {
+      Router.go('recovery', { transition:'forward' });
+    }
+  },
+
+  'login'(){
+    Router.go('passkey', { transition:'forward', params:{ mode:'login' } });
+  },
+
+  'switch-account'(){
+    Router.stack = [];
+    Router.go('welcome', { transition:'fade' });
+  },
+
+  'submit-recovery'(el, root){
+    const email = root.querySelector('#inp-email').value.trim();
+    const phone = root.querySelector('#inp-phone').value.trim();
+    if (!U.isEmail(email)){
+      root.querySelector('[data-field="email"]').classList.add('is-error');
+      root.querySelector('#help-email').textContent = 'Revisa este correo.';
+      return;
+    }
+    if (!navigator.onLine){ UI.toast('Revisa tu conexión para continuar.','warning'); return; }
+    el.classList.add('is-loading');
+    setTimeout(() => Flow.completeOnboarding({ email, phone }), 700);
+  },
+
+  'open-add'(){ Flow.openAddMoney(); },
+  'retry-add'(el){ Flow.addMoney(parseFloat(el.dataset.amount) || BP.config.defaultAmount, el.dataset.asset || 'USDC'); },
+  'retry-send'(){ Flow.sendMoney(); },
+  'send'(){ Flow.sendMoney(); },
+  'receive'(){ Router.go('receive', { transition:'forward' }); },
+  'settings'(){ Router.go('settings', { transition:'forward' }); },
+
+  'edit-name'(){ Flow.editName(); },
+  'edit-recovery'(){ Flow.editRecovery(); },
+
+  'add-contact'(){ Flow.addContact(); },
+  'remove-contact'(el){ Flow.removeContact(el.dataset.contactId); },
+
+  'logout'(){ Flow.logout(); },
+
+  'toggle-biometric'(el){
+    const s = Store.get();
+    const next = !s.settings.biometricEnabled;
+    el.setAttribute('aria-checked', String(next));
+    Store.setSetting('biometricEnabled', next);
+    U.haptic(8);
+  },
+
+  async 'copy-tag'(){
+    const s = Store.get();
+    try { await navigator.clipboard.writeText(s.bpTag); UI.toast('Tag copiado.','success'); }
+    catch(e){ UI.toast('No se pudo copiar.','error'); }
+  },
+  async 'share-tag'(){
+    const s = Store.get();
+    if (navigator.share){
+      try { await navigator.share({ title:'Mi BestPath', text:`Enviame dinero a ${s.bpTag} en BestPath Wallet.` }); } catch(e){}
+    } else UI.toast('Compartir no está disponible.','info');
+  },
+
+  async 'create-request'(el, root){
+    const amountInput = root.querySelector('#req-amount');
+    const amount = parseFloat(String(amountInput.value).replace(',','.')) || 0;
+    if (amount <= 0){ UI.toast('Ingresá un monto válido.','warning'); return; }
+    const s = Store.get();
+    el.classList.add('is-loading');
+    const result = await BP.api.createPaymentRequest(amount, s.bpTag);
+    el.classList.remove('is-loading');
+    if (!result.ok){ UI.toast('No se pudo generar el link.','error'); return; }
+    const resultBox = root.querySelector('[data-request-result]');
+    const urlEl = root.querySelector('[data-request-url]');
+    urlEl.textContent = result.url;
+    resultBox.classList.remove('hidden');
+    U.haptic(10);
+  },
+  async 'copy-request'(el, root){
+    const url = root.querySelector('[data-request-url]').textContent;
+    try { await navigator.clipboard.writeText(url); UI.toast('Link copiado.','success'); }
+    catch(e){ UI.toast('No se pudo copiar.','error'); }
+  },
+  async 'share-request'(el, root){
+    const url = root.querySelector('[data-request-url]').textContent;
+    const amount = parseFloat(String(root.querySelector('#req-amount').value).replace(',','.')) || 0;
+    if (navigator.share){
+      try { await navigator.share({ title:'Pedido de pago', text:`Te pido ${U.money(amount)} por BestPath: ${url}` }); } catch(e){}
+    } else UI.toast('Compartir no está disponible.','info');
+  },
+
+  'tab'(el){
+    const tab = el.dataset.tab;
+    const current = Router.current?.dataset.screen;
+    if (tab === 'home'){
+      if (current !== 'home') Router.replace('home', { transition:'fade' });
+      return;
+    }
+    if (tab === 'activity'){
+      if (current !== 'activity') Router.replace('activity', { transition:'fade' });
+      return;
+    }
+    if (tab === 'account'){
+      if (current !== 'settings') Router.go('settings', { transition:'forward' });
+    }
+  }
+};
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const action = el.dataset.action;
+  const handler = Actions[action];
+  if (!handler) return;
+  e.preventDefault();
+  const root = el.closest('.screen') || document;
+  handler(el, root);
+});
+
+/* =========================================================
+   BP.boot
+   ========================================================= */
+function boot(){
+  const state = Store.load();
+
+  const syncConnection = () => {
+    if (!navigator.onLine) UI.banner('Revisa tu conexión para continuar.','warning');
+    else UI.clearBanner();
+    document.querySelectorAll('[data-action="open-add"]').forEach(btn => { btn.disabled = !navigator.onLine; });
+  };
+  window.addEventListener('online', syncConnection);
+  window.addEventListener('offline', syncConnection);
+
+  let startName = 'welcome';
+  let startOpts = { transition:'fade' };
+  if (state.onboardingComplete && state.session){
+    startName = 'home';
+  } else if (state.onboardingComplete && !state.session){
+    startName = 'passkey';
+    startOpts = { transition:'fade', params:{ mode:'login' } };
+  }
+
+  if (startName === 'passkey'){
+    Router.go('passkey', startOpts);
+  } else {
+    Router.init(startName);
+  }
+
+  setTimeout(syncConnection, 600);
+  if (state.balance > 0 && state.session) Flow.startYieldTicker();
+  Flow.startTimeRefresher();
+
+  window.BP.debug = {
+    state: () => Store.get(),
+    reset: () => { Flow.stopYieldTicker(); Store.reset(); location.reload(); },
+    addFunds: (n) => Flow.addMoney(n || 500, 'USDC'),
+    send: (n) => Flow.sendMoney()
+  };
+
+  console.info(`%cBestPath Wallet v${BP.config.version}`,
+    'color:#8F84FF;font-weight:600;font-size:12px',
+    '\nFase 3 + fix de navegación.');
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+
+})();
+</script>
+</body>
+</html>

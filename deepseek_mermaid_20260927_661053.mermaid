@@ -1,0 +1,406 @@
+---
+title: BestPath API — Cloudflare Workers Deployment Context
+---
+flowchart TB
+
+    %% ============================================================
+    %% CONTEXTO DE DESPLIEGUE
+    %% ============================================================
+
+    subgraph CONTEXT["📋 CONTEXTO DEL DESPLIEGUE"]
+        direction TB
+        C1["🎯 Objetivo: desplegar apps/api (Hono + Node) en Cloudflare Workers<br/>sin Docker, sin tarjeta de crédito, usando dominio ya comprado"]
+        C2["💰 Presupuesto: $0 (plan free de Workers: 100K req/día)"]
+        C3["🌐 Dominio: bestpath.app (ya en Cloudflare DNS)"]
+        C4["⏱️ Deadline: hackathon Monad Metropolis — 13 oct 2026"]
+        C5["📦 Runtime: workerd (V8 isolates, no Node.js completo)"]
+        C6["🔑 Auth: Privy passkey + embedded wallet"]
+        C7["⛽ Gas: Privy Sponsorship (MVP) → Pimlico (prod)"]
+        C8["⛓️ Chain: Monad Testnet (chainId 10143)"]
+        C9["🐘 DB: Neon Postgres (free tier)"]
+    end
+
+    %% ============================================================
+    %% COMPARATIVA: QUÉ CAMBIA
+    %% ============================================================
+
+    subgraph MIGRATION["🔄 QUÉ CAMBIA AL MIGRAR"]
+        direction LR
+        subgraph BEFORE["❌ ANTES (descartado)"]
+            B1["Dockerfile"]
+            B2["Fly.io / Railway / Render"]
+            B3["Proceso Node.js persistente"]
+            B4["Filesystem para cursor"]
+            B5["Tarjeta de crédito"]
+            B6["Deploy: fly deploy"]
+        end
+        subgraph AFTER["✅ AHORA (Cloudflare Workers)"]
+            A1["wrangler.toml"]
+            A2["Cloudflare Workers"]
+            A3["Worker serverless + Cron Trigger"]
+            A4["Durable Objects + D1"]
+            A5["$0 forever"]
+            A6["Deploy: wrangler deploy"]
+        end
+        BEFORE -.->|migrar| AFTER
+    end
+
+    %% ============================================================
+    %% ARQUITECTURA DE RED
+    %% ============================================================
+
+    subgraph NETWORK["🌐 CAPA DE RED (Cloudflare)"]
+        direction TB
+        DNS["📡 DNS<br/>bestpath.app<br/>api.bestpath.app → Worker"]
+        SSL["🔒 SSL/TLS automático<br/>Universal Certificate"]
+        CDN["⚡ CDN Edge<br/>300+ ubicaciones"]
+        WAF["🛡️ WAF + Rate Limit<br/>free tier incluido"]
+        DNS --> SSL --> CDN --> WAF
+    end
+
+    %% ============================================================
+    %% WORKER PRINCIPAL
+    %% ============================================================
+
+    subgraph WORKER["⚡ WORKER: bestpath-api"]
+        direction TB
+
+        ENTRY["🚪 Entry Point<br/>apps/api/src/index.ts<br/>export default app"]
+
+        subgraph APP["Aplicación Hono"]
+            direction TB
+            HONO["Hono() instance"]
+            MW1["🔒 middleware/auth.ts<br/>valida cookie session"]
+            MW2["🔄 middleware/idempotency.ts<br/>Idempotency-Key header"]
+            MW3["🚦 middleware/rateLimit.ts<br/>por IP + usuario"]
+            MW4["💥 middleware/error.ts<br/>formato uniforme"]
+            MW5["🛡️ middleware/policy.ts<br/>Trust Policy Engine"]
+
+            HONO --> MW1 --> MW2 --> MW3 --> MW4 --> MW5
+        end
+
+        subgraph ROUTES["Rutas"]
+            R1["/health"]
+            R2["/auth/*"]
+            R3["/wallet/*"]
+            R4["/contacts/*"]
+            R5["/yield/*"]
+            R6["/webhooks/*"]
+        end
+
+        MW5 --> ROUTES
+    end
+
+    %% ============================================================
+    %% SERVICIOS EXTERNOS
+    %% ============================================================
+
+    subgraph EXTERNAL["🌍 SERVICIOS EXTERNOS (fuera de Cloudflare)"]
+        direction TB
+
+        NEON[("🐘 Neon Postgres<br/>━━━━━━━━━━━━━━<br/>free tier: 0.5 GB<br/>users · wallets<br/>movements · contacts<br/>sessions · policy_decisions<br/>━━━━━━━━━━━━━━<br/>driver: postgres (npm)<br/>workerd-compatible ✓")]
+
+        PRIVY["🔑 Privy<br/>━━━━━━━━━━━━━━<br/>passkey (WebAuthn)<br/>embedded wallet (TEE)<br/>gas sponsorship (MVP)<br/>━━━━━━━━━━━━━━<br/>SDK: @privy-io/server-auth<br/>verifyAuthToken(idToken)"]
+
+        PIMLICO["⛽ Pimlico<br/>━━━━━━━━━━━━━━<br/>bundler ERC-4337<br/>paymaster<br/>━━━━━━━━━━━━━━<br/>SDK: permissionless.js<br/>User pays en USDC"]
+
+        MONAD["⛓️ Monad Testnet<br/>━━━━━━━━━━━━━━<br/>chainId: 10143<br/>USDC nativo (Circle)<br/>Aave V3 (yield)<br/>━━━━━━━━━━━━━━<br/>RPC: testnet-rpc.monad.xyz<br/>EIP-7702 habilitado"]
+    end
+
+    %% ============================================================
+    %% CRON + DURABLE OBJECTS (INDEXER)
+    %% ============================================================
+
+    subgraph INDEXER["⏰ INDEXER (detección de depósitos USDC)"]
+        direction TB
+
+        CRON["⏰ Cron Trigger<br/>━━━━━━━━━━━━━━<br/>crons = ['* * * * *']<br/>cada 1 minuto"]
+
+        SCHED["async scheduled(event, env, ctx)<br/>━━━━━━━━━━━━━━<br/>entry point del cron"]
+
+        TICK["indexer.tick(env)<br/>━━━━━━━━━━━━━━<br/>1. leer cursor<br/>2. eth_getLogs<br/>3. procesar Transfer<br/>4. actualizar cursor<br/>5. insertar movements"]
+
+        subgraph DO["📦 Durable Object: IndexerCursor"]
+            DO1["getCursor(): Promise<number>"]
+            DO2["setCursor(block): Promise<void>"]
+            DO3["acquireLock(): Promise<boolean><br/>evita doble ejecución"]
+        end
+
+        subgraph D1["🗄️ D1 (SQLite distribuido)"]
+            D1T["tabla: cursor_state<br/>━━━━━━━━━━━━━━<br/>last_block INTEGER<br/>updated_at TEXT"]
+            D1T2["tabla: webhook_dedup<br/>━━━━━━━━━━━━━━<br/>event_id TEXT PK<br/>processed_at TEXT"]
+        end
+
+        RPC["🔌 Monad RPC<br/>eth_getLogs<br/>fromBlock → toBlock<br/>USDC Transfer events"]
+
+        CRON --> SCHED --> TICK
+        TICK --> DO1 --> D1T
+        TICK --> DO3
+        TICK --> RPC
+        TICK --> DO2 --> D1T
+        RPC -.->|eventos nuevos| TICK
+        TICK -->|INSERT| NEON
+    end
+
+    %% ============================================================
+    %% FLUJO DE UN REQUEST
+    %% ============================================================
+
+    subgraph FLOW["🔄 FLUJO: POST /wallet/send"]
+        direction TB
+        F1["1. Usuario → api.bestpath.app/wallet/send<br/>Cookie: session=...<br/>Idempotency-Key: uuid"]
+        F2["2. Cloudflare Edge<br/>DNS + SSL + WAF + CDN"]
+        F3["3. Worker recibe fetch(request, env, ctx)"]
+        F4["4. middleware/auth<br/>SELECT session WHERE token_hash"]
+        F5["5. middleware/idempotency<br/>SELECT idempotency_keys"]
+        F6["6. Zod validation del body"]
+        F7["7. Policy Engine<br/>ALLOW|DENY|CONFIRM|DELAY|FLAG"]
+        F8["8. GasService.sendTransaction(userOp)"]
+        F9["9. PrivySponsor (MVP)<br/>privy.walletApi.ethereum.sendTransaction()"]
+        F10["10. Privy rutea al paymaster Alchemy<br/>App pays (MVP)"]
+        F11["11. Tx a Monad Testnet"]
+        F12["12. INSERT movements + idempotency_keys"]
+        F13["13. Response 200 JSON"]
+
+        F1 --> F2 --> F3 --> F4 --> F5 --> F6 --> F7 --> F8 --> F9 --> F10 --> F11 --> F12 --> F13
+    end
+
+    %% ============================================================
+    %% CONEXIONES PRINCIPALES
+    %% ============================================================
+
+    NETWORK --> WORKER
+    WORKER --> ROUTES
+    ROUTES -->|SQL| NEON
+    ROUTES -->|verify JWT| PRIVY
+    ROUTES -->|UserOp| PIMLICO
+    PIMLICO -->|tx| MONAD
+    PRIVY -.->|MVP| MONAD
+    CRON --> SCHED
+
+    %% ============================================================
+    %% WRANGLER.TOML — CONFIGURACIÓN COMPLETA
+    %% ============================================================
+
+    subgraph WRANGLER["⚙️ wrangler.toml — CONFIGURACIÓN"]
+        direction TB
+        W1["name = 'bestpath-api'<br/>main = 'src/index.ts'<br/>compatibility_date = '2026-09-27'<br/>compatibility_flags = ['nodejs_compat']"]
+        W2["[vars]<br/>MONAD_CHAIN_ID = '10143'<br/>MONAD_RPC_URL = 'https://testnet-rpc.monad.xyz'<br/>GAS_PHASE = 'mvp'"]
+        W3["[triggers]<br/>crons = ['* * * * *']"]
+        W4["[[d1_databases]]<br/>binding = 'DB_CURSORS'<br/>database_name = 'bestpath-cursors'<br/>database_id = 'xxx'"]
+        W5["[[durable_objects.bindings]]<br/>name = 'INDEXER_CURSOR'<br/>class_name = 'IndexerCursor'"]
+        W6["[[migrations]]<br/>tag = 'v1'<br/>new_sqlite_classes = ['IndexerCursor']"]
+        W7["[observability]<br/>enabled = true"]
+    end
+
+    %% ============================================================
+    %% SECRETS — VÍA wrangler secret put
+    %% ============================================================
+
+    subgraph SECRETS["🔐 SECRETS (wrangler secret put)"]
+        direction TB
+        S1["DATABASE_URL<br/>postgresql://...-pooler.neon.tech/..."]
+        S2["PRIVY_APP_ID<br/>app_..."]
+        S3["PRIVY_APP_SECRET<br/>sk_..."]
+        S4["SESSION_SECRET<br/>64 chars hex"]
+        S5["PIMLICO_API_KEY<br/>pim_... (solo production)"]
+        S6["PIMLICO_BUNDLER_URL<br/>https://api.pimlico.io/v2/... (solo production)"]
+        S7["COOKIE_DOMAIN<br/>.bestpath.app"]
+        S8["COOKIE_SECURE<br/>true"]
+    end
+
+    %% ============================================================
+    %% ESTRUCTURA DE ARCHIVOS
+    %% ============================================================
+
+    subgraph STRUCTURE["📁 ESTRUCTURA apps/api/"]
+        direction TB
+        ST1["wrangler.toml ← reemplaza Dockerfile"]
+        ST2["src/index.ts ← export default app"]
+        ST3["src/cron/indexer.ts ← scheduled handler"]
+        ST4["src/durable-objects/IndexerCursor.ts"]
+        ST5["src/routes/*.ts"]
+        ST6["src/services/privy.ts"]
+        ST7["src/services/gas/index.ts"]
+        ST8["src/services/gas/privy-sponsor.ts"]
+        ST9["src/services/gas/pimlico-sponsor.ts"]
+        ST10["src/db/client.ts ← driver postgres"]
+        ST11["src/db/schema.ts ← Drizzle"]
+        ST12[".dev.vars ← secrets locales (no commit)"]
+        ST13["package.json ← scripts: dev · deploy"]
+    end
+
+    %% ============================================================
+    %% PASOS DE DESPLIEGUE
+    %% ============================================================
+
+    subgraph DEPLOY["🚀 PASOS DE DESPLIEGUE"]
+        direction TB
+        D_1["1. npm i -g wrangler && wrangler login"]
+        D_2["2. Crear wrangler.toml en apps/api/"]
+        D_3["3. Adaptar src/index.ts:<br/>export default app (quitar serve())"]
+        D_4["4. wrangler d1 create bestpath-cursors"]
+        D_5["5. wrangler d1 execute bestpath-cursors<br/>--file=./schema.sql (cursor_state)"]
+        D_6["6. wrangler secret put DATABASE_URL<br/>wrangler secret put PRIVY_APP_SECRET<br/>(uno por uno)"]
+        D_7["7. wrangler deploy"]
+        D_8["8. Cloudflare Dashboard → Workers → bestpath-api<br/>→ Settings → Domains & Routes<br/>→ Add Custom Domain: api.bestpath.app"]
+        D_9["9. Smoke test: curl https://api.bestpath.app/health"]
+        D_10["10. wrangler tail (logs en vivo para debug)"]
+        D_1 --> D_2 --> D_3 --> D_4 --> D_5 --> D_6 --> D_7 --> D_8 --> D_9 --> D_10
+    end
+
+    %% ============================================================
+    %% RESTRICCIONES DEL RUNTIME WORKERD
+    %% ============================================================
+
+    subgraph CONSTRAINTS["⚠️ RESTRICCIONES DEL RUNTIME (workerd)"]
+        direction TB
+        R_1["❌ NO hay filesystem<br/>usar D1 o Durable Objects para estado"]
+        R_2["❌ NO hay child_process<br/>usar cron triggers para background"]
+        R_3["❌ NO hay setTimeout > 30s<br/>usar Durable Objects para long-running"]
+        R_4["❌ NO hay eval / new Function<br/>bloqueado por seguridad"]
+        R_5["⚠️ CPU time: 50ms free / 30s paid por request<br/>para cómputo intensivo, usar DO"]
+        R_6["⚠️ Memory: 128 MB por isolate<br/>Monad RPC + Privy SDK caben bien"]
+        R_7["✅ SÍ hay fetch() global<br/>para llamar a Neon, Privy, Pimlico, Monad"]
+        R_8["✅ SÍ hay crypto.subtle<br/>para SHA-256, HMAC, JWT"]
+        R_9["✅ SÍ hay WebSocket<br/>para Durable Objects"]
+        R_10["✅ nodejs_compat flag<br/>habilita: Buffer, crypto, streams parciales"]
+    end
+
+    %% ============================================================
+    %% DECISIONES CLAVE
+    %% ============================================================
+
+    subgraph DECISIONS["🎯 DECISIONES DE ARQUITECTURA"]
+        direction TB
+        DEC1["💡 Cursor del indexer:<br/>Durable Object + D1<br/>━━━━━━━━━━━━━━<br/>DO da atomicidad (evita doble proceso)<br/>D1 da persistencia (sobrevive deploys)"]
+        DEC2["💡 Base de datos:<br/>Neon Postgres (no D1)<br/>━━━━━━━━━━━━━━<br/>D1 es SQLite, no soporta<br/>transacciones complejas ni numeric(20,6)<br/>Neon free tier: 0.5 GB + pooling"]
+        DEC3["💡 Driver Postgres:<br/>postgres (npm) con nodejs_compat<br/>━━━━━━━━━━━━━━<br/>No usar pg (no compatible)<br/>No usar Prisma (muy pesado)"]
+        DEC4["💡 Cron de 1 minuto:<br/>Cloudflare permite hasta 1/min<br/>en free tier<br/>━━━━━━━━━━━━━━<br/>Para hackathon es suficiente"]
+        DEC5["💡 Secrets vs vars:<br/>secret → wrangler secret put<br/>vars → wrangler.toml [vars]<br/>━━━━━━━━━━━━━━<br/>Nunca secretos en el repo"]
+        DEC6["💡 Custom domain:<br/>api.bestpath.app → Worker<br/>━━━━━━━━━━━━━━<br/>Cloudflare lo hace automático<br/>SSL + DNS + CDN incluidos"]
+    end
+
+    %% ============================================================
+    %% MÉTRICAS Y LÍMITES FREE TIER
+    %% ============================================================
+
+    subgraph LIMITS["📊 FREE TIER — LÍMITES"]
+        direction LR
+        L1["100K requests/día"]
+        L2["10 ms CPU time/invocación"]
+        L3["1M Durable Object requests/mes"]
+        L4["5M D1 rows read/día"]
+        L5["100K D1 rows written/día"]
+        L6["100 MB D1 storage"]
+        L7["Durable Objects: 1M req/mes"]
+        L8["Cron: 5 triggers por cuenta"]
+    end
+
+    %% ============================================================
+    %% ERRORES COMUNES Y SOLUCIONES
+    %% ============================================================
+
+    subgraph PITFALLS["🚨 ERRORES COMUNES"]
+        direction TB
+        E1["❌ 'Cannot find module node:fs'<br/>━━━━━━━━━━━━━━<br/>✅ Quitar imports de fs, path, child_process<br/>usar D1 o Durable Objects"]
+        E2["❌ 'Disallowed operation called within global scope'<br/>━━━━━━━━━━━━━━<br/>✅ Mover inicializaciones a handlers, no top-level"]
+        E3["❌ 'PrismaClient is unable to run in this browser'<br/>━━━━━━━━━━━━━━<br/>✅ Usar postgres driver directo, no Prisma"]
+        E4["❌ 'Too many subrequests'<br/>━━━━━━━━━━━━━━<br/>✅ Máx 50 subrequests por request en free<br/>batchear queries, usar JOINs"]
+        E5["❌ 'Worker exceeded CPU time limit'<br/>━━━━━━━━━━━━━━<br/>✅ Mover cómputo pesado a Durable Object<br/>o a Neon (Postgres functions)"]
+        E6["❌ 'Session token invalid'<br/>━━━━━━━━━━━━━━<br/>✅ Verificar typ: 'JWT' en header<br/>y firma con SESSION_SECRET correcto"]
+        E7["❌ Cookie no se setea en subdominio<br/>━━━━━━━━━━━━━━<br/>✅ Cookie domain debe ser .bestpath.app<br/>(con punto inicial)"]
+        E8["❌ Passkey no funciona en producción<br/>━━━━━━━━━━━━━━<br/>✅ RP ID debe ser bestpath.app<br/>(no api.bestpath.app)"]
+    end
+
+    %% ============================================================
+    %% RECURSOS Y REFERENCIAS
+    %% ============================================================
+
+    subgraph REFS["📚 REFERENCIAS"]
+        direction TB
+        REF1["Hono en Cloudflare Workers<br/>https://hono.dev/getting-started/cloudflare-workers"]
+        REF2["Wrangler CLI<br/>https://developers.cloudflare.com/workers/wrangler/"]
+        REF3["Durable Objects<br/>https://developers.cloudflare.com/durable-objects/"]
+        REF4["D1 Database<br/>https://developers.cloudflare.com/d1/"]
+        REF5["Cron Triggers<br/>https://developers.cloudflare.com/workers/configuration/cron-triggers/"]
+        REF6["nodejs_compat flag<br/>https://developers.cloudflare.com/workers/runtime-apis/nodejs/"]
+        REF7["Custom Domains<br/>https://developers.cloudflare.com/workers/configuration/routing/custom-domains/"]
+        REF8["Postgres driver en Workers<br/>https://github.com/porsager/postgres"]
+    end
+
+    %% ============================================================
+    %% CHECKLIST DE ACEPTACIÓN
+    %% ============================================================
+
+    subgraph CHECKLIST["✅ CHECKLIST FINAL"]
+        direction TB
+        CH1["[ ] wrangler.toml creado con name, main, compat_date"]
+        CH2["[ ] src/index.ts exporta default app (no serve)"]
+        CH3["[ ] D1 database creada y vinculada"]
+        CH4["[ ] Durable Object IndexerCursor implementado"]
+        CH5["[ ] Cron trigger configurado (1 min)"]
+        CH6["[ ] Secrets subidos (DATABASE_URL, PRIVY_*)"]
+        CH7["[ ] wrangler deploy exitoso"]
+        CH8["[ ] Custom domain api.bestpath.app activo"]
+        CH9["[ ] GET /health responde 200"]
+        CH10["[ ] POST /auth/register/finish funciona"]
+        CH11["[ ] Passkey E2E funciona desde celular"]
+        CH12["[ ] Indexer detecta depósito USDC de prueba"]
+        CH13["[ ] wrangler tail muestra logs limpios"]
+        CH14["[ ] Costo total: $0"]
+    end
+
+    %% ============================================================
+    %% CONEXIONES ENTRE SUBGRAPHS
+    %% ============================================================
+
+    CONTEXT --> MIGRATION
+    MIGRATION --> NETWORK
+    NETWORK --> WORKER
+    WORKER --> EXTERNAL
+    WORKER --> WRANGLER
+    WRANGLER --> SECRETS
+    SECRETS --> DEPLOY
+    DEPLOY --> CONSTRAINTS
+    CONSTRAINTS --> DECISIONS
+    DECISIONS --> LIMITS
+    LIMITS --> PITFALLS
+    PITFALLS --> REFS
+    REFS --> CHECKLIST
+    WORKER --> INDEXER
+    INDEXER --> D1T
+    INDEXER --> NEON
+    EXTERNAL --> FLOW
+    STRUCTURE -.-> DEPLOY
+
+    %% ============================================================
+    %% ESTILOS
+    %% ============================================================
+
+    classDef cloudflare fill:#F6821F,color:#fff,stroke:#8B4513,stroke-width:2px
+    classDef worker fill:#FFE4B5,stroke:#F6821F,stroke-width:2px
+    classDef external fill:#5B4DFF,color:#fff,stroke:#3A30B8,stroke-width:2px
+    classDef neon fill:#00E599,color:#000,stroke:#00A86B,stroke-width:2px
+    classDef privy fill:#5B4DFF,color:#fff,stroke:#3A30B8,stroke-width:2px
+    classDef pimlico fill:#7B61FF,color:#fff,stroke:#4A3EE6,stroke-width:2px
+    classDef monad fill:#836EF9,color:#fff,stroke:#5B4DFF,stroke-width:2px
+    classDef do fill:#E8F4FF,stroke:#0066CC,stroke-width:2px
+    classDef d1 fill:#E8F4FF,stroke:#0066CC,stroke-width:2px
+    classDef cron fill:#FFF4E6,stroke:#F6821F,stroke-width:2px
+    classDef danger fill:#FFE4E4,stroke:#FF6B5B,stroke-width:2px
+    classDef success fill:#E4FFE4,stroke:#34C759,stroke-width:2px
+    classDef neutral fill:#F5F5F7,color:#000,stroke:#A1A1A6
+
+    class DNS,SSL,CDN,WAF cloudflare
+    class ENTRY,HONO,MW1,MW2,MW3,MW4,MW5,R1,R2,R3,R4,R5,R6,APP,ROUTES worker
+    class NEON neon
+    class PRIVY privy
+    class PIMLICO pimlico
+    class MONAD monad
+    class DO1,DO2,DO3,DO do
+    class D1T,D1T2,D1 d1
+    class CRON,SCHED,TICK,RPC cron
+    class E1,E2,E3,E4,E5,E6,E7,E8 danger
+    class CH1,CH2,CH3,CH4,CH5,CH6,CH7,CH8,CH9,CH10,CH11,CH12,CH13,CH14 success
+    class C1,C2,C3,C4,C5,C6,C7,C8,C9 neutral
