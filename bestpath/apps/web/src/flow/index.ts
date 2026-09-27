@@ -537,16 +537,23 @@ export const Flow = BP.flow = {
     Flow.stopYieldTicker();
     shownBalance.value = 0;
 
-    const s = Store.get();
     Store.set({ session:false });
 
     Router.stack = [];
 
-    if (s.onboardingComplete){
-      Router.go('passkey', { transition:'fade', params:{ mode:'login' } });
-    } else {
-      Router.go('welcome', { transition:'fade' });
-    }
+    // ALWAYS to the passkey screen in LOGIN mode, and the reason it stopped
+    // asking is the whole point: this branch used to depend on
+    // `s.onboardingComplete`, a flag that lives in the browser and is false for
+    // anyone whose profile save failed or never happened. `false` sent them to
+    // `welcome` — the "you are new here" screen — whose main button starts a
+    // REGISTRATION ceremony, and Privy refuses to register a passkey that already
+    // exists. The user had an account, a working passkey, and no way in except
+    // finding the small "Ya tengo una cuenta" link.
+    //
+    // Logging out means there IS an account: the passkey is what logged them in.
+    // "Am I new?" is not a question the logout path can answer, and the only
+    // screen that asks for nothing is the login one.
+    Router.go('passkey', { transition:'fade', params:{ mode:'login' } });
 
     UI.toast('Sesión cerrada.','success');
   },

@@ -67,7 +67,17 @@ export const Actions = BP.actions = {
         // did something when no listener is mounted; it must not restate the
         // failure or blame the user's passkey.
         console.warn('[rewallet] login de passkey falló', err);
-        UI.toast('No pudimos iniciar sesión. Intentá de nuevo.', 'warning');
+        // The copy follows the CEREMONY. Telling someone who pressed "Empezar" to
+        // "iniciá sesión" is a sentence about the wrong action, and the one case
+        // where it really matters is a person who already HAS an account pressing
+        // the register button — which is what the logout routing used to do to
+        // them, and it is indistinguishable from a broken fingerprint reader.
+        UI.toast(
+          mode === 'login'
+            ? 'No pudimos verificar tu passkey. Intentá de nuevo.'
+            : 'No pudimos crear tu cuenta. Si ya tenías una, entrá con tu passkey.',
+          'warning',
+        );
       }
       return;
     }
