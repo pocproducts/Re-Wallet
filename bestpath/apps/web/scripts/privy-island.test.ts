@@ -60,6 +60,7 @@ const withIsland = () => {
   const calls: string[] = [];
   const release = privy.setPrivyIslandHandle({
     login: async () => { calls.push('login'); },
+    register: async () => { calls.push('register'); },
     logout: async () => { calls.push('logout'); },
   });
   return { calls, release };
@@ -198,16 +199,77 @@ describe('the biometric button', () => {
     expect(go).toHaveBeenCalledWith('home', expect.objectContaining({ transition: 'fade' }));
   });
 
+  it('without an island, onboarding still routes to onboarding and not to home', async () => {
+    const go = vi.spyOn(Router, 'go').mockImplementation(() => undefined);
+    await Actions['biometric'](biometricButton('onboarding'));
+    // The two modes are different journeys, and the mock has to keep telling
+    // them apart even though the island branch is the one under test here.
+    expect(go).toHaveBeenCalledWith('onboarding', expect.objectContaining({ transition: 'forward' }));
+  });
+
+  it('ONBOARDING asks the island to SIGN UP, not to sign in', async () => {
+    // The regression this whole file exists for. `loginWithPasskey()` asserts a
+    // credential that already exists; on a device that has never registered it
+    // fails as `passkey_not_allowed`, which the user sees as a broken Face ID
+    // when it is actually a sign-in asked where only a sign-up is true.
+    const { calls, release } = withIsland();
+    const go = vi.spyOn(Router, 'go').mockImplementation(() => undefined);
+    try {
+      await Actions['biometric'](biometricButton('onboarding'));
+      expect(calls).toEqual(['register']);
+      expect(calls).not.toContain('login');
+      expect(go).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+  });
+
+  it('a handle that cannot sign up cannot pass the island contract', async () => {
+    // A handle with no `register` is not a valid island. Asserted on the TYPE,
+    // not on behaviour, because the failure it prevents is a crash the first
+    // time somebody taps "create account" — the one journey that has never run.
+    const src = readFileSync(resolve(process.cwd(), 'src/wire/privy.ts'), 'utf8');
+    const iface = src.slice(src.indexOf('export interface PrivyIslandHandle'));
+    expect(iface.slice(0, iface.indexOf('}'))).toMatch(/\bregister\(\):\s*Promise<void>;/);
+  });
+
+  it('a rejected SIGN-UP ceremony reports it and writes nothing', async () => {
+    // The signup branch needs its own failure test: the sign-in one passing
+    // says nothing about the path a new user actually takes.
+    const toast = vi.spyOn(BP.ui, 'toast').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const go = vi.spyOn(Router, 'go').mockImplementation(() => undefined);
+    const release = privy.setPrivyIslandHandle({
+      login: async () => undefined,
+      register: async () => { throw new Error('no credential'); },
+      logout: async () => undefined,
+    });
+    try {
+      await Actions['biometric'](biometricButton('onboarding'));
+      expect(toast).toHaveBeenCalledTimes(1);
+      expect(go).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+  });
+
   it('a rejected ceremony reports it and writes nothing', async () => {
+    // `login` mode, because that is the ceremony whose rejection this handle
+    // throws. It used to be `onboarding`, which only exercised the throw by
+    // accident: onboarding called login before, and now calls signup, so the
+    // handle below and the button above would disagree about which ceremony
+    // even runs. A test that reaches its assertion for the wrong reason is
+    // worse than no test.
     const toast = vi.spyOn(BP.ui, 'toast').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const go = vi.spyOn(Router, 'go').mockImplementation(() => undefined);
     const release = privy.setPrivyIslandHandle({
       login: async () => { throw new Error('user cancelled'); },
+      register: async () => undefined,
       logout: async () => undefined,
     });
     try {
-      await Actions['biometric'](biometricButton('onboarding'));
+      await Actions['biometric'](biometricButton('login'));
       // A silent failure here is a button that animates and does nothing.
       expect(toast).toHaveBeenCalledTimes(1);
       // The user must NOT be walked into the mock onboarding as if it worked.
@@ -229,6 +291,7 @@ describe('logout', () => {
     vi.spyOn(BP.ui, 'confirm').mockImplementation(async () => true);
     const release = privy.setPrivyIslandHandle({
       login: async () => undefined,
+      register: async () => undefined,
       logout: async () => { order.push(Store.get().session ? 'logout' : 'logout-after-wipe'); },
     });
     try {
@@ -246,6 +309,7 @@ describe('logout', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const release = privy.setPrivyIslandHandle({
       login: async () => undefined,
+      register: async () => undefined,
       logout: async () => { throw new Error('offline'); },
     });
     try {

@@ -465,17 +465,25 @@ describe('commands from vanilla into the island', () => {
 
   it('forwards to the mounted handle and survives a stale unmount', async () => {
     const login = vi.fn(async () => undefined);
+    const register = vi.fn(async () => undefined);
     const logout = vi.fn(async () => undefined);
-    const release = privy.setPrivyIslandHandle({ login, logout });
+    const release = privy.setPrivyIslandHandle({ login, register, logout });
     expect(privy.hasPrivyIsland()).toBe(true);
 
     await privy.requestPrivyLogin();
     expect(login).toHaveBeenCalledTimes(1);
 
+    // The sign-up command is a separate member, not a flag on `login`: WebAuthn
+    // treats asserting and creating as different operations, so a handle that
+    // only answers `login` cannot serve a person who has no passkey yet.
+    await privy.requestPrivyRegister();
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(login).toHaveBeenCalledTimes(1);
+
     // A replacement island registers BEFORE the old one's cleanup runs. A bare
     // `handle = null` teardown would kill the live island.
     const replacement = vi.fn(async () => undefined);
-    const releaseReplacement = privy.setPrivyIslandHandle({ login: replacement, logout });
+    const releaseReplacement = privy.setPrivyIslandHandle({ login: replacement, register, logout });
     release();
     await privy.requestPrivyLogin();
     expect(replacement).toHaveBeenCalledTimes(1);

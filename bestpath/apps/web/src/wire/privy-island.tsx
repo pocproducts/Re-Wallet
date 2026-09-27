@@ -34,7 +34,13 @@
  * language the rest of the app speaks.
  */
 
-import { PrivyProvider, useLoginWithPasskey, useLogout, usePrivy } from '@privy-io/react-auth';
+import {
+  PrivyProvider,
+  useLoginWithPasskey,
+  useLogout,
+  usePrivy,
+  useSignupWithPasskey,
+} from '@privy-io/react-auth';
 import { createRoot } from 'react-dom/client';
 import { useEffect } from 'react';
 import {
@@ -85,44 +91,77 @@ const PRIVY_CONFIG = {
  */
 function PrivyBridge(): null {
   const { ready, error, getAccessToken } = usePrivy();
-  const { loginWithPasskey } = useLoginWithPasskey({
-    /**
-     * WebAuthn succeeded. That is NOT yet a session.
-     *
-     * The SDK's `onComplete` hands over `{ user, isNewUser, loginMethod }` and
-     * no token at all — the access token is a separate `getAccessToken()` call.
-     * Anyone who assumed `onComplete` carried an `idToken` would send
-     * `undefined` to the backend and get a 401 they cannot debug.
-     *
-     * `isNewUser` is deliberately NOT forwarded as truth: the backend owns the
-     * user table and decides register-vs-login itself. The SDK's opinion is
-     * only used for logging.
-     */
-    onComplete: ({ user, isNewUser }) => {
-      void (async () => {
-        try {
-          const accessToken = await getAccessToken();
-          if (typeof accessToken !== 'string' || accessToken.length === 0) {
-            throw new Error('privy returned no access token');
-          }
-          // The token goes into `wire/privy.ts` and does not come back out.
-          // That function hydrates the store from the BACKEND's response and
-          // emits `bp:privy:authenticated` only once the store is whole.
-          await exchangePrivyToken(accessToken);
-        } catch (err) {
-          // Stage 'token', not 'login': WebAuthn already passed. Telling the
-          // user to "revisa tu passkey" when the passkey was fine sends them
-          // to retry the thing that is not broken.
-          console.info('[rewallet] privy: passkey ok, token exchange failed', { isNewUser, userId: user?.id });
-          emitPrivyError('token', formatPrivyError(err, 'token'));
+
+  /**
+   * WebAuthn succeeded. That is NOT yet a session.
+   *
+   * Shared by BOTH ceremonies on purpose. Sign-in and sign-up differ only in
+   * which ceremony ran; once the user has authenticated, the rest is
+   * identical, and it is the rest that is expensive to get right (fetch a
+   * token, refuse an empty one, hand it over exactly once, report a failure
+   * with the right stage). Duplicating it would mean the day the exchange
+   * changes, one copy gets updated and the other silently does not.
+   *
+   * The SDK's `onComplete` hands over `{ user, isNewUser, loginMethod }` and
+   * no token at all — the access token is a separate `getAccessToken()` call.
+   * Anyone who assumed `onComplete` carried an `idToken` would send
+   * `undefined` to the backend and get a 401 they cannot debug.
+   *
+   * `isNewUser` is deliberately NOT forwarded as truth: the backend owns the
+   * user table and decides register-vs-login itself. The SDK's opinion is
+   * only used for logging.
+   */
+  const completeCeremony = (meta: { user?: { id?: string }; isNewUser?: boolean }) => {
+    void (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        if (typeof accessToken !== 'string' || accessToken.length === 0) {
+          throw new Error('privy returned no access token');
         }
-      })();
-    },
-    onError: (err) => {
-      // A rejected assertion, a cancelled prompt, a missing platform
-      // authenticator — all of them are "login failed" to the user.
-      emitPrivyError('login', formatPrivyError(err, 'login'));
-    },
+        // The token goes into `wire/privy.ts` and does not come back out.
+        // That function hydrates the store from the BACKEND's response and
+        // emits `bp:privy:authenticated` only once the store is whole.
+        await exchangePrivyToken(accessToken);
+      } catch (err) {
+        // Stage 'token', not 'login': WebAuthn already passed. Telling the
+        // user to "revisa tu passkey" when the passkey was fine sends them
+        // to retry the thing that is not broken.
+        console.info('[rewallet] privy: passkey ok, token exchange failed', {
+          isNewUser: meta.isNewUser,
+          userId: meta.user?.id,
+        });
+        emitPrivyError('token', formatPrivyError(err, 'token'));
+      }
+    })();
+  };
+
+  const onCeremonyError = (err: unknown) => {
+    // A rejected assertion, a cancelled prompt, a missing platform
+    // authenticator — all of them are "login failed" to the user.
+    emitPrivyError('login', formatPrivyError(err, 'login'));
+  };
+
+  const { loginWithPasskey } = useLoginWithPasskey({
+    onComplete: (meta) => completeCeremony(meta),
+    onError: onCeremonyError,
+  });
+
+  /**
+   * The SIGN-UP half. This is what makes a new user possible at all.
+   *
+   * `useLoginWithPasskey` asks WebAuthn to ASSERT a credential that already
+   * exists, so on a device that has never registered it fails with
+   * `NotAllowedError` — which Privy reports as `passkey_not_allowed`, and which
+   * reads exactly like a broken fingerprint reader. It is not: it is a login
+   * being asked where only a signup would be true.
+   *
+   * Note the hook name. It is `useSignupWithPasskey`, and there is no
+   * `useRegisterWithPasskey` in this SDK — verified against the installed
+   * 3.45.0, not remembered.
+   */
+  const { signupWithPasskey } = useSignupWithPasskey({
+    onComplete: (meta) => completeCeremony(meta),
+    onError: onCeremonyError,
   });
 
   const { logout } = useLogout();
@@ -143,12 +182,15 @@ function PrivyBridge(): null {
    *
    * Direction matters: events flow island → vanilla, and COMMANDS flow back
    * vanilla → island. The vanilla code calls `requestPrivyLogin()` /
-   * `requestPrivyLogout()` from `wire/privy.ts` and never imports this file,
-   * which keeps Preact out of the import graph of every screen.
+   * `requestPrivyRegister()` / `requestPrivyLogout()` from `wire/privy.ts` and
+   * never imports this file, which keeps Preact out of the import graph of
+   * every screen. The handle carries both ceremonies because the caller knows
+   * whether the person is new, and only it does.
    */
   useEffect(() => {
     const handle: PrivyIslandHandle = {
       login: () => loginWithPasskey(),
+      register: () => signupWithPasskey(),
       logout: async () => {
         // End the Privy session FIRST. If this throws, the local ceremony is
         // still alive and the honest thing to do is leave the user signed in
@@ -158,7 +200,7 @@ function PrivyBridge(): null {
       },
     };
     return setPrivyIslandHandle(handle);
-  }, [loginWithPasskey, logout]);
+  }, [loginWithPasskey, signupWithPasskey, logout]);
 
   return null;
 }

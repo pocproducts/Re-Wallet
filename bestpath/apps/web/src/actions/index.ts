@@ -6,7 +6,7 @@ import { Router } from '../core/router';
 import { Flow } from '../flow';
 import { DEFAULT_COUNTRY, getCountry, toE164 } from '../components/countries';
 import { normalizeTag } from '@bestpath/shared/tag';
-import { hasPrivyIsland, requestPrivyLogin } from '../wire/privy';
+import { hasPrivyIsland, requestPrivyLogin, requestPrivyRegister } from '../wire/privy';
 
 /** Copy without the async clipboard API, for insecure origins. */
 function fallbackCopy(text, done){
@@ -45,6 +45,13 @@ export const Actions = BP.actions = {
     // in one `Store.set`, and routes to onboarding or home). Nothing in this
     // action decides where a logged-in user lands.
     //
+    // `mode` CHOOSES THE CEREMONY, and it has to. Sign-in asserts a passkey
+    // that already exists; sign-up creates one. Calling sign-in for a person
+    // arriving from onboarding is a WebAuthn request for a credential nothing
+    // has produced yet, and it fails as `passkey_not_allowed` — which reads
+    // like a broken biometric reader and is actually a sign-in asked where only
+    // a sign-up is true. `mode` is read here and used in BOTH worlds below.
+    //
     // Below this branch is the MOCK path, kept byte-for-byte for builds with no
     // `VITE_PRIVY_APP_ID`: the island never mounts, login stays local, and the
     // 172 tests that drive this action keep working. One `hasPrivyIsland()`
@@ -52,7 +59,8 @@ export const Actions = BP.actions = {
     if (hasPrivyIsland()){
       U.haptic(10);
       try {
-        await requestPrivyLogin();
+        if (mode === 'login') await requestPrivyLogin();
+        else await requestPrivyRegister();
       } catch (err) {
         // The bridge already emitted `bp:privy:error` with stage-specific copy
         // and logged the real cause. This toast exists only so the tap visibly
