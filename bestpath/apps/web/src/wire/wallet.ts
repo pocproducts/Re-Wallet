@@ -68,6 +68,8 @@ interface ApiEnvelope<T> {
   code?: number;
 }
 
+export type { ApiEnvelope };
+
 /** A 401 is an answer, not a failure: it means "no session", and the boot route depends on that. */
 export class WalletApiError extends Error {
   readonly status: number;
@@ -86,14 +88,40 @@ export class WalletApiError extends Error {
   }
 }
 
-const requestJson = async <T>(path: string): Promise<{ status: number; envelope: ApiEnvelope<T> }> => {
+/**
+ * The ONE transport in the app.
+ *
+ * It was GET-only and private, and the temptation was to add a second transport
+ * for the profile writes. Two transports is how "the API" stops being one idea:
+ * `wire/privy.ts` already carries a comment saying the resolution of `API_BASE`
+ * has to stay identical to this one, and a third copy of the fetch, the envelope
+ * and the error shape is three places for them to drift.
+ *
+ * So the method and the body are parameters with defaults, and every existing
+ * caller keeps working unchanged: a call with only a path is still a GET with no
+ * headers.
+ */
+export const requestJson = async <T>(
+  path: string,
+  init: { method?: 'GET' | 'PATCH' | 'POST' | 'DELETE'; body?: unknown } = {},
+): Promise<{ status: number; envelope: ApiEnvelope<T> }> => {
+  const { method = 'GET', body } = init;
+  const hasBody = body !== undefined;
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
-      method: 'GET',
+      method,
       credentials: 'include',
+      // ONLY when there is a body. A GET with `content-type: application/json`
+      // and no body is a request some proxies and caches treat as malformed,
+      // and the header would be there for no reason.
+      ...(hasBody ? { headers: { 'content-type': 'application/json' } } : {}),
+      ...(hasBody ? { body: JSON.stringify(body) } : {}),
     });
   } catch (err) {
+    // Offline, DNS, the API not running. The browser's "Failed to fetch" is
+    // logged and dropped: shown to a user it reads as THEIR connection.
     console.warn('[rewallet] wallet: request failed', path, err);
     throw new WalletApiError('wallet request failed', 0);
   }
