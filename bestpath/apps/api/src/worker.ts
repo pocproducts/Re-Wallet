@@ -132,10 +132,22 @@ export default {
       const db = getDb(env.DATABASE_URL);
       await syncWalletBalances(db, { env, log });
     } catch (err) {
-      // `console.error` and not the pino logger: the logger is built from the
-      // env that just failed to load, so on a config error the one thing that
-      // still works is the platform log.
-      console.error('[rewallet] balance sync (cron) falló', err);
+      // THE CAUSE, not just the message. `Failed query: select …` names the
+      // symptom and nothing else, and this is the one log line an operator has
+      // when the mirror silently stops: the driver reason is in `err.cause`, and
+      // without it the next twenty minutes are spent re-checking the schema that
+      // was never the problem.
+      //
+      // `console.error` and not the pino logger: the logger is built from the env
+      // that may be the thing that just failed to load, so on a config error the
+      // platform log is the one that still works.
+      const cause = (err as { cause?: unknown } | null)?.cause;
+      console.error(
+        '[rewallet] balance sync (cron) falló:',
+        err instanceof Error ? err.message : String(err),
+        '— causa:',
+        cause === undefined ? 'sin causa' : String(cause),
+      );
     }
   },
 };
