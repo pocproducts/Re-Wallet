@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getEnv, type Env } from '@bestpath/config';
 import { loadEnvFiles } from '../../src/lib/dotenv';
+import { testEnv } from '../helpers/testDb';
 import { createApp } from '../../src/app';
 import { generateToken, hashToken } from '../../src/lib/crypto';
 import { sessions, users, wallets } from '../../src/db/schema';
@@ -27,7 +28,7 @@ import { SESSION_COOKIE } from '../../src/lib/session';
  */
 
 loadEnvFiles(import.meta.url);
-const env: Env = getEnv();
+const env: Env = testEnv();
 const app = createApp(env);
 
 const SUFFIX = randomUUID().slice(0, 8);
