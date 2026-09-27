@@ -149,6 +149,17 @@ describe('backend response to store state, through the mapper', () => {
     expect(patch.bpTag).toBe('@ana');
   });
 
+  it('the wallet ADDRESS reaches the store, not only the balance', () => {
+    // This is the regression that kept a registered user's profile reading
+    // "Se genera al crear tu cuenta" while the wallet sat in the response the
+    // client was already holding: `walletAddress` was only ever written by the
+    // yield-position patch, so a user with no Aave position never had one.
+    expect(privy.toStorePatch(session()).walletAddress).toBe('0xabc');
+
+    const moved = session({ wallet: { address: '0x6c9F272E77A84fe90E83372c37Bfd6Da05aB7ae1' } });
+    expect(privy.toStorePatch(moved).walletAddress).toBe('0x6c9F272E77A84fe90E83372c37Bfd6Da05aB7ae1');
+  });
+
   it('hasReceivedFunds is a latch read from firstFundsAt, not from the balance', () => {
     expect(privy.toStorePatch(session()).hasReceivedFunds).toBe(true);
     // A wallet holding a fat balance that has never been credited is still
