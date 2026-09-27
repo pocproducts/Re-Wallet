@@ -65,6 +65,28 @@ const databaseUrlFor = (env: WorkerEnv): string => {
   );
 };
 
+/**
+ * THE `/api` PREFIX IS STRIPPED HERE, and without it nothing works.
+ *
+ * The frontend calls `/api/auth/...` because that is what the Vite dev proxy
+ * rewrites to `/auth/...`. In production there is no Vite and no proxy, so the
+ * Worker has to do the same rewrite or every call 404s — a failure that only
+ * shows up after deploying, with the API itself healthy and the tests green.
+ *
+ * So the two environments keep the SAME public URL shape, and the strip lives
+ * exactly where the dev proxy lived.
+ */
+const API_PREFIX = '/api';
+
+export const stripApiPrefix = (request: Request): Request => {
+  const { pathname, search, hash } = new URL(request.url);
+  if (pathname === API_PREFIX) {
+    return new Request(new URL('/', request.url), request);
+  }
+  if (!pathname.startsWith(`${API_PREFIX}/`)) return request;
+  return new Request(new URL(pathname.slice(API_PREFIX.length) + search + hash, request.url), request);
+};
+
 export default {
   async fetch(request: Request, workerEnv: WorkerEnv, ctx: WorkerExecutionContext): Promise<Response> {
     // getEnv validates and throws on bad config, which is deliberate in a wallet
@@ -77,6 +99,6 @@ export default {
 
     void ctx.waitUntil(Promise.resolve());
 
-    return app.fetch(request, { env, log, executionCtx: ctx } as never);
+    return app.fetch(stripApiPrefix(request), { env, log, executionCtx: ctx } as never);
   },
 };

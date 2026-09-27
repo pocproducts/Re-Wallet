@@ -56,6 +56,17 @@ API en `:3000`, web en `http://localhost:5173`.
 | `pnpm db:migrate` | Aplica migraciones |
 | `./dev.sh check` | Diagnóstico del entorno |
 
+## Deploy
+
+Hay **un solo Worker** que sirve la API y la web (`wrangler.toml`, en la raíz del
+repo), y es una decisión, no una comodidad: la sesión es una cookie httpOnly con
+`SameSite=Lax`, y con dos orígenes —Pages en `rewallet.win` y el Worker en
+`api.rewallet.win`— esa cookie tiene que volverse cross-site (`SameSite=None`
+más CORS con credenciales). Un solo origen lo evita y deja la auth como está.
+
+El plan de Pages por separado, con el costo exacto, está en
+`odd/tasks/deploy-workers.md`.
+
 ## Las siete reglas del repo
 
 Cada una existe porque romperla costó un bug, no por estilo.

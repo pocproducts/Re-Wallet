@@ -3,3 +3,6 @@
 
 # Estado local del runtime
 .pi/
+
+# Wrangler: cache y tokens de la cuenta, estado local de la maquina
+.wrangler/

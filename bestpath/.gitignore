@@ -20,3 +20,4 @@ playwright-report/
 test-results/
 # Local Pi runtime state
 .atl/
+.neon
