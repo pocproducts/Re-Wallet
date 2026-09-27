@@ -72,6 +72,20 @@ VITE_API_BASE_URL = ""
 [observability]
 enabled = true
 
+# ── El espejo del saldo ──────────────────────────────────────────────────────
+# `wallets.balance` es un espejo de la cadena, y un espejo hay que refrescarlo
+# con algo que pueda llegar tarde: por eso es un cron y no un write dentro de
+# `GET /auth/session`. Refrescarlo en la lectura de sesión metía una llamada de
+# red y dos escrituras en el path que decide si la app carga, y un RPC lento se
+# convertía en un 500 del login.
+#
+# Cada 5 minutos: la latencia de un depósito no es el contrato, y una moneda que
+# tarda cinco minutos en aparecer es aceptable para un balance. Cloudflare no
+# reintenta un cron, así que el handler captura y loguea el error en vez de dejar
+# la excepción sin manejar y congelar el espejo en silencio.
+[triggers]
+crons = ["*/5 * * * *"]
+
 # ── Postgres ─────────────────────────────────────────────────────────────────
 [[hyperdrive]]
 binding = "HYPERDRIVE"
