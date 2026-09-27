@@ -194,6 +194,7 @@ describe('hydration', () => {
     expect(s.balance).toBe(1250.5);
     expect(s.userName).toBe('Ana Sofía Chen');
     expect(s.hasReceivedFunds).toBe(true);
+    expect(s.walletAddress).toBe('0xabc');
     expect(s).not.toHaveProperty('sessionToken');
   });
 
@@ -208,6 +209,19 @@ describe('hydration', () => {
     expect(sets).toHaveLength(1);
     expect(sets[0]).toEqual(expect.arrayContaining(['balance', 'movements']));
     expect(Store.get().movements[0].amount).toBe(100);
+  });
+
+  it('a refresh also hydrates the wallet address, not just its balance', async () => {
+    // `/wallet` answers with the address in the same payload as the balance.
+    // Reading the number and dropping the address is what left the profile
+    // showing a balance the user had no way to check against an explorer.
+    vi.stubGlobal('fetch', routeFetch({
+      '/wallet': () => ok(apiWallet({ address: '0x6c9F272E77A84fe90E83372c37Bfd6Da05aB7ae1' })),
+      '/wallet/movements': () => ok({ items: [], cursor: null }),
+    }));
+    await wallet.refreshWallet();
+
+    expect(Store.get().walletAddress).toBe('0x6c9F272E77A84fe90E83372c37Bfd6Da05aB7ae1');
   });
 
   it('a failed refresh leaves the store completely untouched', async () => {

@@ -38,7 +38,6 @@ import {
   toBalance,
   toHasReceivedFunds,
   toMovement,
-  toUser,
   toYieldStartedAt,
   type ApiMovement,
   type ApiSession,
@@ -47,7 +46,7 @@ import {
 // The envelope rules come from the DOM-free module, NOT from `./privy`: this
 // file has to be importable without a browser so the API's test suite can use
 // the real guards on a real response. `wire/privy.ts` imports the Router.
-import { assertNoCredentials, isApiSession, PrivyBridgeError } from './session-envelope';
+import { assertNoCredentials, isApiSession, PrivyBridgeError, toStorePatch } from './session-envelope';
 import type { AppState, Movement } from '../types';
 
 /**
@@ -95,8 +94,6 @@ const requestJson = async <T>(path: string): Promise<{ status: number; envelope:
       credentials: 'include',
     });
   } catch (err) {
-    // Offline, DNS, the API not running. The browser's "Failed to fetch" is
-    // logged and dropped: shown to a user it reads as THEIR connection.
     console.warn('[rewallet] wallet: request failed', path, err);
     throw new WalletApiError('wallet request failed', 0);
   }
@@ -268,22 +265,20 @@ const safePatch = (patch: Partial<AppState>): Partial<AppState> => {
   return stripped;
 };
 
-/** `{ user, wallet }` → store. Same projection the login path uses, on purpose. */
-export const toSessionPatch = (session: ApiSession): Partial<AppState> => {
-  const user = toUser(session.user);
-  const wallet = session.wallet;
-  return safePatch({
-    userName: user.name,
-    firstName: user.firstName,
-    lastName: user.lastName,
-    bpTag: user.tag,
-    recoveryEmail: session.user.email ?? '',
-    recoveryPhone: session.user.phone ?? '',
-    balance: toBalance(wallet),
-    hasReceivedFunds: toHasReceivedFunds(wallet),
-    yieldStartedAt: toYieldStartedAt(wallet),
-  });
-};
+/**
+ * `{ user, wallet }` → store. The login path and the reload path.
+ *
+ * A DELEGATION, and it used to be a third copy of the projection. That is how
+ * the wallet address went missing from the profile while every one of the three
+ * copies looked correct on its own: `toStorePatch` (login) and this one (reload)
+ * each listed the fields they remembered, and the address was in neither. The
+ * day a field is added, exactly one copy gets it.
+ *
+ * `toStorePatch` owns the projection, the strip and the credential audit, so
+ * there is one place where a session becomes store state — which is the property
+ * the comment above used to *claim* and did not have.
+ */
+export const toSessionPatch = (session: ApiSession): Partial<AppState> => toStorePatch(session);
 
 /** One wallet → the three store fields that describe it. */
 /**
@@ -345,6 +340,10 @@ export const toPositionPatch = (position: ApiPosition): Partial<AppState> => {
 
 export const toWalletPatch = (wallet: ApiWallet): Partial<AppState> =>
   safePatch({
+    // Same reason as in `toStorePatch`: a `/wallet` read hydrates the balance,
+    // and hydrating a balance without the address it belongs to is what left the
+    // profile showing a number with nothing to check it against.
+    walletAddress: wallet.address,
     balance: toBalance(wallet),
     hasReceivedFunds: toHasReceivedFunds(wallet),
     yieldStartedAt: toYieldStartedAt(wallet),
