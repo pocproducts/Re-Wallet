@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { getEnv } from '@bestpath/config';
 import { loadEnvFiles } from '../../src/lib/dotenv';
+import { testEnv } from '../helpers/testDb';
 import { createApp } from '../../src/app';
 import { toMinorUnits, fromMinorUnits, add, sub, applyBps, formatBps } from '../../src/lib/money';
 import { generateToken, hashToken, signPayload, safeEqual } from '../../src/lib/crypto';
@@ -15,7 +16,7 @@ import { generateToken, hashToken, signPayload, safeEqual } from '../../src/lib/
 
 loadEnvFiles(import.meta.url);
 
-const env = getEnv();
+const env = testEnv();
 const app = createApp(env);
 
 afterAll(async () => {

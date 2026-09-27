@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getEnv } from '@bestpath/config';
 import { loadEnvFiles } from '../../src/lib/dotenv';
+import { testEnv } from '../helpers/testDb';
 import { createApp } from '../../src/app';
 import { generateToken, hashToken } from '../../src/lib/crypto';
 import { movements, sessions, users, wallets } from '../../src/db/schema';
@@ -23,7 +24,7 @@ import { SESSION_COOKIE } from '../../src/lib/session';
 
 loadEnvFiles(import.meta.url);
 
-const env = getEnv();
+const env = testEnv();
 const app = createApp(env);
 
 /** Short random tag so a concurrent run can never collide on the UNIQUE columns. */
