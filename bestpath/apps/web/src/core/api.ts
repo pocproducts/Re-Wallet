@@ -24,10 +24,6 @@ export const Api = BP.api = {
     if (amount > s.balance) return { ok:false, error:'insufficient' };
     return { ok:true, amount, recipient };
   },
-  async accrueYield(){
-    const [min,max] = BP.config.yieldPerTick;
-    return Number(U.rand(min,max).toFixed(4));
-  },
   async createPaymentRequest(amount, tag){
     await U.wait(300);
     const url = `https://rewallet.app/pay/${tag.replace('@','')}/${amount.toFixed(2)}`;

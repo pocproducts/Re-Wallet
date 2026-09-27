@@ -8,12 +8,13 @@
  *
  * ── Why it is a separate module and not a rewrite of `core/api.ts` ──────────
  *
- * `core/api.ts` is also where the WRITE side of the prototype lives
- * (`addMoney`, `sendMoney`, `accrueYield`), and those still have no backend.
- * Rewriting the file would mean a half-real boundary, which is the worst of
- * both: a developer would not know which call to trust. This module is
- * explicitly the READ side, and the day the writes land, the mock's read-shaped
- * helpers are what gets deleted — not merged in.
+ * It was, and it stopped being the plan. `core/api.ts` is where the WRITE side
+ * of the prototype lived, and one of those writes was `accrueYield`, which
+ * returned a random number that the home screen ADDED to the balance every nine
+ * seconds. That function is gone, and with it the reason to keep a second,
+ * fake boundary around: this module is now the only data boundary in the app.
+ * The write calls that remain (`addMoney`, `sendMoney`, `createPaymentRequest`)
+ * are the next ones to go, and when they do this module is the whole boundary.
  *
  * ── The two rules that outrank everything here ─────────────────────────────
  *

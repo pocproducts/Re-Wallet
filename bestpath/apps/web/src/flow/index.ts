@@ -8,8 +8,20 @@ import { pickCountry, preselectFor } from '../components/countryPicker';
 import { COUNTRIES, DEFAULT_COUNTRY, getCountry, toE164 } from '../components/countries';
 import { shownBalance } from '../screens/shared';
 import { hasPrivyIsland, requestPrivyLogout } from '../wire/privy';
+import { refreshWallet } from '../wire/wallet';
 
 /* ---- business flow ---- */
+/**
+ * How often the live balance re-reads itself.
+ *
+ * It is a constant here and not a config knob because the knob it replaces
+ * (`yieldTickMs`, 9s) only existed to space out a random number. A network call
+ * has a real cost and the number it returns is reconciled on a five-minute cron,
+ * so polling faster would spend battery to re-read something that cannot have
+ * changed.
+ */
+const LIVE_BALANCE_POLL_MS = 30_000;
+
 export const Flow = BP.flow = {
   _yieldTimer: null,
   _timeTimer: null,
@@ -244,28 +256,45 @@ export const Flow = BP.flow = {
     });
   },
 
+  /**
+   * Keep the balance fresh by RE-READING it. It used to grow it.
+   *
+   * This timer used to add `U.rand(0.008, 0.024)` to the balance every 9
+   * seconds, write a "Rendimiento" movement into the store, and redraw the
+   * number. It never asked the chain or the API for anything: the number on
+   * screen was a random draw between 1% and 3% of the balance, every nine
+   * seconds, for as long as the app was open. On a balance of 0.83 the figure
+   * multiplied. In a wallet app that is the worst thing the code in this repo
+   * can do, and it was not a mock behind a flag: it was the only balance the
+   * user ever saw.
+   *
+   * What replaces it is the same timer asking the question it should have been
+   * asking all along: what does the server think the balance is. `refreshWallet`
+   * is a real `GET /wallet` plus `GET /wallet/movements`, and the number it
+   * writes came from `wallets.balance`, which the cron reconciles against USDC
+   * on chain. So the balance on screen now moves when the money moves, and stops
+   * when it does not.
+   *
+   * Thirty seconds, not nine: this is a network call, and the balance it returns
+   * is reconciled on a five-minute cron, so a faster poll would spend the user's
+   * battery to re-read a number that cannot have changed.
+   */
   startYieldTicker(){
     Flow.stopYieldTicker();
     const s = Store.get();
-    if (s.balance <= 0) return;
+    if (s.balance <= 0 || !s.session) return;
     Flow._yieldTimer = setInterval(async () => {
       const st = Store.get();
-      if (st.balance <= 0 || !navigator.onLine) return;
-      const gain = await BP.api.accrueYield();
-      const newBalance = Number((st.balance + gain).toFixed(4));
-      const balanceEl = document.querySelector('[data-balance]');
-      if (balanceEl) balanceEl.textContent = U.money(newBalance);
-      const last = st.movements[0];
-      let movements;
-      if (last && last.type === 'yield' && Date.now() - last.at < 30000){
-        const merged = Object.assign({}, last, { amount:Number((last.amount + gain).toFixed(4)), at:Date.now() });
-        movements = [merged, ...st.movements.slice(1)];
-      } else {
-        movements = [{ id:U.uid(), type:'yield', title:'Rendimiento', amount:gain, at:Date.now() }, ...st.movements];
+      if (st.balance <= 0 || !st.session || !navigator.onLine || document.hidden) return;
+      try {
+        await refreshWallet();
+      } catch (err) {
+        // A failed poll keeps the last known balance. It does NOT zero it, and it
+        // does not invent a new one: showing `$0` for a wallet that holds money
+        // is the one outcome this file exists to prevent.
+        console.warn('[rewallet] no pudimos refrescar el saldo', err);
       }
-      Store.set({ balance:newBalance, movements, lastYieldAt:Date.now() });
-      Flow.refreshMovements();
-    }, BP.config.yieldTickMs);
+    }, LIVE_BALANCE_POLL_MS);
   },
   stopYieldTicker(){ if (Flow._yieldTimer){ clearInterval(Flow._yieldTimer); Flow._yieldTimer = null; } },
   refreshMovements(){

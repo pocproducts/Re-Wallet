@@ -12,8 +12,6 @@ export const config = BP.config = {
   processingMaxMs: 5200,
   sendMinMs: 2400,
   sendMaxMs: 3800,
-  yieldTickMs: 9000,
-  yieldPerTick: [0.008, 0.024],
   annualYieldRate: 0.042,
   maxContacts: 20,
 

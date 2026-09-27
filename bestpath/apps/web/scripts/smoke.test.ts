@@ -104,9 +104,10 @@ describe('screen renderers', () => {
 });
 
 describe('data boundary', () => {
-  it('exposes the mock api surface the wiring phase will replace', () => {
-    for (const m of ['addMoney', 'sendMoney', 'accrueYield', 'createPaymentRequest']) {
-      expect(typeof BP.api[m], `BP.api.${m} missing`).toBe('function');
-    }
+  it('no longer offers the functions that used to invent money', () => {
+    // `accrueYield` returned `U.rand(0.008, 0.024)` and the home screen added it
+    // to the balance every nine seconds. A boundary that still exposes it is a
+    // boundary where the next person wires it up believing it talks to a server.
+    expect(BP.api, 'accrueYield should be gone').not.toHaveProperty('accrueYield');
   });
 });
