@@ -18,6 +18,8 @@
 import { getEnv } from '@bestpath/config';
 import { createApp } from './app';
 import { createLogger } from './lib/logger';
+import { getDb } from './db/client';
+import { syncWalletBalances } from './services/balance';
 
 /**
  * The Worker interface, narrowed to what we actually use.
@@ -100,5 +102,52 @@ export default {
     void ctx.waitUntil(Promise.resolve());
 
     return app.fetch(stripApiPrefix(request), { env, log, executionCtx: ctx } as never);
+  },
+
+  /**
+   * The cron entry: reconcile every wallet balance with the chain.
+   *
+   * WHY A CRON AND NOT THE SESSION READ. `wallets.balance` is a mirror, and a
+   * mirror has to be refreshed by something that is allowed to be late. Refreshing
+   * it inside `GET /auth/session` would put a network call and two writes on the
+   * path that decides whether the app loads at all, and a slow RPC would turn
+   * into a 500 on the session: the login would break because a balance could not
+   * be read. A mirror that is five minutes stale is fine; a login that fails is
+   * not.
+   *
+   * WHY IT MUST NOT THROW. A Cloudflare cron does not retry. An unhandled
+   * rejection here means the mirror silently stops updating, and the symptom is
+   * a wrong number on someone's profile days later, with nothing in the app to
+   * explain it. So the failure is caught, logged with the reason, and the run
+   * ends. The next tick tries again.
+   */
+  async scheduled(
+    _controller: unknown,
+    workerEnv: WorkerEnv,
+    ctx: WorkerExecutionContext,
+  ): Promise<void> {
+    try {
+      const env = getEnv({ ...workerEnv, DATABASE_URL: databaseUrlFor(workerEnv) } as never);
+      const log = createLogger(env);
+      const db = getDb(env.DATABASE_URL);
+      await syncWalletBalances(db, { env, log });
+    } catch (err) {
+      // THE CAUSE, not just the message. `Failed query: select …` names the
+      // symptom and nothing else, and this is the one log line an operator has
+      // when the mirror silently stops: the driver reason is in `err.cause`, and
+      // without it the next twenty minutes are spent re-checking the schema that
+      // was never the problem.
+      //
+      // `console.error` and not the pino logger: the logger is built from the env
+      // that may be the thing that just failed to load, so on a config error the
+      // platform log is the one that still works.
+      const cause = (err as { cause?: unknown } | null)?.cause;
+      console.error(
+        '[rewallet] balance sync (cron) falló:',
+        err instanceof Error ? err.message : String(err),
+        '— causa:',
+        cause === undefined ? 'sin causa' : String(cause),
+      );
+    }
   },
 };
