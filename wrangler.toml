@@ -17,16 +17,35 @@
 # despliegues, no dos apps.
 
 name = "rewallet"
-main = "apps/api/src/worker.ts"
+# El archivo vive en la raíz de ReWallet pero la app está en `bestpath/`, así que
+# estas rutas son relativas a ESTE archivo. Sin el prefijo, wrangler no encuentra
+# ni el entry ni los assets y falla antes de compilar.
+main = "bestpath/apps/api/src/worker.ts"
 compatibility_date = "2026-09-27"
+
+# ── El dominio ───────────────────────────────────────────────────────────────
+# Un solo Worker, un solo origen. La sesion es una cookie httpOnly con
+# `SameSite=Lax`, y eso solo sobrevive si la web y la API viven en el MISMO
+# host: en dos origenes la cookie tendria que volverse cross-site
+# (`SameSite=None; Secure`) mas un middleware de CORS con credenciales. Son
+# exactamente los dos cambios de seguridad que se evitaron a proposito.
+# `custom_domain` hace que Cloudflare cree el registro DNS y el certificado.
+routes = [{ pattern = "rewallet.win", custom_domain = true }]
 
 # ── La web, servida por el mismo Worker ──────────────────────────────────────
 # `dist/` tiene que existir antes de deployar: `pnpm --filter bestpath-wallet build`
 [assets]
-directory = "apps/web/dist"
-# La app es una SPA: cualquier ruta desconocida devuelve el index, no un 404.
-# Sin esto, /home o /settings darian 404 al recargar.
+directory = "bestpath/apps/web/dist"
+# La app es una SPA: cualquier ruta desconocida devuelve el index, no un 404,
+# para que /home o /settings no revienten al recargar.
 not_found_handling = "single-page-application"
+# Por defecto Workers aplica ese fallback SÓLO a requests de navegación, las que
+# detectan por la cabecera `Sec-Fetch-Mode: navigate`. Un browser la manda; un
+# fetch(), un curl o un health check no, y ahí caía el 404 JSON de Hono en
+# lugar del index. Declarar `/api/*` hace explícito qué corre en el Worker: la
+# API y los webhooks, y todo lo demás como asset. Además desactiva la detección
+# implícita, así el comportamiento deja de depender de una cabecera.
+run_worker_first = ["/api/*"]
 
 # ── Variables públicas ───────────────────────────────────────────────────────
 [vars]
@@ -56,7 +75,7 @@ enabled = true
 # ── Postgres ─────────────────────────────────────────────────────────────────
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "REEMPLAZAR_CON_EL_ID_DE_HYPERDRIVE"
+id = "ef0f012dca894ce19e6e2df66e0a385e"
 
 # ── Secrets: `wrangler secret put <NOMBRE>` ─────────────────────────────────
 # PRIVY_APP_ID
