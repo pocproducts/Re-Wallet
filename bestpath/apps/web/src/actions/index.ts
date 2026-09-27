@@ -7,6 +7,7 @@ import { Flow } from '../flow';
 import { DEFAULT_COUNTRY, getCountry, toE164 } from '../components/countries';
 import { hasPrivyIsland, requestPrivyLogin, requestPrivyRegister } from '../wire/privy';
 import { saveProfileName, saveRecovery } from '../wire/profile';
+import { isNotBuilt, requestPaymentRequest } from '../wire/wallet';
 
 /** Copy without the async clipboard API, for insecure origins. */
 function fallbackCopy(text, done){
@@ -213,9 +214,25 @@ export const Actions = BP.actions = {
     if (amount <= 0){ UI.toast('Ingresá un monto válido.','warning'); return; }
     const s = Store.get();
     el.classList.add('is-loading');
-    const result = await BP.api.createPaymentRequest(amount, s.bpTag);
+    // A real call, and a real failure. This used to await a mock that returned a
+    // URL built from `rewallet.app` — a domain that is not ours, for a route that
+    // does not exist — and then showed it in a box the user could copy and share.
+    // A shareable payment link that goes nowhere is worse than no link.
+    let result: { url?: string };
+    try {
+      result = await requestPaymentRequest({ amount, tag: s.bpTag });
+    } catch (err) {
+      el.classList.remove('is-loading');
+      UI.toast(
+        isNotBuilt(err)
+          ? 'Todavía no podemos generar links de pago.'
+          : 'No se pudo generar el link.',
+        'warning',
+      );
+      return;
+    }
     el.classList.remove('is-loading');
-    if (!result.ok){ UI.toast('No se pudo generar el link.','error'); return; }
+    if (!result?.url){ UI.toast('No se pudo generar el link.','error'); return; }
     const resultBox = root.querySelector('[data-request-result]');
     const urlEl = root.querySelector('[data-request-url]');
     urlEl.textContent = result.url;

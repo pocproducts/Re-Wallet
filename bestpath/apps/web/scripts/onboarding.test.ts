@@ -145,26 +145,16 @@ describe('onboarding: the tag field', () => {
     expect(BP.shared.normalizeTag('ÁÉÍ')).toBe('aei');
   });
 
-  it('exposes a checkTag method on the api boundary', () => {
-    // The wiring phase replaces core/api.ts; this is the seam it has to provide.
-    expect(BP.api.checkTag).toBeTypeOf('function');
-  });
-
-  it('checkTag reports taken handles through the boundary', async () => {
-    const taken = await BP.api.checkTag('ana');
-    expect(taken.ok).toBe(true);
-    expect(taken.available).toBe(false);
-    expect(taken.suggestion).toBeTruthy();
-
-    const free = await BP.api.checkTag('ana-lopez-99');
-    expect(free.ok).toBe(true);
-    expect(free.available).toBe(true);
-  });
-
-  it('checkTag rejects a handle that is too short', async () => {
-    const res = await BP.api.checkTag('ab');
-    expect(res.ok).toBe(false);
-    expect(res.error).toBe('invalid');
+  it('NO LONGER claims to check tag availability from the client', () => {
+    // It used to: `checkTag` slept 180ms and answered from a hardcoded set of
+    // five strings, and these three tests pinned that. The onboarding screen then
+    // showed a real-looking availability verdict that came from a demo — it could
+    // tell a user `@ana` was free with the database holding it.
+    //
+    // The client now derives the suggestion from the name and says nothing about
+    // availability, because only the server knows that: `PATCH /me/profile`
+    // allocates the final handle and returns it, and the store takes that one.
+    expect(BP.api.checkTag).toBeUndefined();
   });
 
   it('does not claim verification it does not perform', () => {

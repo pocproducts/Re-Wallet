@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { and, desc, eq, lt, or } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth';
 import { requireIdempotencyKey } from '../middleware/idempotency';
-import { badRequest, internal } from '../lib/errors';
+import { badRequest, internal, notImplemented } from '../lib/errors';
 import { movements } from '../db/schema';
 import { getYieldPosition } from '../services/aave';
 import type { AppEnv } from '../types/context';
@@ -296,12 +296,29 @@ export const walletRoutes = new Hono<AppEnv>()
     });
   })
 
-  .post('/deposit-intent', requireIdempotencyKey(), (c) =>
-    c.json({ ok: true as const, data: { address: null, onrampUrl: null } }),
-  )
-  .post('/send', requireIdempotencyKey(), (c) =>
-    c.json({ ok: true as const, data: { movement: null, newBalance: null } }),
-  )
-  .post('/request', requireIdempotencyKey(), (c) =>
-    c.json({ ok: true as const, data: { url: null, id: null, amount: null } }),
-  );
+  // ── The three money routes, and why they answer 501 ───────────────────────
+  //
+  // They used to answer `200 { ok: true, data: { address: null, … } }`. A 200
+  // with nulls is the same lie the frontend mock told, from the other side: the
+  // client cannot tell "it worked and there is nothing here" from "this does not
+  // exist yet", and a client that cannot tell will invent the rest. That is
+  // exactly what happened — the deposit flow took the 200, added the amount to
+  // the balance on screen and wrote a movement, so a user could watch their
+  // balance grow by pressing "Recibir".
+  //
+  // `notImplemented` is already in `lib/errors.ts` and is the honest answer: a
+  // 501 the client can branch on, and a message that says what is missing.
+  // Signing is the hard part (TEE, gas, idempotency); a null is not a prototype
+  // of it, it is a hole with a success code on it.
+  .post('/deposit-intent', requireIdempotencyKey(), (c) => {
+    void c;
+    throw notImplemented('la/intención de depósito: hace falta firmar y pagar el gas');
+  })
+  .post('/send', requireIdempotencyKey(), (c) => {
+    void c;
+    throw notImplemented('el envío: hace falta firmar con la TEE y registrar el movimiento');
+  })
+  .post('/request', requireIdempotencyKey(), (c) => {
+    void c;
+    throw notImplemented('la solicitud de pago: falta crearla y exponerla por tag');
+  });

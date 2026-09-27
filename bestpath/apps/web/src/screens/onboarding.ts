@@ -107,22 +107,26 @@ Router.register('onboarding', {
     const tagOf    = () => suggestTag([first.value, last.value].filter(Boolean).join(' '));
 
     // ── tag: derived from the name, availability asked of the server ────
+    //
+    // It USED to be asked of the server, and the server was `BP.api.checkTag`,
+    // which answered from a hardcoded `TAKEN` set of five strings and slept
+    // 180ms to look like a request. So the screen showed a real-looking
+    // availability verdict that came from a demo, and a user could be told
+    // `@ana` was free when the database had it taken, or that it was taken when
+    // it was not.
+    //
+    // The truth is smaller and cheaper: the client DERIVES the suggestion from
+    // the name and says nothing about availability, because only the server
+    // knows that. `PATCH /me/profile` allocates the final handle and returns it,
+    // and the store takes that one.
     const checkTag = () => {
       const value = tagOf();
       if (!value || value === checkedTag) { paint(); return; }
       if (!isValidTag(value)) { tagAvailable = false; paint(); return; }
-      void BP.api.checkTag(value).then((res: any) => {
-        if (!res || res.ok !== true) return;
-        checkedTag = value;
-        tagAvailable = res.available === true;
-        // If the derived handle is taken, show what the server would hand out.
-        if (!res.available && res.suggestion) {
-          tagValue.textContent = toDisplayTag(res.suggestion);
-        } else {
-          tagValue.textContent = toDisplayTag(value);
-        }
-        paint();
-      });
+      checkedTag = value;
+      tagAvailable = true;
+      tagValue.textContent = toDisplayTag(value);
+      paint();
     };
 
     const scheduleCheck = () => {

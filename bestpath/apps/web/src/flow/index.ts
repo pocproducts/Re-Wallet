@@ -8,7 +8,7 @@ import { pickCountry, preselectFor } from '../components/countryPicker';
 import { COUNTRIES, DEFAULT_COUNTRY, getCountry, toE164 } from '../components/countries';
 import { shownBalance } from '../screens/shared';
 import { hasPrivyIsland, requestPrivyLogout } from '../wire/privy';
-import { refreshWallet } from '../wire/wallet';
+import { isNotBuilt, refreshWallet, requestDepositIntent, requestSend } from '../wire/wallet';
 
 /* ---- business flow ---- */
 /**
@@ -32,35 +32,55 @@ export const Flow = BP.flow = {
     const subEl = root.querySelector('[data-processing-sub]');
     const actionsEl = root.querySelector('[data-processing-actions]');
     const progressEl = root.querySelector('[data-progress]');
-    const t1 = setTimeout(() => { if (subEl) subEl.innerHTML = 'Casi listo...'; }, 3000);
-    const t2 = setTimeout(() => { if (subEl) subEl.innerHTML = 'Esto puede tardar un poco más de lo normal.<br>Puedes dejar la app abierta.'; }, 10000);
-    const [result] = await Promise.all([
-      BP.api.addMoney(amount, asset),
-      U.wait(U.rand(BP.config.processingMinMs, BP.config.processingMaxMs))
-    ]);
-    clearTimeout(t1); clearTimeout(t2);
-    if (!result.ok){
-      if (subEl) subEl.innerHTML = 'Algo no salió como esperábamos.<br>Puedes reintentar.';
-      if (progressEl) progressEl.classList.add('paused');
-      if (actionsEl) actionsEl.innerHTML = `
-        <div class="dual" style="max-width:320px;margin:0 auto">
-          <button class="btn btn--secondary btn--lg" data-action="back">Volver</button>
-          <button class="btn btn--primary btn--lg" data-action="retry-add" data-amount="${amount}" data-asset="${U.esc(asset)}">Reintentar</button>
-        </div>`;
-      return;
+
+    // THE MONEY DOES NOT MOVE HERE, AND THAT IS THE POINT.
+    //
+    // This used to await a mock that resolved `{ ok: true, amount }` after a
+    // random delay, then add that amount to the balance and write a "deposit"
+    // movement into the store. Pressing "Recibir" grew the number on screen. The
+    // backend was asked nothing: `POST /wallet/deposit-intent` answered
+    // `200 { ok: true, address: null }` and nobody branched on it.
+    //
+    // So the only thing left to do is ask, and believe the answer. A deposit
+    // exists when the server says it exists — which today it does not, and says
+    // so with a 501.
+    try {
+      await requestDepositIntent({ asset: asset || 'USDC' });
+    } catch (err) {
+      return Flow._moneyNotReady(subEl, progressEl, actionsEl, 'recibir', err);
     }
-    const s = Store.get();
-    const newBalance = Number((s.balance + result.amount).toFixed(4));
-    Store.set({
-      balance: newBalance,
-      // Latches on the first credit and never resets, even if the user later
-      // spends the balance back down to zero.
-      hasReceivedFunds: true,
-      movements: [{ id:U.uid(), type:'deposit', title:`Añadiste ${U.money(result.amount)}`, amount:result.amount, at:Date.now(), status:'completed', meta:{} }, ...s.movements],
-      lastYieldAt: Date.now()
-    });
-    U.haptic(12);
-    Router.replace('home', { transition:'fade' });
+
+    // Reaching here means the server accepted a real intent, which it cannot do
+    // yet. The balance is deliberately NOT touched: nothing arrived.
+    if (subEl) subEl.innerHTML = 'Todo listo.';
+    if (progressEl) progressEl.classList.add('paused');
+    if (actionsEl) actionsEl.innerHTML = `
+      <div class="dual" style="max-width:320px;margin:0 auto">
+        <button class="btn btn--secondary btn--lg" data-action="back">Volver</button>
+      </div>`;
+  },
+
+  /**
+   * The one place a money flow is allowed to end in "not built yet".
+   *
+   * Every money button in the app has always shown a processing screen with a
+   * progress bar that advanced on a timer, and then completed as if it had
+   * worked. Now they all end here instead, with a sentence that says the truth,
+   * and without touching a single number.
+   */
+  _moneyNotReady(subEl, progressEl, actionsEl, what, err){
+    const notBuilt = isNotBuilt(err);
+    console.warn(`[rewallet] ${what}: no se pudo iniciar`, err);
+    if (subEl) {
+      subEl.innerHTML = notBuilt
+        ? 'Todavía no podemos hacer esto.<br>La cuenta y tu passkey ya funcionan.'
+        : 'No pudimos iniciar la operación.<br>Podés intentarlo de nuevo.';
+    }
+    if (progressEl) progressEl.classList.add('paused');
+    if (actionsEl) actionsEl.innerHTML = `
+      <div class="dual" style="max-width:320px;margin:0 auto">
+        <button class="btn btn--secondary btn--lg" data-action="back">Volver</button>
+      </div>`;
   },
 
   async sendMoney(){
@@ -199,36 +219,23 @@ export const Flow = BP.flow = {
     const subEl = root.querySelector('[data-processing-sub]');
     const actionsEl = root.querySelector('[data-processing-actions]');
     const progressEl = root.querySelector('[data-progress]');
-    const t1 = setTimeout(() => { if (subEl) subEl.innerHTML = 'Casi listo...'; }, 2500);
-    const [result] = await Promise.all([
-      BP.api.sendMoney(amount, recipient),
-      U.wait(U.rand(BP.config.sendMinMs, BP.config.sendMaxMs))
-    ]);
-    clearTimeout(t1);
-    if (!result.ok){
-      if (subEl) subEl.innerHTML = 'Algo no salió como esperábamos.<br>Podés reintentar.';
-      if (progressEl) progressEl.classList.add('paused');
-      if (actionsEl) actionsEl.innerHTML = `
-        <div class="dual" style="max-width:320px;margin:0 auto">
-          <button class="btn btn--secondary btn--lg" data-action="back">Volver</button>
-          <button class="btn btn--primary btn--lg" data-action="retry-send">Reintentar</button>
-        </div>`;
-      return;
+
+    // Same rule as the deposit: the money does not move in the client. This used
+    // to await a mock, subtract the amount from the balance and write a "send"
+    // movement, so pressing "Enviar" made the balance go DOWN without anything
+    // happening. A balance the user can change with a button is a fiction.
+    try {
+      await requestSend({ amount, recipient: recipient.tag });
+    } catch (err) {
+      return Flow._moneyNotReady(subEl, progressEl, actionsEl, 'enviar', err);
     }
-    const s = Store.get();
-    const newBalance = Number((s.balance - amount).toFixed(4));
-    Store.set({
-      balance: newBalance,
-      movements: [{
-        id:U.uid(), type:'send',
-        title:`Enviaste a ${recipient.name}`,
-        amount:-amount, at:Date.now(), status:'completed',
-        meta:{ recipient: recipient.tag, type: recipient.type }
-      }, ...s.movements]
-    });
-    U.haptic(14);
-    Router.replace('home', { transition:'fade' });
-    setTimeout(() => UI.toast(`Enviaste ${U.money(amount)} a ${recipient.name}.`, 'success'), 500);
+
+    if (subEl) subEl.innerHTML = 'Todo listo.';
+    if (progressEl) progressEl.classList.add('paused');
+    if (actionsEl) actionsEl.innerHTML = `
+      <div class="dual" style="max-width:320px;margin:0 auto">
+        <button class="btn btn--secondary btn--lg" data-action="back">Volver</button>
+      </div>`;
   },
 
   async openMovementDetail(id){

@@ -175,6 +175,57 @@ export const isApiMovement = (value: unknown): value is ApiMovement => {
   );
 };
 
+/* ─── writes ────────────────────────────────────────────────────────────────── */
+
+/**
+ * The money routes, as the client sees them.
+ *
+ * These three used to succeed. The backend answered `200 { ok: true, ...: null }`
+ * and the deposit flow took that for a completed deposit: it added the amount to
+ * the balance on screen and wrote a movement. A user could watch their balance
+ * grow by pressing "Recibir".
+ *
+ * The backend now answers `501 not_implemented`, which is a status the client can
+ * tell apart from a success. These functions exist so the failure is a VALUE the
+ * flow reasons about — `reason === 'not_implemented'` means "not built yet",
+ * which is a different sentence for the user than "it failed" — instead of a
+ * silent null the UI has to guess about.
+ *
+ * None of them writes to the store. The store is hydrated from reads, and a
+ * number that appears because a button was pressed is a number nobody earned.
+ */
+
+const postMoney = async <T>(path: string, body: unknown): Promise<T> => {
+  const { status, envelope } = await requestJson<T>(path, { method: 'POST', body });
+  if (!envelope.ok) {
+    console.warn('[rewallet] money: rechazado', path, status, envelope.error);
+    throw new WalletApiError('money write failed', status, envelope.error);
+  }
+  return envelope.data as T;
+};
+
+export interface DepositIntent {
+  address: string;
+  onrampUrl: string;
+}
+
+/** Start a deposit. Rejects with `reason: 'not_implemented'` until it is built. */
+export const requestDepositIntent = (body: unknown = {}): Promise<DepositIntent> =>
+  postMoney<DepositIntent>('/wallet/deposit-intent', body);
+
+/** Send USDC. Rejects with `reason: 'not_implemented'` until it is built. */
+export const requestSend = (body: unknown): Promise<unknown> =>
+  postMoney('/wallet/send', body);
+
+/** Create a payment request. Rejects with `reason: 'not_implemented'`. */
+export const requestPaymentRequest = (body: unknown): Promise<unknown> =>
+  postMoney('/wallet/request', body);
+
+/** True for "not built yet", which is a different message than "it broke". */
+export const isNotBuilt = (err: unknown): boolean =>
+  err instanceof WalletApiError && err.reason === 'not_implemented';
+
+
 /* ─── reads ─────────────────────────────────────────────────────────────────── */
 
 /**
