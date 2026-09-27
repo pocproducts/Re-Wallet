@@ -69,35 +69,17 @@ export const UI = BP.ui = {
       if (onMount) onMount(sheet, close);
     });
   },
-  async biometric(label = 'Face ID'){
-    return new Promise(resolve => {
-      const el = document.createElement('div'); el.className = 'biometric';
-      el.innerHTML = `
-        <div class="face-id" data-face>
-          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 8V6a2 2 0 0 1 2-2h2M20 8V6a2 2 0 0 0-2-2h-2M4 16v2a2 2 0 0 0 2 2h2M20 16v2a2 2 0 0 1-2 2h-2"/>
-            <path d="M9 10v1.5M15 10v1.5M9.5 15a3.5 3.5 0 0 0 5 0"/>
-          </svg>
-        </div>
-        <div class="text-center">
-          <div class="t-h3" data-label>${U.esc(label)}</div>
-          <div class="t-body-sm t-tertiary mt-1">Verificando…</div>
-        </div>`;
-      layer.appendChild(el);
-      const face = el.querySelector('[data-face]');
-      const lbl  = el.querySelector('[data-label]');
-      const finish = (ok) => {
-        if (ok){
-          face.classList.add('done');
-          face.innerHTML = `<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`;
-          lbl.textContent = 'Listo';
-          el.querySelector('.t-body-sm').textContent = 'Identidad verificada';
-        }
-        setTimeout(() => { el.classList.add('closing'); setTimeout(() => { el.remove(); resolve(ok); }, 260); }, ok ? 420 : 200);
-      };
-      setTimeout(() => finish(true), 1200);
-    });
-  },
+  /**
+   * THE FAKE BIOMETRIC PROMPT IS GONE.
+   *
+   * It used to draw a Face ID sheet that resolved to `true` after a timeout, and the login
+   * action used it as the fallback for builds with no Privy island: a tap on "Usar tu
+   * huella" opened a convincing prompt, it went green, and the user was dropped on the home
+   * screen signed in as whoever `DEFAULT_STATE` said they were. Nothing failed because
+   * nothing had: the only real ceremony is WebAuthn, and this was a drawing of it.
+   *
+   * A missing island is now an error the user sees, not a login that succeeds.
+   */
   async confirm({ title, message, confirmLabel = 'Sí', cancelLabel = 'No', danger = false }){
     return UI.sheet({
       title,

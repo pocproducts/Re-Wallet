@@ -164,14 +164,8 @@ describe('the island container', () => {
 /* ─── the login button ─────────────────────────────────────────────────────── */
 
 describe('the biometric button', () => {
-  let biometric: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
     Store.reset();
-    // The mock ceremony is a real 4s animation. What is under test is WHICH
-    // branch runs, not how the animation looks, and an animation that outlives
-    // the test would make the assertion a timeout instead of a failure.
-    biometric = vi.spyOn(BP.ui, 'biometric').mockImplementation(async () => true);
   });
   afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks(); });
 
@@ -181,30 +175,53 @@ describe('the biometric button', () => {
     try {
       await Actions['biometric'](biometricButton('login'));
       expect(calls).toEqual(['login']);
-      // The mock branch would have animated and navigated. The bridge owns both
-      // decisions, and it makes them from the BACKEND's answer.
-      expect(biometric).not.toHaveBeenCalled();
+      // A local branch would have navigated. The bridge owns that decision, and
+      // it makes it from the BACKEND's answer.
       expect(go).not.toHaveBeenCalled();
     } finally {
       release();
     }
   });
 
-  it('falls back to the local mock when no island is mounted', async () => {
+  it('WITHOUT an island there is no login at all, and it says so', async () => {
+    // THE REVERSAL, and the reason this file changed.
+    //
+    // This used to assert the opposite: that with no island the button fell back
+    // to a local ceremony, animated, and navigated home. It was defended as "the
+    // path 172 tests and any dev without a Privy App ID depend on".
+    //
+    // But that path was a mock that SUCCEEDED. A person with a real passkey
+    // tapped "Usar tu huella", got a convincing Face ID sheet, went green, and
+    // landed on the home screen signed in as whoever `DEFAULT_STATE` said they
+    // were. No error anywhere, because nothing had failed: WebAuthn was never
+    // involved. A login that cannot fail is not a login.
     expect(privy.hasPrivyIsland()).toBe(false);
     const go = vi.spyOn(Router, 'go').mockImplementation(() => undefined);
+    const toast = vi.spyOn(BP.ui, 'toast').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
     await Actions['biometric'](biometricButton('login'));
-    // This is the path 172 tests and any dev without a Privy App ID depend on.
-    expect(biometric).toHaveBeenCalledTimes(1);
-    expect(go).toHaveBeenCalledWith('home', expect.objectContaining({ transition: 'fade' }));
+
+    // It refuses, it tells the user, and — the part that matters — it does not
+    // pretend. No navigation, and above all no `session: true` written to a store
+    // that now holds nobody.
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(go).not.toHaveBeenCalled();
+    expect(Store.get().session).toBe(false);
   });
 
-  it('without an island, onboarding still routes to onboarding and not to home', async () => {
+  it('and the refusal is the same for the sign-up mode', async () => {
+    // A build with no island cannot register either, and the two modes used to
+    // diverge: one walked to onboarding as if the account had been made.
     const go = vi.spyOn(Router, 'go').mockImplementation(() => undefined);
+    const toast = vi.spyOn(BP.ui, 'toast').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
     await Actions['biometric'](biometricButton('onboarding'));
-    // The two modes are different journeys, and the mock has to keep telling
-    // them apart even though the island branch is the one under test here.
-    expect(go).toHaveBeenCalledWith('onboarding', expect.objectContaining({ transition: 'forward' }));
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(go).not.toHaveBeenCalled();
+    expect(Store.get().session).toBe(false);
   });
 
   it('ONBOARDING asks the island to SIGN UP, not to sign in', async () => {

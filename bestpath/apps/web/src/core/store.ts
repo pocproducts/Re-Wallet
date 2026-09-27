@@ -1,14 +1,34 @@
 import { BP } from './bp';
 
-/* ---- store ---- */
+/**
+ * The state of an app that has not logged anyone in.
+ *
+ * EMPTY ON PURPOSE, and that is the whole point of the change.
+ *
+ * It used to carry a person: `userName: 'Ana'`, `bpTag: '@ana'`, `session: true`
+ * and four invented contacts. That is not a harmless placeholder, because it is
+ * the LINE BASE: any code path that does not hydrate the store from the API
+ * starts out logged in as Ana. A user who registered with a passkey, closed the
+ * app and signed back in saw "Ana" — with a working passkey, a real session and
+ * somebody else's name — and nothing anywhere reported an error, because from
+ * the app's point of view nothing had failed.
+ *
+ * So an empty field is the honest "we do not know", and a store that has not
+ * been told who the user is says exactly that. The name, the tag, the balance
+ * and the address all arrive from the backend, and until they do the UI has
+ * nothing to show.
+ *
+ * `session: false` for the same reason: being logged in is a fact the backend
+ * establishes by answering, never a default.
+ */
 export const DEFAULT_STATE = {
   version: BP.config.version,
   onboardingComplete: false,
-  session: true,
-  userName: 'Ana',
-  firstName: 'Ana',
+  session: false,
+  userName: '',
+  firstName: '',
   lastName: '',
-  bpTag: '@ana',
+  bpTag: '',
   recoveryEmail: '',
   recoveryPhone: '',
   recoveryPhoneCountry: 'AR',
@@ -18,12 +38,9 @@ export const DEFAULT_STATE = {
   walletAddress: '',
   hasReceivedFunds: false,
   movements: [],
-  contacts: [
-    { id:'c1', name:'Carlos Méndez', tag:'@carlos', initials:'CM', color:'#FF4D5A' },
-    { id:'c2', name:'María López',   tag:'@maria',  initials:'ML', color:'#1DB981' },
-    { id:'c3', name:'Julián Ruiz',   tag:'@julian', initials:'JR', color:'#FFC857' },
-    { id:'c4', name:'Sofía Chen',    tag:'@sofia',  initials:'SC', color:'#2E7DFF' }
-  ],
+  // Empty, not invented. The contacts a user sees have to be contacts they
+  // saved; four strangers from a demo are worse than none.
+  contacts: [] as { id: string; name: string; tag: string; initials: string; color: string }[],
   settings: { biometricEnabled: true, notificationsEnabled: true },
   yieldStartedAt: null,
   createdAt: Date.now(),

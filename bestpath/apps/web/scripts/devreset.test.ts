@@ -92,11 +92,28 @@ describe('store: reset really clears', () => {
     expect(BP.store.load().onboardingComplete).toBe(false);
   });
 
-  it('starts with no movements and the default contacts', () => {
+  it('starts with no movements and no invented contacts', () => {
+    // It used to assert `contacts.length > 0`, against four strangers from a demo
+    // (Carlos, María, Sofía) hardcoded into `DEFAULT_STATE`. Contacts a user
+    // sees have to be contacts they saved: an invented address book is not a
+    // harmless default, it is a list of people who do not exist and who a user
+    // could be about to send money to.
     BP.store.reset();
     const s = BP.store.load();
     expect(s.movements).toHaveLength(0);
-    expect(s.contacts.length).toBeGreaterThan(0);
+    expect(s.contacts).toHaveLength(0);
+  });
+
+  it('starts logged OUT, with nobody’s name on it', () => {
+    // The other half of the same problem. `DEFAULT_STATE` shipped `session: true`
+    // and `userName: 'Ana'`, so any code path that did not hydrate the store
+    // began logged in as Ana — which is exactly how a real passkey sign-in ended
+    // up showing somebody else’s profile with no error anywhere.
+    BP.store.reset();
+    const s = BP.store.load();
+    expect(s.session).toBe(false);
+    expect(s.userName).toBe('');
+    expect(s.bpTag).toBe('');
   });
 });
 

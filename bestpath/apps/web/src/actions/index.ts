@@ -39,12 +39,6 @@ export const Actions = BP.actions = {
     const label = el.dataset.label || 'Face ID';
     const mode  = el.dataset.mode  || 'onboarding';
 
-    // Real passkey ceremony when the Privy island is mounted. Delegating here
-    // and returning is the whole contract: `wire/privy.ts` owns what happens
-    // after (it exchanges the token for a backend session, hydrates the store
-    // in one `Store.set`, and routes to onboarding or home). Nothing in this
-    // action decides where a logged-in user lands.
-    //
     // `mode` CHOOSES THE CEREMONY, and it has to. Sign-in asserts a passkey
     // that already exists; sign-up creates one. Calling sign-in for a person
     // arriving from onboarding is a WebAuthn request for a credential nothing
@@ -52,47 +46,45 @@ export const Actions = BP.actions = {
     // like a broken biometric reader and is actually a sign-in asked where only
     // a sign-up is true. `mode` is read here and used in BOTH worlds below.
     //
-    // Below this branch is the MOCK path, kept byte-for-byte for builds with no
-    // `VITE_PRIVY_APP_ID`: the island never mounts, login stays local, and the
-    // 172 tests that drive this action keep working. One `hasPrivyIsland()`
-    // check is the only place the two worlds are told apart.
-    if (hasPrivyIsland()){
-      U.haptic(10);
-      try {
-        if (mode === 'login') await requestPrivyLogin();
-        else await requestPrivyRegister();
-      } catch (err) {
-        // The bridge already emitted `bp:privy:error` with stage-specific copy
-        // and logged the real cause. This toast exists only so the tap visibly
-        // did something when no listener is mounted; it must not restate the
-        // failure or blame the user's passkey.
-        console.warn('[rewallet] login de passkey falló', err);
-        // The copy follows the CEREMONY. Telling someone who pressed "Empezar" to
-        // "iniciá sesión" is a sentence about the wrong action, and the one case
-        // where it really matters is a person who already HAS an account pressing
-        // the register button — which is what the logout routing used to do to
-        // them, and it is indistinguishable from a broken fingerprint reader.
-        UI.toast(
-          mode === 'login'
-            ? 'No pudimos verificar tu passkey. Intentá de nuevo.'
-            : 'No pudimos crear tu cuenta. Si ya tenías una, entrá con tu passkey.',
-          'warning',
-        );
-      }
+    // ── THERE IS NO LOCAL LOGIN ANYMORE ─────────────────────────────────────
+    //
+    // This used to fall through to a simulated ceremony: a fake modal, then
+    // `Store.set({ session: true })` and a jump to home. That path existed for
+    // builds with no Privy App ID, and it was the worst thing in the app — not
+    // because it was a mock, but because it was a mock that SUCCEEDED. A person
+    // with a real passkey who signed in through it got home, with somebody
+    // else's name on the profile, and no error anywhere: from the app's point of
+    // view the login had worked.
+    //
+    // So a missing island is now an error the user can see. There is no code
+    // path that reports "logged in" without a token from the backend behind it.
+    if (!hasPrivyIsland()){
+      console.error('[rewallet] login: la isla de passkey no está montada, no hay acceso seguro');
+      UI.toast('No pudimos iniciar el acceso seguro. Recargá la página e intentá de nuevo.', 'warning');
       return;
     }
 
     U.haptic(10);
-    const ok = await UI.biometric(label);
-    if (!ok){ UI.toast('Puedes intentarlo cuando quieras.','warning'); return; }
-
-    if (mode === 'login'){
-      Store.set({ session:true });
-      Router.go('home', { transition:'fade' });
-    } else {
-      // onboarding-v2: passkey now leads into the profile step, and the old
-      // combined email+phone screen is no longer part of the first-run flow.
-      Router.go('onboarding', { transition:'forward' });
+    try {
+      if (mode === 'login') await requestPrivyLogin();
+      else await requestPrivyRegister();
+    } catch (err) {
+      // The bridge already emitted `bp:privy:error` with stage-specific copy
+      // and logged the real cause. This toast exists only so the tap visibly
+      // did something when no listener is mounted; it must not restate the
+      // failure or blame the user's passkey.
+      console.warn('[rewallet] login de passkey falló', err);
+      // The copy follows the CEREMONY. Telling someone who pressed "Empezar" to
+      // "iniciá sesión" is a sentence about the wrong action, and the one case
+      // where it really matters is a person who already HAS an account pressing
+      // the register button — which is what the logout routing used to do to
+      // them, and it is indistinguishable from a broken fingerprint reader.
+      UI.toast(
+        mode === 'login'
+          ? 'No pudimos verificar tu passkey. Intentá de nuevo.'
+          : 'No pudimos crear tu cuenta. Si ya tenías una, entrá con tu passkey.',
+        'warning',
+      );
     }
   },
 
