@@ -383,6 +383,17 @@ export const emitPrivyError = (stage: unknown, message?: unknown): void => {
  */
 export interface PrivyIslandHandle {
   login(): Promise<void>;
+  /**
+   * The SIGN-UP ceremony, as opposed to `login`.
+   *
+   * Both exist because WebAuthn treats them as different operations and
+   * refuses to guess: a login asserts a credential that already exists, and a
+   * signup creates one. Collapsing them into a single call that "does the
+   * right thing" is how an app ends up able to sign in and unable to register,
+   * because the only call it makes asks for a credential nothing has produced
+   * yet.
+   */
+  register(): Promise<void>;
   logout(): Promise<void>;
 }
 
@@ -401,10 +412,22 @@ export const setPrivyIslandHandle = (handle: PrivyIslandHandle): (() => void) =>
 
 export const hasPrivyIsland = (): boolean => island !== null;
 
-/** Start a passkey ceremony. Throws if the island is not mounted. */
+/** Start a passkey SIGN-IN ceremony. Throws if the island is not mounted. */
 export const requestPrivyLogin = async (): Promise<void> => {
   if (!island) throw new PrivyBridgeError('init', 'privy island is not mounted');
   return island.login();
+};
+
+/**
+ * Start a passkey SIGN-UP ceremony. Throws if the island is not mounted.
+ *
+ * The mirror of `requestPrivyLogin`, and separate on purpose: the caller knows
+ * from `data-mode` whether this person is new, and collapsing the two here
+ * would throw that away at the boundary.
+ */
+export const requestPrivyRegister = async (): Promise<void> => {
+  if (!island) throw new PrivyBridgeError('init', 'privy island is not mounted');
+  return island.register();
 };
 
 /** End the Privy session and the backend session. Throws if not mounted. */
