@@ -63,7 +63,7 @@ import {
 } from '@privy-io/react-auth/solana';
 
 import { API_BASE_URL, ApiError } from '../services/api';
-import { reportPrivyError, readPrivyErrorCode, toDiagnosticCode } from '../services/privy';
+import { reportPrivyErrorWithDetail, readPrivyErrorCode, toDiagnosticCode } from '../services/privy';
 import { claimRewalletWallets, type ClaimedWallet } from '../services/wallets';
 
 export type WalletClaimStatus =
@@ -80,6 +80,26 @@ export type WalletClaimStatus =
 const ETAPA_WALLETS_ETHEREUM = 'wallets_crear_ethereum';
 const ETAPA_WALLETS_SOLANA = 'wallets_crear_solana';
 const ETAPA_WALLETS_CLAIM = 'wallets_reclamar';
+
+/**
+ * ── Por qué se reporta en TODAS las etapas ─────────────────────────────────────
+ *
+ * Antes sólo se reportaba el fallo del reclamo, con `unknown_error` al lado de la
+ * etapa, y en el log de producción no había ni un `POST /api/wallets/claim`:
+ * cinco causas distintas —crear la wallet de Ethereum, la de Solana, armar el
+ * payload, el token, el post— se veían **exactamente igual**.
+ *
+ * Ahora cada etapa que puede fallar reporta con `detalle`, que es el campo que el
+ * Worker acepta justamente para esto: el código real, el status HTTP y el nombre
+ * del error. Es diagnóstico de integración, no producto: no bloquea, no muestra.
+ *
+ * ── Por qué el `id` ausente se reporta por su nombre ───────────────────────────
+ *
+ * Que el SDK devuelva una wallet sin `id` **no** es un fallo de red ni un rechazo
+ * del backend: es un dato que no vino. Con una etapa y un `unknown_error` no se
+ * diferenciaba de cualquier otra cosa, y es un caso real de la wallet de Solana,
+ * cuyo tipo expone `address` pero no `id`. Se reporta con su propia nota.
+ */
 
 export interface UserWallets {
   readonly status: WalletClaimStatus;
@@ -203,15 +223,18 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
        * acepta una cadena sola.
        */
       for (const chain of ['ethereum', 'solana'] as const) {
+        const etapa = chain === 'ethereum' ? ETAPA_WALLETS_ETHEREUM : ETAPA_WALLETS_SOLANA;
         try {
           const wallet = chain === 'ethereum' ? await ethereumWallet() : await solanaWallet();
-          if (wallet !== null) claimed.push(wallet);
+          if (wallet === null) {
+            // El SDK no trajo un id reclamable: ni falla niclaims, pero hay que
+            // poder decirlo en el log en vez de dejarlo como otro `unknown_error`.
+            void reportPrivyErrorWithDetail(etapa, null, `walletidmissing_${chain}`, API_BASE_URL);
+          } else {
+            claimed.push(wallet);
+          }
         } catch (error) {
-          void reportPrivyError(
-            chain === 'ethereum' ? ETAPA_WALLETS_ETHEREUM : ETAPA_WALLETS_SOLANA,
-            diagnosticCodeFor(error),
-            API_BASE_URL,
-          );
+          void reportPrivyErrorWithDetail(etapa, error, undefined, API_BASE_URL);
         }
       }
 
@@ -220,7 +243,9 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
       if (claimed.length === 0) {
         setFailureCode('unknown_error');
         setStatus('failed');
-        void reportPrivyError(ETAPA_WALLETS_CLAIM, toDiagnosticCode(null), API_BASE_URL);
+        // Ninguna cadena produjo una wallet reclamable: es el armado del payload
+        // lo que falló, no el post.
+        void reportPrivyErrorWithDetail(ETAPA_WALLETS_CLAIM, null, 'payload_vacio', API_BASE_URL);
         return;
       }
 
@@ -239,7 +264,13 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
         // Falla el reclamo: la persona entra igual y se le muestra el aviso.
         setFailureCode(diagnosticCodeFor(error) ?? 'unknown_error');
         setStatus('failed');
-        void reportPrivyError(ETAPA_WALLETS_CLAIM, diagnosticCodeFor(error), API_BASE_URL);
+        // El token viaja en el header, nunca en el detalle: lo que se manda es
+        // que faltó, si es que eso fue lo que pasó.
+        const note =
+          error instanceof Error && error.message === 'must_be_authenticated'
+            ? 'access_token_missing'
+            : undefined;
+        void reportPrivyErrorWithDetail(ETAPA_WALLETS_CLAIM, error, note, API_BASE_URL);
       }
     })();
 

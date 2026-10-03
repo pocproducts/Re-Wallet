@@ -138,3 +138,114 @@ export const reportPrivyError = async (
     // Es una diagnóstico. Si no se puede reportar, no pasa nada.
   }
 };
+
+/* ── El reporter con detalle ─────────────────────────────────────────────────
+ *
+ * ── Por qué existe ────────────────────────────────────────────────────────────
+ *
+ * `reportPrivyError` manda un `codigo`, y el allowlist del Worker obliga a que
+ * todo lo desconocido viaje como `unknown_error`. El log de producción terminó
+ * diciendo `{"etapa":"wallets_reclamar","codigo":"unknown_error"}` sin ningún
+ * `POST /api/wallets/claim`: cinco lecturas posibles, ninguna distinguible.
+ *
+ * `detalle` es el campo opcional que acepta `POST /api/diagnostics` para eso.
+ *
+ * ── Qué entra y qué NO entra ──────────────────────────────────────────────────
+ *
+ * Entra **sólo** lo que el front compone pieza por pieza: el código real, el
+ * status HTTP cuando la respuesta existe, el nombre del error y una nota corta
+ * de la etapa. El `message` del error **no** entra nunca: es texto libre de un
+ * SDK y es exactamente donde un correo o un token terminarían filtrados.
+ *
+ * Se compone de una lista cerrada de piezas leídas por nombre, no del objeto del
+ * error entero, así que la exclusión de correos y tokens es estructural y no una
+ *regexp que hay que confiar. Aparte, el backend lo vuelve a sanear igual.
+ */
+
+/** El mismo tope que aplica el backend: 200 caracteres es una línea de log. */
+export const MAX_DIAGNOSTIC_DETAIL_LENGTH = 200;
+
+/** Lleva cualquier valor a `[a-z0-9_]`, que es lo único que el Worker conserva. */
+const detailToken = (value: string): string => value.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+
+/** El código real: el de Privy si lo hay, y si no el propio del `ApiError`. */
+const readRealErrorCode = (error: unknown): string | null =>
+  readPrivyErrorCode(error) ??
+  (typeof (error as { code?: unknown } | null)?.code === 'string'
+    ? (error as { code: string }).code
+    : null);
+
+/**
+ * El status HTTP, si el error lo trae. `ApiError` no lo guarda hoy, pero muchos
+ * errores de red y de SDK sí, y no cuesta mirarlo.
+ */
+const readErrorStatus = (error: unknown): string | null => {
+  const source = error as { status?: unknown; statusCode?: unknown } | null;
+  const status = typeof source?.status === 'number' ? source.status : source?.statusCode;
+  return typeof status === 'number' ? String(status) : null;
+};
+
+/** `TypeError`, `ApiError`, `PrivyError`: sirve para distinguir familias. */
+const readErrorName = (error: unknown): string | null => {
+  const name = (error as { name?: unknown } | null)?.name;
+  return typeof name === 'string' && name.length > 0 ? name : null;
+};
+
+/**
+ * Arma el `detalle`: piezas conocidas, unidas por `_`, cortadas en 200.
+ *
+ * @param note Etapa o causa corta de este reporte (`walletidmissing_solana`).
+ * @returns `code_..._status_..._name_...`, o `code_unknown` si no hay nada.
+ */
+export const buildPrivyErrorDetail = (error: unknown, note?: string): string => {
+  const parts: string[] = [];
+
+  if (note) parts.push(detailToken(note));
+
+  const code = readRealErrorCode(error);
+  if (code) parts.push(`code_${detailToken(code)}`);
+
+  const status = readErrorStatus(error);
+  if (status) parts.push(`status_${detailToken(status)}`);
+
+  const name = readErrorName(error);
+  if (name && (code || status)) parts.push(`name_${detailToken(name)}`);
+
+  if (parts.length === 0) return 'code_unknown';
+
+  return parts.join('_').slice(0, MAX_DIAGNOSTIC_DETAIL_LENGTH);
+};
+
+/**
+ * Le cuenta al backend qué código de Privy nos rechazó, **y por qué exactamente**.
+ *
+ * Mismo criterio que `reportPrivyError` —nunca bloquea, nunca muestra nada— pero
+ * con `detalle`, que es lo que hoy falta para leer un fallo real del navegador.
+ *
+ * @param etapa Dónde se cortó.
+ * @param error Lo que tiró el hook, o `null` si no hubo excepción.
+ * @param note Causa corta de la etapa, sin datos de nadie.
+ * @param baseUrl Base del backend.
+ */
+export const reportPrivyErrorWithDetail = async (
+  etapa: string,
+  error: unknown,
+  note?: string,
+  baseUrl = '',
+): Promise<void> => {
+  try {
+    await fetch(`${baseUrl}/diagnostics`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        etapa,
+        codigo: toDiagnosticCode(readPrivyErrorCode(error)),
+        detalle: buildPrivyErrorDetail(error, note),
+      }),
+      keepalive: true,
+    });
+  } catch {
+    // Es un diagnóstico. Si no se puede reportar, no pasa nada.
+  }
+};
