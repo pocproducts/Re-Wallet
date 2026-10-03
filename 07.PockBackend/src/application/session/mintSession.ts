@@ -18,9 +18,9 @@
  *
  * Step 2 is separate from step 1 and cannot be merged into it, because the access
  * token genuinely does not carry an email (see `TokenVerifier`). It is also where
- * the DID is checked a second time: the id token resolves to a Privy user, and if
- * that user is not the one the access token verified, the id token belongs to
- * somebody else and the login is refused. Two tokens, one person, or nothing.
+ * the DID is checked a second time: the DID from step 1 is the lookup key, and if
+ * the record that comes back is not that same DID's, the provider resolved somebody
+ * else and the login is refused. One token, one person, or nothing.
  *
  * Step 2 failing writes **nothing** either, and it fails **loudly**: a login whose
  * identity cannot be resolved is a 502 with the failing step in the log, never a row
@@ -71,7 +71,7 @@ export interface MintedSession {
 
 /** The only stable identifiers a session carries. No token, no email. */
 export interface MintSession {
-  (accessToken: string, idToken: string, now?: Date): Promise<MintedSession>;
+  (accessToken: string, now?: Date): Promise<MintedSession>;
 }
 
 /** Raised when Privy rejects the token. Never surfaced with its reason. */
@@ -100,7 +100,7 @@ export class IdentityUnavailable extends Error {
 export const mintSession = (deps: MintSessionDeps): MintSession => {
   const log = deps.log ?? noopLogger;
 
-  return async (accessToken: string, idToken: string, now: Date = new Date()): Promise<MintedSession> => {
+  return async (accessToken: string, now: Date = new Date()): Promise<MintedSession> => {
     let step = 'session.start';
     log.log(step);
 
@@ -113,19 +113,22 @@ export const mintSession = (deps: MintSessionDeps): MintSession => {
       /**
        * 2. Who they actually are. Separate from step 1 because the access token has
        * no email claim to read, and after it — not instead of it — so that a
-       * provider outage can never be mistaken for an authenticated caller.
+       * provider outage can never be mistaken for an authenticated caller. The DID
+       * step 1 proved is the lookup key: nothing else needs to arrive from the
+       * browser.
        */
       step = 'session.identity_lookup';
-      const directoryUser = await deps.directory.lookup(idToken);
+      const directoryUser = await deps.directory.lookup(identity.privyDid);
       step = 'session.identity_resolved';
 
       /**
-       * Two tokens, one person. The id token is only useful if it is the *same*
-       * person's; otherwise any logged-in user could lend their mailbox to somebody
-       * else's session, and the row written below would belong to the lender.
+       * The same DID in, the same DID out. It is the lookup key now, so this is no
+       * longer a comparison between two independent proofs — it is the assertion
+       * that the provider answered the question it was asked. A record belonging to
+       * anybody else means the mailbox about to be written belongs to anybody else.
        */
       if (directoryUser.privyDid !== identity.privyDid) {
-        throw new IdentityUnavailable('id token belongs to a different Privy user than the access token');
+        throw new IdentityUnavailable('the fetched Privy user is not the DID the access token verified');
       }
       log.log(step, { privyDid: directoryUser.privyDid, hasDisplayName: directoryUser.displayName !== null });
 

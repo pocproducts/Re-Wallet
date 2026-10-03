@@ -7,15 +7,19 @@
  * - `GET`    say whether the current cookie is good
  * - `DELETE` close it
  *
- * The body of `POST` is `{ accessToken, idToken }` and nothing else. There is no
- * onboarding form any more, so there is no `name` and no `phone` to accept.
+ * The body of `POST` is `{ accessToken }` and nothing else. There is no onboarding
+ * form any more, so there is no `name` and no `phone` to accept.
  *
- * ── Why two tokens ────────────────────────────────────────────────────────────
+ * ── Why one token and not two ──────────────────────────────────────────────────
  *
  * The access token is the authority on *who is calling* — it is verified, and only
- * it is. The id token is the key to the provider's user record, which is where the
- * mailbox lives; the access token carries no email claim at all. So the body carries
- * both and the use case uses them for two different jobs, in that order.
+ * it is. Its DID is also the key to the provider's user record, where the mailbox
+ * lives, because the access token carries no email claim at all. So the frontend
+ * sends one token and the backend derives everything else.
+ *
+ * It used to also require a second, provider-specific token as a lookup key. That
+ * key is redundant: the verified DID already addresses the user record, so the
+ * requirement is gone rather than worked around.
  */
 import { Hono } from 'hono';
 
@@ -73,19 +77,15 @@ export const createAuthRoutes = (deps: AuthDeps) => {
 
     const parsed = body as Record<string, unknown> | null;
     const accessToken = parsed?.['accessToken'];
-    const idToken = parsed?.['idToken'];
 
-    // Both are required: without the id token there is no email, and a login with no
-    // email is refused rather than faked.
+    // One required field. A login with no verified access token has no DID and
+    // therefore no identity to look up, so it never reaches the use case.
     if (typeof accessToken !== 'string' || accessToken.length === 0) {
-      return c.json({ error: { code: 'BAD_REQUEST' } }, 400);
-    }
-    if (typeof idToken !== 'string' || idToken.length === 0) {
       return c.json({ error: { code: 'BAD_REQUEST' } }, 400);
     }
 
     try {
-      const minted = await deps.mint(accessToken, idToken, clock());
+      const minted = await deps.mint(accessToken, clock());
       const maxAge = Math.floor((minted.expiresAt.getTime() - clock().getTime()) / 1000);
       c.header('Set-Cookie', buildSessionCookie(minted.token, cookieName, maxAge));
 

@@ -1,27 +1,47 @@
 /**
- * ADAPTER: the authoritative Privy user, fetched by id token.
+ * ADAPTER: the authoritative Privy user, fetched by DID.
  *
- * ── Why the access token was not enough ───────────────────────────────────────
+ * ── Why the DID and not a token ───────────────────────────────────────────────
  *
  * `privyTokenVerifier` used to guess an `email` claim out of the verified access
  * token. It is not there: `lib/auth.d.ts` reads `aud`, `iss`, `iat`, `exp`, `sid`
  * and `sub`, so the guess failed on every login and the caller fell back to
  * a fabricated address. The identity was never in the access token. It is in the user
- * record, and the id token is what unlocks that record.
+ * record, and that record is addressable by the very identifier the verified token
+ * already proved: the DID in `sub`.
+ *
+ * So nothing extra has to reach this server. The frontend sends one token, the
+ * backend verifies it once, and the DID it yields is both the lookup key and the
+ * cross-check. A second token would be a second way to be wrong.
  *
  * ── What this calls, and where the shape comes from ───────────────────────────
  *
- * `client.users().get({ id_token })` —
- * `public-api/services/users.d.ts:19`, whose input type is
- * `PrivyUsersService.GetInput = { id_token: string }` (`…users.d.ts:21-24`). The SDK
- * verifies the token itself: "This verifies the token and parses the payload into a
- * `User` object" (`…users.d.ts:9`).
+ * `client.users._get(privyDid)` —
+ * `resources/users/users.d.ts:60-63` documents it by example:
  *
- * The returned `User` (`resources/users/users.d.ts:1037`) has **no** `email` field
- * and **no** display-name field. Its identity lives in `linked_accounts`, whose email
- * variant is `LinkedAccountEmail { address, first_verified_at, latest_verified_at,
- * type: 'email', verified_at }` (`…users.d.ts:510-516`). That is the only place an
- * email exists, and it is what is read here.
+ * ```ts
+ * const user = await client.users._get('user_id');
+ * ```
+ *
+ * The method is underscore-prefixed in `@privy-io/node@0.35.0` because it shadows
+ * the older token-based `users().get({ id_token })` service. The underscore is a
+ * naming collision, not a privacy boundary: this is the SDK's own documented-by-
+ * example path for a single user by Privy user id, and the DID is that id.
+ * `UserListParams` (`…users.d.ts`) extends only `CursorParams` and has no id
+ * filter, so there is nothing to filter a list with instead.
+ *
+ * The returned `User` has **no** `email` field and **no** display-name field. Its
+ * identity lives in `linked_accounts`, whose email variant is
+ * `LinkedAccountEmail { address, first_verified_at, latest_verified_at, type: 'email',
+ * verified_at }`. That is the only place an email exists, and it is what is read
+ * here.
+ *
+ * ── Why the fetched id is re-checked here and again in the use case ────────────
+ *
+ * Because a lookup that returns somebody else's record is the one failure this
+ * file cannot detect by looking at the email. `user.id` is compared against the
+ * DID that was asked for, in the adapter (fail fast) and against the verified DID
+ * in `mintSession` (defence in depth). Neither is a formality.
  *
  * ── Why there is no fallback ──────────────────────────────────────────────────
  *
@@ -34,13 +54,13 @@ import type { User } from '@privy-io/node';
 import type { DirectoryUser, UserDirectory } from '../../domain/ports/user-directory';
 
 /**
- * The minimal surface this adapter needs from the Privy users service.
+ * The minimal surface this adapter needs from the Privy users resource.
  *
- * Structural, so the adapter is testable offline. `PrivyClient` satisfies it.
+ * Structural, so the adapter is testable offline. `PrivyClient.users` satisfies it.
  */
 export interface PrivyUsersClient {
   users(): {
-    get(input: { id_token: string }): Promise<Pick<User, 'id' | 'linked_accounts'>>;
+    _get(userId: string): Promise<Pick<User, 'id' | 'linked_accounts'>>;
   };
 }
 
@@ -51,6 +71,15 @@ export class PrivyIdentityUnavailable extends Error {
     this.name = 'PrivyIdentityUnavailable';
   }
 }
+
+/**
+ * `did:privy:...` and nothing else.
+ *
+ * The same shape `privyTokenVerifier` enforces on the verified token. Repeating it
+ * here is cheap and keeps a malformed identifier from ever becoming a provider
+ * request.
+ */
+const DID_PATTERN = /^did:privy:[A-Za-z0-9._~-]{1,128}$/;
 
 /** The one linked account that can produce `rewallet.users.email`. */
 const emailAddressOf = (user: Pick<User, 'linked_accounts'>): string | null => {
@@ -83,17 +112,26 @@ const displayNameOf = (user: Pick<User, 'linked_accounts'>): string | null => {
 };
 
 export const createPrivyUserDirectory = (client: PrivyUsersClient): UserDirectory => ({
-  async lookup(idToken: string): Promise<DirectoryUser> {
-    if (!idToken || idToken.split('.').length !== 3) {
-      throw new PrivyIdentityUnavailable('id token does not look like a JWT');
+  async lookup(privyDid: string): Promise<DirectoryUser> {
+    if (!DID_PATTERN.test(privyDid)) {
+      throw new PrivyIdentityUnavailable('lookup key is not a Privy DID');
     }
 
     let user: Pick<User, 'id' | 'linked_accounts'>;
     try {
-      user = await client.users().get({ id_token: idToken });
+      user = await client.users()._get(privyDid);
     } catch (error) {
       // The reason stays server-side. The caller learns only that it failed.
-      throw new PrivyIdentityUnavailable('id token rejected or user not found', { cause: error });
+      throw new PrivyIdentityUnavailable('user not found or lookup rejected', { cause: error });
+    }
+
+    /**
+     * The record must be the one that was asked for. If it is not, this lookup
+     * resolved somebody else's mailbox and the login is refused rather than
+     * written.
+     */
+    if (user.id !== privyDid) {
+      throw new PrivyIdentityUnavailable('fetched user id does not match the requested DID');
     }
 
     const email = emailAddressOf(user);

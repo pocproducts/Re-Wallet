@@ -13,7 +13,7 @@ import { DID, recordingLogger, USER_ID } from '../support/fixtures';
 
 const EXPIRY = new Date('2030-01-01T00:00:00Z');
 
-const BODY = { accessToken: 'a.b.c', idToken: 'id.a.b' };
+const BODY = { accessToken: 'a.b.c' };
 
 const happyMint = (): MintSession => async () => ({
   token: 'rw1.super.secret',
@@ -114,15 +114,40 @@ describe('POST /api/auth/session', () => {
     expect(setCookieOf(response)).toBe('');
   });
 
-  it('rejects a body without an idToken: no email means no login', async () => {
+  it('accepts a body carrying only the access token, and ignores extras', async () => {
+    // The frontend SDK exposes no id token, so the contract asks for exactly the one
+    // thing it can produce. A body that still carries the old field is not rejected:
+    // unknown fields are ignored, and what matters is that a valid access token logs
+    // the person in.
     const response = await app(happyMint(), acceptingCodec()).request('/api/auth/session', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ accessToken: 'a.b.c' }),
+      body: JSON.stringify({ ...BODY, idToken: 'id.a.b' }),
     });
 
-    expect(response.status).toBe(400);
-    expect(setCookieOf(response)).toBe('');
+    expect(response.status).toBe(204);
+    expect(setCookieOf(response)).toContain(`${SESSION_COOKIE_NAME}=rw1.super.secret`);
+  });
+
+  it('mints from the access token alone, never from a second token', async () => {
+    const seen: unknown[][] = [];
+    const mint: MintSession = async (...args: unknown[]) => {
+      seen.push(args);
+      return { token: 'rw1.super.secret', expiresAt: EXPIRY, userId: USER_ID, privyDid: DID };
+    };
+
+    const response = await app(mint, acceptingCodec()).request('/api/auth/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(BODY),
+    });
+
+    expect(response.status).toBe(204);
+    // (accessToken, now) — the clock, and nothing token-shaped after the access token.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.[0]).toBe('a.b.c');
+    expect(seen[0]?.[1]).toBeInstanceOf(Date);
+    expect(seen[0]).toHaveLength(2);
   });
 });
 

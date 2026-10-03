@@ -8,20 +8,26 @@ import type { NewUserProfile, StoredUser, UserStore } from '../../src/domain/por
 import type { SessionCodec } from '../../src/domain/ports/session-codec';
 import { DID, recordingLogger, USER_ID } from '../support/fixtures';
 
-const ID_TOKEN = 'id.a.b';
 const ACCESS_TOKEN = 'a.b.c';
 
 const validVerifier = (): TokenVerifier => ({ verify: async () => ({ privyDid: DID }) });
 
 /** The provider's user record, which is the only source of the mailbox. */
-const directoryFor = (overrides: Partial<DirectoryUser> = {}): UserDirectory => ({
-  lookup: async () => ({
-    privyDid: DID,
-    email: 'ana@example.com',
-    displayName: null,
-    ...overrides,
-  }),
-});
+const directoryFor = (overrides: Partial<DirectoryUser> = {}): UserDirectory & { readonly asked: string[] } => {
+  const asked: string[] = [];
+  return {
+    asked,
+    lookup: async (privyDid) => {
+      asked.push(privyDid);
+      return {
+        privyDid: DID,
+        email: 'ana@example.com',
+        displayName: null,
+        ...overrides,
+      };
+    },
+  };
+};
 
 const recordingUserStore = () => {
   const calls: string[] = [];
@@ -62,7 +68,7 @@ describe('mintSession', () => {
       log,
     });
 
-    await expect(mint('not-a-jwt', ID_TOKEN)).rejects.toThrow('bad signature');
+    await expect(mint('not-a-jwt')).rejects.toThrow('bad signature');
 
     // No user row, no wallet, no session.
     expect(calls).toEqual([]);
@@ -86,7 +92,7 @@ describe('mintSession', () => {
       log,
     });
 
-    const minted = await mint(ACCESS_TOKEN, ID_TOKEN);
+    const minted = await mint(ACCESS_TOKEN);
 
     expect(minted.userId).toBe(USER_ID);
     expect(minted.privyDid).toBe(DID);
@@ -99,6 +105,22 @@ describe('mintSession', () => {
       'session.wallets_ready',
       'session.issued',
     ]);
+  });
+
+  it('looks the user up BY the DID the access token proved — no second token', async () => {
+    const directory = directoryFor();
+
+    const mint = mintSession({
+      verify: validVerifier(),
+      directory,
+      users: recordingUserStore().users,
+      provisionWallets: noopProvision().provision,
+      sessions: stubCodec(),
+    });
+
+    await mint(ACCESS_TOKEN);
+
+    expect(directory.asked).toEqual([DID]);
   });
 
   // ── The identity, as stored ──────────────────────────────────────────────────
@@ -114,7 +136,7 @@ describe('mintSession', () => {
       sessions: stubCodec(),
     });
 
-    await mint(ACCESS_TOKEN, ID_TOKEN);
+    await mint(ACCESS_TOKEN);
 
     // Verbatim from the provider: not lowercased, not slugified, not derived.
     expect(profiles[0]?.email).toBe('Persona Real@Example.COM');
@@ -136,7 +158,7 @@ describe('mintSession', () => {
       sessions: stubCodec(),
     });
 
-    await mint(ACCESS_TOKEN, ID_TOKEN);
+    await mint(ACCESS_TOKEN);
 
     // The readable half is the display name; the digest half is the DID's, so two
     // people called "Ana Ruiz" still get two rows.
@@ -162,7 +184,7 @@ describe('mintSession', () => {
       log,
     });
 
-    await expect(mint(ACCESS_TOKEN, ID_TOKEN)).rejects.toThrow('user has no linked email account');
+    await expect(mint(ACCESS_TOKEN)).rejects.toThrow('user has no linked email account');
 
     // Nothing invented, nothing written, no wallet, no cookie.
     expect(calls).toEqual([]);
@@ -172,7 +194,7 @@ describe('mintSession', () => {
     expect(log.lines).toContain('error:session.failed');
   });
 
-  it('refuses an id token that belongs to a DIFFERENT Privy user', async () => {
+  it('refuses a lookup that resolved a DIFFERENT Privy user than the token proved', async () => {
     const { users, calls } = recordingUserStore();
 
     const mint = mintSession({
@@ -183,7 +205,7 @@ describe('mintSession', () => {
       sessions: stubCodec(),
     });
 
-    await expect(mint(ACCESS_TOKEN, ID_TOKEN)).rejects.toBeInstanceOf(IdentityUnavailable);
+    await expect(mint(ACCESS_TOKEN)).rejects.toBeInstanceOf(IdentityUnavailable);
     expect(calls).toEqual([]);
   });
 });

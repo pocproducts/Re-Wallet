@@ -10,15 +10,19 @@
  * a placeholder address is what put fabricated rows into the design. Those rows
  * claim to be a mailbox and are not one.
  *
- * So the frontend now also sends Privy's **id token**, and this port turns it into
- * the authoritative user record.
+ * So the frontend sends **one** token, the access token, and this port turns the
+ * DID that token proves into the authoritative user record. Nothing else has to
+ * reach the server to find out who the person is.
  *
  * ── Why the port carries no credentials and no trust ───────────────────────────
  *
- * `lookup` receives an opaque token and returns facts. It never decides whether the
+ * `lookup` receives an identifier and returns facts. It never decides whether the
  * caller is authenticated — that is `TokenVerifier`'s job, and it stays first. The
- * use case compares the DID that comes back against the verified one, so a valid id
- * token belonging to somebody else cannot lend its email to this session.
+ * DID it receives is already a verified one, so the port holds nothing secret: an
+ * attacker who learns a DID still needs a valid access token to make this call
+ * happen. The use case then compares the DID that comes back against the verified
+ * one, so a lookup that returned somebody else's record cannot lend its email to
+ * this session.
  *
  * ── Why there is no `email: string | null` ─────────────────────────────────────
  *
@@ -52,12 +56,17 @@ export interface DirectoryUser {
 
 export interface UserDirectory {
   /**
-   * Resolves the user behind an id token.
+   * Resolves the user behind a verified Privy DID.
    *
-   * **Throws** when the token does not verify, when the user cannot be found, or when
-   * the user has no email linked. It never resolves with an invented address and
-   * never resolves with a half-filled record: those are the two ways this port could
-   * quietly reintroduce the placeholder it exists to remove.
+   * The DID is the Privy user id, so it addresses the record directly. It is an
+   * identifier, not a credential: this port does not authenticate anybody, and the
+   * DID it is handed has already been proven by `TokenVerifier`.
+   *
+   * **Throws** when the identifier is not a DID, when the user cannot be found, when
+   * the record that comes back belongs to somebody else, or when the user has no
+   * email linked. It never resolves with an invented address and never resolves with
+   * a half-filled record: those are the two ways this port could quietly
+   * reintroduce the placeholder it exists to remove.
    */
-  lookup(idToken: string): Promise<DirectoryUser>;
+  lookup(privyDid: string): Promise<DirectoryUser>;
 }

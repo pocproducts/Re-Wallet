@@ -158,16 +158,21 @@ anything**. Run it after `npm run build`. A real deploy — which does publish, 
 
 ## How a login works
 
-`POST /api/auth/session` takes `{ accessToken, idToken }` and, in this order:
+`POST /api/auth/session` takes `{ accessToken }` and, in this order:
 
 1. **Verify the access token.** `verifyAuthToken` proves the caller and yields the
    Privy DID. This is the authority on identity and it is first; nothing is written
    before it succeeds.
-2. **Resolve the user.** `users().get({ id_token })` asks Privy who the person
-   actually is. The access token carries no email claim — the SDK's payload reader
-   enumerates `aud`, `iss`, `iat`, `exp`, `sid`, `sub` — so the mailbox has to come
-   from the user record. The DID that comes back is compared with the verified one;
-   an id token belonging to somebody else is refused.
+2. **Resolve the user, by that DID.** `users()._get(privyDid)` asks Privy for the
+   record that identifier names. The access token carries no email claim — the SDK's
+   payload reader enumerates `aud`, `iss`, `iat`, `exp`, `sid`, `sub` — so the
+   mailbox has to come from the user record, and that record is addressable by the
+   DID the verification just proved. No second token is needed or accepted. The
+   fetched user's own `id` is compared with the verified DID; a record belonging to
+   anybody else is refused. (`_get` is underscore-prefixed in
+   `@privy-io/node@0.35.0` because it shadows the older token-based
+   `users().get({ id_token })`; it is the SDK's own documented-by-example path for
+   a single user by id.)
 3. **Upsert `rewallet.users`.** `email`, `name`, `tag` and `tag_normalized` are all
    `NOT NULL` and `UNIQUE`, and all four are built from the real email plus a short
    SHA-256 digest of the DID, so a re-login resolves to the same row instead of

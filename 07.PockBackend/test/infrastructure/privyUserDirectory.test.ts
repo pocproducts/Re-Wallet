@@ -14,13 +14,19 @@ import {
 } from '../../src/infrastructure/privy/privyUserDirectory';
 import { DID } from '../support/fixtures';
 
-const ID_TOKEN = 'id.a.b';
+const OTHER_DID = 'did:privy:2someoneelse0000000000000000000000000';
 
-/** A user with one linked email, which is what a Privy email login produces. */
-const stubClient = (user: unknown, onGet?: (input: unknown) => void): PrivyUsersClient => ({
+/**
+ * A client that records the identifier it was asked for and answers with `user`.
+ *
+ * `_get` is the SDK's own documented-by-example path for a single user by Privy
+ * user id (`resources/users/users.d.ts`); it is underscore-prefixed in the package
+ * because it shadows the older token-based `users().get({ id_token })`.
+ */
+const stubClient = (user: unknown, onGet?: (userId: string) => void): PrivyUsersClient => ({
   users: () => ({
-    get: async (input) => {
-      onGet?.(input);
+    _get: async (userId) => {
+      onGet?.(userId);
       return user as never;
     },
   }),
@@ -38,19 +44,19 @@ describe('privyUserDirectory', () => {
   it('reads the email out of the linked accounts', async () => {
     const directory = createPrivyUserDirectory(stubClient(withEmail));
 
-    const found = await directory.lookup(ID_TOKEN);
+    const found = await directory.lookup(DID);
 
     expect(found).toEqual({ privyDid: DID, email: 'ana@example.com', displayName: null });
   });
 
-  it('sends the id token under the key the SDK documents', async () => {
-    let sent: unknown;
-    const directory = createPrivyUserDirectory(stubClient(withEmail, (input) => { sent = input; }));
+  it('asks the provider for the user by DID, with no token of any kind', async () => {
+    let sent: string | undefined;
+    const directory = createPrivyUserDirectory(stubClient(withEmail, (userId) => { sent = userId; }));
 
-    await directory.lookup(ID_TOKEN);
+    await directory.lookup(DID);
 
-    // `PrivyUsersService.GetInput = { id_token: string }` — snake_case, not `idToken`.
-    expect(sent).toEqual({ id_token: ID_TOKEN });
+    // `_get(userID: string)` — the id alone, positional.
+    expect(sent).toBe(DID);
   });
 
   it('preserves the mailbox exactly as the provider reports it', async () => {
@@ -58,7 +64,7 @@ describe('privyUserDirectory', () => {
       stubClient({ ...withEmail, linked_accounts: [{ type: 'email', address: 'Persona.Real@Example.COM' }] }),
     );
 
-    expect((await directory.lookup(ID_TOKEN)).email).toBe('Persona.Real@Example.COM');
+    expect((await directory.lookup(DID)).email).toBe('Persona.Real@Example.COM');
   });
 
   it('REFUSES a user with no linked email instead of inventing one', async () => {
@@ -67,28 +73,38 @@ describe('privyUserDirectory', () => {
     );
 
     // Fails closed. There is no reserved-TLD fallback anywhere in this file.
-    await expect(directory.lookup(ID_TOKEN)).rejects.toBeInstanceOf(PrivyIdentityUnavailable);
+    await expect(directory.lookup(DID)).rejects.toBeInstanceOf(PrivyIdentityUnavailable);
   });
 
-  it('fails closed when the provider rejects the token', async () => {
+  it('fails closed when the provider cannot serve the lookup', async () => {
     const directory = createPrivyUserDirectory({
-      users: () => ({ get: async () => { throw new Error('401 Unauthorized'); } }),
+      users: () => ({ _get: async () => { throw new Error('401 Unauthorized'); } }),
     });
 
-    await expect(directory.lookup(ID_TOKEN)).rejects.toBeInstanceOf(PrivyIdentityUnavailable);
+    await expect(directory.lookup(DID)).rejects.toBeInstanceOf(PrivyIdentityUnavailable);
   });
 
-  it('rejects a token that does not look like a JWT before calling the provider', async () => {
+  it('rejects a key that is not a Privy DID before calling the provider', async () => {
     let called = false;
     const directory = createPrivyUserDirectory(stubClient(withEmail, () => { called = true; }));
 
-    await expect(directory.lookup('not-a-jwt')).rejects.toBeInstanceOf(PrivyIdentityUnavailable);
+    for (const bad of ['', 'not-a-did', 'id.a.b', 'did:web:example.com']) {
+      await expect(directory.lookup(bad)).rejects.toBeInstanceOf(PrivyIdentityUnavailable);
+    }
     expect(called).toBe(false);
   });
 
   it('treats an empty linked email as no email', async () => {
     const directory = createPrivyUserDirectory(stubClient({ id: DID, linked_accounts: [{ type: 'email', address: '  ' }] }));
 
-    await expect(directory.lookup(ID_TOKEN)).rejects.toBeInstanceOf(PrivyIdentityUnavailable);
+    await expect(directory.lookup(DID)).rejects.toBeInstanceOf(PrivyIdentityUnavailable);
+  });
+
+  it("REFUSES a record whose own id is not the DID that was asked for", async () => {
+    const directory = createPrivyUserDirectory(stubClient({ ...withEmail, id: OTHER_DID }));
+
+    // The lookup answered, but with somebody else. Failing closed beats writing a
+    // mailbox that belongs to a different person.
+    await expect(directory.lookup(DID)).rejects.toBeInstanceOf(PrivyIdentityUnavailable);
   });
 });
