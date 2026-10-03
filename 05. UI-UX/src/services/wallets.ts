@@ -21,9 +21,11 @@
  *
  * ── Lo que este archivo NO hace ───────────────────────────────────────────────
  *
- * No inventa un `walletId` ni una `address`. Los dos valores traveled desde el
- * SDK de Privy y punto: si el SDK no reporta una wallet, no se manda ninguna, y
- * el backend responde 403.
+ * No inventa un `walletId` ni una `address`. Los dos valores viajan desde Privy y
+ * punto: si el SDK no reporta una wallet, no se manda ninguna, y el backend
+ * responde 403. El `walletId` sale de la entrada que esa wallet tiene en el
+ * usuario de Privy (`user.linked_accounts`), que es el único lugar donde el tipo
+ * declara que hay un id; la dirección se toma de esa misma entrada, nunca de otra.
  *
  * ── El `credentials: 'include'` no es negociable ──────────────────────────────
  *
@@ -40,6 +42,7 @@ export interface ClaimedWallet {
   readonly chain: ClaimChain;
   /** Id de la wallet tal como lo reporta Privy. Nunca se construye a mano. */
   readonly walletId: string;
+  /** Dirección de **la misma** entrada que trajo el `walletId`. Nunca se cruzan. */
   readonly address: string;
 }
 

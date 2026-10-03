@@ -331,7 +331,8 @@ muestre `detalle` en el log, y qué motivo concreto produce hoy ese
 `useCreateWallet` aparezca efectivamente en `linked_accounts` del usuario de Privy,
 y qué pasa con una persona que ya tiene una wallet de Solana del circuito anterior
 (el tipo público de las wallets standard de Solana no expone `id`, así que esa
-cadena no se reclama: no se crea una segunda).
+cadena no se reclama: no se crea una segunda). **Resuelto en T8**: ese `id` no se
+lee más de ahí; el `createWallet()` ya no se mira y el id sale del `user`.
 
 ## T7 — Un correo es una cuenta, aunque Privy rote el DID
 
@@ -408,6 +409,72 @@ entienda de `citext`, de `db.unsafe` en el `SELECT` y del nombre de la
 restricción sólo se ve con un login real. Tampoco se ha probado que una fila
 **real** ya huérfana quede reparada por la adopción en producción: el caso está
 cubierto contra el fake, no contra el DID viejo de verdad.
+
+## T8 — El `walletId` sale del `user`, no del `createWallet`
+
+### El fallo de producción que lo motivó
+
+```
+DIAGNOSTIC {"etapa":"wallets_crear_ethereum","detalle":"walletidmissing_ethereum"}
+DIAGNOSTIC {"etapa":"wallets_crear_solana","detalle":"code_unknown"}
+```
+
+La wallet de Ethereum **sí se creó**, y no hubo nada que reclamar. No era red ni
+un rechazo del backend: el `Wallet` que devuelve `useCreateWallet()` declara
+`id?: string | null` — *"the server wallet ID. Null if the wallet is not delegated"*
+(`@privy-io/react-auth/dist/dts/types-BOEI6Njl.d.ts:847`)—, y el código leía
+justamente ese campo. Para las wallets standard de Solana era peor: el tipo no
+tiene `id` en absoluto. El `detalle` de la etapa de Solana era `code_unknown`
+puro porque `buildPrivyErrorDetail` sólo sumaba el nombre del error si además había
+código o status, y un `PrivyClientError` sin `privyErrorCode` no tenía ninguno de
+los dos.
+
+### La regla
+
+El `id` se lee del **objeto `user` del usuario autenticado**, y `createWallet()` se
+usa sólo para crear: su valor de retorno ni se mira. El `user` se relee después de
+crear, porque el SDK lo refresca **después** de la creación y en el instante en que
+`createWallet()` resuelve todavía no lista la wallet — que es exactamente por qué
+el log decía `walletidmissing` sobre una wallet que existía. Con cinco lecturas
+separadas por 750 ms, y sólo después se reporta.
+
+1. **`05. UI-UX/src/hooks/useUserWallets.ts`**: `embeddedAccounts` filtra
+   `user.linkedAccounts` con el criterio de los helpers de `@privy-io/js-sdk-core`
+   (`type === 'wallet' && walletClientType === 'privy' && connectorType ===
+   'embedded'`) y las ordena por `walletIndex`. El `id` y la `address` salen de la
+   misma entrada: nunca se cruzan. Si el `user` ya lista una wallet embebida de esa
+   persona, se usa y no se crea una segunda — tampoco si `useWallets` reporta
+   alguna. El `user` se lee desde un `ref` para que el ciclo async vea el objeto
+   refrescado y no el del closure. La nota pasó a
+   `walletidmissing_<cadena>_attempts_<n>_listed_<yes|no>`.
+2. **Los helpers de `@privy-io/js-sdk-core` no se usan**, y está escrito por qué en
+   el archivo: `getAllUserEmbeddedEthereumWallets` / `getAllUserEmbeddedSolanaWallets`
+   leen `user.linked_accounts`, que es la forma del `User` de `@privy-io/api-types`.
+   El `user` de `usePrivy()` es el de `react-auth` (`types-BOEI6Njl.d.ts:1329`),
+   con `linkedAccounts` en camelCase, y `tsc` lo rechaza con `TS2769`. El mismo
+   criterio que esos helpers aplican en runtime está aplicado a mano sobre la lista
+   equivalente; el dato es el mismo.
+3. **`05. UI-UX/src/services/privy.ts`**: `buildPrivyErrorDetail` suma el `name`
+   siempre que exista, y suma el `type` del error (`PrivyClientError`,
+   `PrivyApiError`), que es lo que distingue familias de Privy: esos errores
+   heredan de `Error` y no pisan `name`. Con la etapa en la nota (`create_solana`),
+   el `detalle` de un fallo al crear ya no puede ser `code_unknown` a secas.
+
+**Gates**: `05. UI-UX` → `npm run lint` limpio y `npm run build` ok, con el filtro
+nuevo y la nota nueva presentes en el bundle. Sin test runner en `05. UI-UX`: los
+gates de esa app son `tsc` y el build.
+
+**Superficies de edición de T8**: `05. UI-UX/src/hooks/useUserWallets.ts`,
+`05. UI-UX/src/services/wallets.ts`, `05. UI-UX/src/services/privy.ts` y este
+archivo. Front only: el backend no cambia, y `07.PockBackend/**` no se toca.
+
+**Lo que sigue sin probarse**: todo el circuito. Que el `user` de una persona real
+liste la wallet recién creada con `id`, cuántos intentos necesita para hacerlo, y
+si con una wallet **no delegada** el `id` viene siquiera —el tipo lo sigue
+declarando opcional en esta forma del `user`—, porque sin eso la cadena sigue sin
+reclamar y sólo cambia el diagnóstico. También queda sin probar por qué falla la
+creación de Solana: ahora el `detalle` va a decir el `code`, el `name` y el `type`,
+pero hay que verlos en un log real.
 
 ## Allowed edit surfaces
 

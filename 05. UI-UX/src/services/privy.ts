@@ -153,9 +153,9 @@ export const reportPrivyError = async (
  * ── Qué entra y qué NO entra ──────────────────────────────────────────────────
  *
  * Entra **sólo** lo que el front compone pieza por pieza: el código real, el
- * status HTTP cuando la respuesta existe, el nombre del error y una nota corta
- * de la etapa. El `message` del error **no** entra nunca: es texto libre de un
- * SDK y es exactamente donde un correo o un token terminarían filtrados.
+ * status HTTP cuando la respuesta existe, el nombre y el tipo del error y una nota
+ * corta de la etapa. El `message` del error **no** entra nunca: es texto libre de
+ * un SDK y es exactamente donde un correo o un token terminarían filtrados.
  *
  * Se compone de una lista cerrada de piezas leídas por nombre, no del objeto del
  * error entero, así que la exclusión de correos y tokens es estructural y no una
@@ -192,7 +192,30 @@ const readErrorName = (error: unknown): string | null => {
 };
 
 /**
+ * El `type` del error de Privy: `PrivyClientError`, `PrivyApiError`, etc.
+ *
+ * Va aparte del `name` porque los errores de Privy heredan de `Error` y no pisan
+ * `name`: sin este campo, todas las familias de Privy se logueaban igual de
+ * "Error" y el log no distinguía un rechazo del cliente de uno de la API.
+ */
+const readErrorType = (error: unknown): string | null => {
+  const type = (error as { type?: unknown } | null)?.type;
+  return typeof type === 'string' && type.length > 0 ? type : null;
+};
+
+/**
  * Arma el `detalle`: piezas conocidas, unidas por `_`, cortadas en 200.
+ *
+ * El `name` entra **siempre** que exista, no sólo cuando hay código o status. Con
+ * la regla anterior, un `PrivyClientError` sin `privyErrorCode` —cuyo `code` es un
+ * `ClientErrorCode` y no un `EmbeddedWalletErrorCode`— no tenía ni código ni status
+ * ni nombre, y el `detalle` entero quedaba en `code_unknown`:
+ *
+ * ```
+ * DIAGNOSTIC {"etapa":"wallets_crear_solana","detalle":"code_unknown"}
+ * ```
+ *
+ * Un log que dice "código desconocido" sin decir **qué** falló no es un log.
  *
  * @param note Etapa o causa corta de este reporte (`walletidmissing_solana`).
  * @returns `code_..._status_..._name_...`, o `code_unknown` si no hay nada.
@@ -209,7 +232,10 @@ export const buildPrivyErrorDetail = (error: unknown, note?: string): string => 
   if (status) parts.push(`status_${detailToken(status)}`);
 
   const name = readErrorName(error);
-  if (name && (code || status)) parts.push(`name_${detailToken(name)}`);
+  if (name) parts.push(`name_${detailToken(name)}`);
+
+  const type = readErrorType(error);
+  if (type) parts.push(`type_${detailToken(type)}`);
 
   if (parts.length === 0) return 'code_unknown';
 
