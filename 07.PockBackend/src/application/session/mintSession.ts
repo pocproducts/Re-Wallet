@@ -4,13 +4,12 @@
  * Takes the access token Privy issued in the browser and returns **the raw
  * session token, once**, so the HTTP layer can put it in an httpOnly cookie.
  *
- * ── The order of the five things, and why ─────────────────────────────────────
+ * ── The order of the four things, and why ─────────────────────────────────────
  *
  *   1. Verify the access token → who the caller claims to be
  *   2. Look up the user          → who they actually are (email included)
  *   3. Find or create            → the row in `rewallet.users`
- *   4. Provision the wallets     → EVM first, then Solana
- *   5. Issue the session         → the cookie payload
+ *   4. Issue the session         → the cookie payload
  *
  * Step 1 failing writes **nothing**. An unverified identity is exactly the bypass
  * the ordering exists to prevent, which is why verification is first and never in
@@ -27,7 +26,25 @@
  * carrying an invented address. That placeholder path is deleted, not narrowed.
  *
  * Step 4 comes before step 5 on purpose: issuing a session to someone with no
- * wallets produces an account that logs in and sees an empty app.
+ * WALLETS RECORDED yet produces an account that logs in and sees an app with
+ * nothing in it — which is a state the product can show and fix, unlike the state
+ * this file used to produce.
+ *
+ * ── Wallets are NOT provisioned here ─────────────────────────────────────────
+ *
+ * This file used to ask Privy for a wallet on every login. It does
+ * not any more, and the reason is not a refactor: the wallets it created were
+ * owned by an **app key quorum** (`owner: null`, `owner_id: "is5plzb8…"`) and the
+ * person did not even list them. The right of withdrawal belonged to the app.
+ *
+ * So the browser creates the wallet — Privy gives client-side creations a user
+ * owner — and the backend **verifies** it in a separate operation,
+ * `POST /api/wallets/claim` (see `claimWalletsFor`).
+ *
+ * That makes the wallets step 3.5: announced as pending, and it **cannot fail this
+ * login**. A person who is logged in and whose wallet could not be prepared is a
+ * person who can still use the app and be told what is wrong; a login that fails
+ * because a wallet provider is slow is a person locked out of their own account.
  *
  * ── Why the raw token is returned and not stored ───────────────────────────────
  *
@@ -40,10 +57,9 @@
  * Because a failure here has five possible causes and, without a step marker, all
  * five look identical from the outside: a 401. The `step` recorded before each
  * operation is what turns "login failed" into "login failed at
- * `session.wallets`".
+ * `session.user_upsert`".
  */
 import { buildProfile } from '../user/buildProfile';
-import type { ProvisionWalletsFor } from '../provision-wallet/provisionWalletsFor';
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 import type { SessionCodec } from '../../domain/ports/session-codec';
@@ -56,7 +72,6 @@ export interface MintSessionDeps {
   /** The provider's own user record. Resolves the email. */
   readonly directory: UserDirectory;
   readonly users: UserStore;
-  readonly provisionWallets: ProvisionWalletsFor;
   readonly sessions: SessionCodec;
   readonly log?: Logger;
 }
@@ -140,14 +155,17 @@ export const mintSession = (deps: MintSessionDeps): MintSession => {
       step = 'session.user_ready';
       log.log(step, { userId: user.id, tag: user.tag });
 
-      // 4. The wallets, in the order owned by the use case.
-      step = 'session.wallets_provision';
-      const wallets = await deps.provisionWallets({ ownerDid: identity.privyDid, userId: user.id });
-      step = 'session.wallets_ready';
-      log.log(step, {
-        count: wallets.length,
-        order: wallets.map((wallet) => wallet.chain),
-      });
+      /**
+       * 4. The wallets: announced, not created.
+       *
+       * There is nothing to await here on purpose. The wallet is created in the
+       * browser and claimed in a separate request, and the claim is verified
+       * against Privy on its own terms. This step exists so that a login log says
+       * "the session is open, the wallets are still pending" instead of leaving a
+       * reader to guess whether wallets were ever part of it.
+       */
+      step = 'session.wallets_pending';
+      log.log(step, { userId: user.id, claimRequired: true });
 
       // 5. The session. The raw token is created here and leaves exactly once.
       step = 'session.issue';

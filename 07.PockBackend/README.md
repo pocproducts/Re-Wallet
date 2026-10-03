@@ -40,7 +40,7 @@ healthy and then rejects everybody, or writes to the wrong place.
 | Variable | What it is | What happens if it leaks |
 |---|---|---|
 | `PRIVY_APP_ID` | The identifier of the Privy application this Worker belongs to. Public by nature — it is in `05. UI-UX/.env` on purpose — and harmless without the secret next to it. | Nothing meaningful on its own. Still not sent to the frontend from here. |
-| `PRIVY_APP_SECRET` | The server-side credential for that Privy application. It authorises every call this Worker makes to Privy: verifying tokens, looking users up, creating wallets. | Full control of the Privy app: read and write every user, mint wallets under any account. |
+| `PRIVY_APP_SECRET` | The server-side credential for that Privy application. It authorises every call this Worker makes to Privy: verifying tokens and reading user records — including the wallets a person owns. It no longer mints wallets. | Full control of the Privy app: read and write every user, and read every wallet they own. |
 | `DATABASE_URL` | The Postgres connection string for the Neon database holding the `rewallet` schema. It carries the database user and its password. | Read and write the entire database, including every user's email, DID, wallets and balances. |
 | `SESSION_SECRET` | The key that signs and verifies the session cookie. It is the only thing standing between a forged cookie and somebody else's account. | Forge a session cookie for any `userId` and walk into that account. |
 
@@ -139,8 +139,9 @@ npm test
 
 Vitest, no watch mode, and **no network and no database**. That is not a convenience,
 it is the reason the architecture is shaped the way it is: the token verifier, the
-Privy user directory, the wallet provisioner and the stores are all injected ports,
-so the whole session-minting flow is exercisable offline. A test that needs Privy to
+Privy user directory, the wallet ownership verifier and the stores are all injected
+ports, so the whole session-minting and wallet-claiming flow is exercisable
+offline. A test that needs Privy to
 be up is a test that only runs on the day Privy is up.
 
 ### Dry-run deploy
@@ -178,17 +179,67 @@ anything**. Run it after `npm run build`. A real deploy — which does publish, 
    SHA-256 digest of the DID, so a re-login resolves to the same row instead of
    colliding. If the lookup cannot produce a real email, the login is **refused**
    with a 502 and the failing step in the log. No address is ever invented.
-4. **Provision the wallets**, EVM first and then Solana. The order belongs to the use
-   case, not to the adapter.
+4. **Announce that the wallets are pending.** Nothing is created here — see
+   [Who owns the wallet](#who-owns-the-wallet) — and the step can never fail this
+   login.
 5. **Issue the session cookie.** The body of the response is empty; the token
    travels in the httpOnly cookie and nowhere else.
+
+## Who owns the wallet
+
+**The user owns the wallet. This Worker creates none.**
+
+The Worker used to create embedded wallets from the server side, on every login.
+Privy's production answer to what it had produced was unambiguous:
+
+```
+GET /v1/wallets/o2oxert46wgndsi2x2gcu7ze → owner: null, owner_id: "is5plzb8spdqrv6n590y31jf"
+GET /v1/users/did:privy:cmussgc9y00f80cjvv8gcmbqs → wallets: []
+```
+
+The wallets belonged to an **app key quorum** and the person did not even list
+them. A raw REST call reproducing our exact request shows it was not our bug
+either: `POST /v1/wallets` with `{"owner":{"user_id":"did:privy:…"}}` answers
+`200` and still assigns the key quorum. The endpoint ignores `owner`.
+
+So the direction is inverted. The **browser** creates the wallet (Privy gives
+client-side creations a user owner) and the **backend verifies** it:
+
+`POST /api/wallets/claim`
+
+```json
+{ "accessToken": "<privy access token>",
+  "wallets": [ { "chain": "ethereum", "walletId": "…", "address": "0x…" },
+               { "chain": "solana",   "walletId": "…", "address": "…" } ] }
+```
+
+1. The `accessToken` is verified **exactly** as `POST /api/auth/session` does, and
+   its DID is the only key the rest of the request may use.
+2. The user is fetched from Privy with the same directory lookup, which also
+   resolves the `rewallet.users.id` the wallets table is keyed by.
+3. **Ownership proof.** Every claimed `walletId` must appear in *that* user's Privy
+   record (`linked_accounts`, the embedded-wallet entries). If one does not, the
+   **entire claim is rejected and nothing is written** — a partial write is worse
+   than no write.
+4. The claimed `address` must match the address Privy reports, and **Privy's**
+   address is what gets stored. EVM addresses are compared case-insensitively,
+   base58 Solana addresses exactly.
+5. Verified wallets are written EVM first and then Solana (that order belongs to
+   `claimWalletsFor`, not to the adapter), and re-claiming is a no-op thanks to the
+   existing `UNIQUE (user_id, chain_type)`.
+
+Answers: `204` on success (no body), `400` for a malformed body, `401
+UNAUTHENTICATED` for a token that does not verify, `403 WALLET_CLAIM_REJECTED` for
+a claim that is not true, `502 WALLET_OWNERSHIP_UNAVAILABLE` / `502
+IDENTITY_UNAVAILABLE` when the provider cannot answer. A provider outage is never
+dressed up as a refusal: telling somebody to try again would fail identically.
 
 ## Layout
 
 ```
 src/
   domain/ports/        the interfaces: what the application needs, in our words
-  application/         the use cases: session minting, wallet provisioning
+  application/         the use cases: session minting, wallet claiming
   infrastructure/      the adapters: Privy, Postgres, JWT
   interface/http/      Hono: routes, cookies, the error boundary
   container.ts         reads config, builds adapters, wires the app

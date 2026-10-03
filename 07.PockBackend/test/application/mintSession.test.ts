@@ -43,11 +43,6 @@ const recordingUserStore = () => {
   return { users, calls, profiles, user };
 };
 
-const noopProvision = () => {
-  const calls: string[] = [];
-  return { calls, provision: async ({ userId }: { userId: string }) => { calls.push(userId); return []; } };
-};
-
 const stubCodec = (): SessionCodec => ({
   issue: async () => ({ token: 'rw1_token', expiresAt: new Date('2030-01-01T00:00:00Z') }),
   read: async () => ({ userId: USER_ID, privyDid: DID }),
@@ -56,38 +51,33 @@ const stubCodec = (): SessionCodec => ({
 describe('mintSession', () => {
   it('rejects a bad token and writes NOTHING', async () => {
     const { users, calls } = recordingUserStore();
-    const { calls: provisionCalls, provision } = noopProvision();
     const log = recordingLogger();
 
     const mint = mintSession({
       verify: { verify: async () => { throw new Error('bad signature'); } },
       directory: directoryFor(),
       users,
-      provisionWallets: provision,
       sessions: stubCodec(),
       log,
     });
 
     await expect(mint('not-a-jwt')).rejects.toThrow('bad signature');
 
-    // No user row, no wallet, no session.
+    // No user row, no session.
     expect(calls).toEqual([]);
-    expect(provisionCalls).toEqual([]);
     // And the failure says WHICH step died.
     expect(log.lines).toContain('session.start');
     expect(log.lines).toContain('error:session.failed');
   });
 
-  it('verifies, resolves, upserts, provisions and issues, in that order', async () => {
+  it('verifies, resolves, upserts and issues, in that order', async () => {
     const { users } = recordingUserStore();
-    const { provision } = noopProvision();
     const log = recordingLogger();
 
     const mint = mintSession({
       verify: validVerifier(),
       directory: directoryFor(),
       users,
-      provisionWallets: provision,
       sessions: stubCodec(),
       log,
     });
@@ -102,9 +92,31 @@ describe('mintSession', () => {
       'session.token_verified',
       'session.identity_resolved',
       'session.user_ready',
-      'session.wallets_ready',
+      'session.wallets_pending',
       'session.issued',
     ]);
+  });
+
+  it('announces the wallets as pending and does NOT provision them', async () => {
+    const { users } = recordingUserStore();
+    const log = recordingLogger();
+
+    const mint = mintSession({
+      verify: validVerifier(),
+      directory: directoryFor(),
+      users,
+      sessions: stubCodec(),
+      log,
+    });
+
+    // The session opens even though there are no wallets on file yet: the claim
+    // is a separate operation, and a wallet problem must not lock anyone out.
+    const minted = await mint(ACCESS_TOKEN);
+    expect(minted.token).toBe('rw1_token');
+    expect(log.lines).toContain('session.wallets_pending');
+    // Nothing in this flow may ever say it created or provisioned a wallet.
+    expect(log.lines.some((line) => line.includes('provision'))).toBe(false);
+    expect(log.lines.some((line) => line.includes('wallets_ready'))).toBe(false);
   });
 
   it('looks the user up BY the DID the access token proved — no second token', async () => {
@@ -114,7 +126,6 @@ describe('mintSession', () => {
       verify: validVerifier(),
       directory,
       users: recordingUserStore().users,
-      provisionWallets: noopProvision().provision,
       sessions: stubCodec(),
     });
 
@@ -132,7 +143,6 @@ describe('mintSession', () => {
       verify: validVerifier(),
       directory: directoryFor({ email: 'Persona Real@Example.COM' }),
       users,
-      provisionWallets: noopProvision().provision,
       sessions: stubCodec(),
     });
 
@@ -154,7 +164,6 @@ describe('mintSession', () => {
       verify: validVerifier(),
       directory: directoryFor({ email: 'ana@example.com', displayName: 'Ana Ruiz' }),
       users,
-      provisionWallets: noopProvision().provision,
       sessions: stubCodec(),
     });
 
@@ -171,7 +180,6 @@ describe('mintSession', () => {
 
   it('fails closed and writes NOTHING when the user lookup cannot resolve an identity', async () => {
     const { users, calls, profiles } = recordingUserStore();
-    const { calls: provisionCalls, provision } = noopProvision();
     const log = recordingLogger();
 
     const mint = mintSession({
@@ -179,17 +187,15 @@ describe('mintSession', () => {
       // The provider authenticated the caller but has no mailbox for them.
       directory: { lookup: async () => { throw new Error('user has no linked email account'); } },
       users,
-      provisionWallets: provision,
       sessions: stubCodec(),
       log,
     });
 
     await expect(mint(ACCESS_TOKEN)).rejects.toThrow('user has no linked email account');
 
-    // Nothing invented, nothing written, no wallet, no cookie.
+    // Nothing invented, nothing written, no cookie.
     expect(calls).toEqual([]);
     expect(profiles).toEqual([]);
-    expect(provisionCalls).toEqual([]);
     // The failing step is named, so "login failed" becomes "login failed at …".
     expect(log.lines).toContain('error:session.failed');
   });
@@ -201,7 +207,6 @@ describe('mintSession', () => {
       verify: validVerifier(),
       directory: directoryFor({ privyDid: 'did:privy:2someoneelse0000000000000000000000000' }),
       users,
-      provisionWallets: noopProvision().provision,
       sessions: stubCodec(),
     });
 

@@ -17,6 +17,7 @@ import { DigitalDollarsView } from './components/Investments/DigitalDollarsView'
 import { CryptoAssetsListView } from './components/Investments/CryptoAssetsListView';
 import { LoginGate } from './components/Auth/LoginGate';
 import { useSessionGate } from './hooks/useSessionGate';
+import { useUserWallets } from './hooks/useUserWallets';
 import { ChargeQrModal } from './components/Charge/ChargeQrModal';
 import { NavTab, TransactionItem } from './types';
 import {
@@ -42,6 +43,17 @@ export default function App() {
     signOut,
     restartFromCleanState,
   } = useSessionGate();
+
+  /*
+   * Las wallets se preparan **después** de entrar, nunca antes: sólo corre cuando
+   * la sesión de ReWALLET ya está abierta y Privy ya dice autenticado.
+   *
+   * Un fallo acá no cambia `sessionStatus` ni muestra una pantalla de error: la
+   * persona está adentro y se le avisa. Un problema con las wallets es un problema
+   * que se muestra, no un muro. Lo único que cambia es el aviso de abajo.
+   */
+  const { status: walletsStatus } = useUserWallets(sessionStatus === 'authenticated');
+  const [walletsWarningDismissed, setWalletsWarningDismissed] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<NavTab>('wallet');
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
@@ -256,6 +268,31 @@ export default function App() {
               DIV 2: Navbar abajo con los 3 iconos fluidos + Botón circular BUG
              ========================================================================= */
           <>
+            {/* AVISO DE WALLETS: informativo, nunca bloqueante */}
+            {walletsStatus === 'failed' && !walletsWarningDismissed && (
+              <div className="w-full shrink-0 px-4 pt-3 font-sans">
+                <div className="flex items-start gap-2.5 rounded-2xl bg-white border border-amber-200/80 px-3.5 py-3 shadow-xs">
+                  <div className="flex-1">
+                    <p className="text-[12px] font-black text-black leading-snug">
+                      No pudimos preparar tus billeteras
+                    </p>
+                    <p className="text-[11px] font-medium text-slate-600 leading-snug mt-0.5">
+                      Podés seguir usando la app. Para recibir o mover fondos vas a
+                      necesitarlas: cerrá sesión y volvé a entrar para reintentarlo.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setWalletsWarningDismissed(true)}
+                    aria-label="Cerrar aviso"
+                    className="w-6 h-6 shrink-0 rounded-full text-slate-400 flex items-center justify-center hover:text-black transition-colors cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5 stroke-[2.5]" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* DIV 1: Casi toda la pantalla con transiciones fluidas */}
             <div
               id="screen-main-content"
