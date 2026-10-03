@@ -34,8 +34,14 @@ export default function App() {
    * onboarding propio: pregunta al backend si la sesión sigue viva, y el
    * perfil se deriva del usuario de Privy (`hooks/useSessionGate`).
    */
-  const { ready, status: sessionStatus, profile, confirmSessionOpened, signOut } =
-    useSessionGate();
+  const {
+    ready,
+    status: sessionStatus,
+    profile,
+    exchangeError,
+    signOut,
+    restartFromCleanState,
+  } = useSessionGate();
   const [currentTab, setCurrentTab] = useState<NavTab>('wallet');
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
@@ -164,6 +170,12 @@ export default function App() {
   const isAnyThirdLevelOpen =
     isAavePoolsOpen || isDigitalDollarsOpen || isCryptoListOpen;
 
+  /*
+   * El botón de "volver a empezar" del fallo de intercambio se deshabilita
+   * mientras corre, para que dos cierres de sesión no se pisen.
+   */
+  const [restarting, setRestarting] = useState(false);
+
   return (
     /*
      * `min-h-dvh` y no `min-h-screen`: `min-h-screen` es 100vh, que en Android
@@ -177,17 +189,66 @@ export default function App() {
       <main className="relative w-full max-w-md h-dvh flex flex-col overflow-hidden bg-[#f3f4f6] shadow-2xl">
         {/* =========================================================================
             LA PUERTA DE INGRESO, O NADA:
-            Mientras Privy no arranca y mientras vuela `GET /api/auth/session` hay
-            una pantalla neutra, no la puerta. Mostrarle la puerta a alguien que
-            ya estaba adentro es el síntoma que esto reemplaza.
+            `checking` (Privy arranca), `checking_session` (vuela el `GET`) y
+            `exchanging` (Privy ya dijo autenticado y estamos abriendo la sesión
+            de ReWALLET) muestran todos una pantalla neutra, nunca el formulario.
+            Mostrarle el formulario a alguien que ya está autenticado en Privy es
+            el bug que esto reemplaza: en ese estado no hay nada que pedir, hay
+            un intercambio que hacer.
            ========================================================================= */}
-        {sessionStatus === 'checking' || !ready ? (
+        {sessionStatus === 'checking' ||
+        sessionStatus === 'checking_session' ||
+        sessionStatus === 'exchanging' ||
+        !ready ? (
           <div className="flex-1 w-full h-full bg-[#f8f9fa] flex flex-col items-center justify-center gap-3 font-sans">
             <Loader2 className="w-6 h-6 text-black animate-spin" />
-            <p className="text-xs font-medium text-slate-500">Cargando…</p>
+            <p className="text-xs font-medium text-slate-500">
+              {sessionStatus === 'exchanging' ? 'Abriendo tu sesión…' : 'Cargando…'}
+            </p>
+          </div>
+        ) : sessionStatus === 'exchange_failed' ? (
+          /* =========================================================================
+              INTERCAMBIO FALLIDO CON LA PERSONA YA AUTENTICADA EN PRIVY:
+              No se reintenta solo (un bucle de `POST` contra un backend roto no
+              repara nada) y no se pide un código (sería `cannot_link_more_of_type`).
+              La salida que funciona es cerrar la sesión de Privy y volver al
+              correo: el próximo intento arranca desde cero y de verdad.
+             ========================================================================= */
+          <div className="flex-1 w-full h-full bg-[#f8f9fa] text-black flex flex-col justify-center px-6 safe-top-5 safe-bottom-5 font-sans">
+            <div className="bg-white border border-slate-200/80 rounded-[28px] p-6 shadow-xs space-y-4">
+              <h1 className="text-lg font-black font-display text-black tracking-tight">
+                No pudimos abrir tu sesión
+              </h1>
+              <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                {exchangeError ??
+                  'Entramos a tu cuenta pero no pudimos abrir la sesión de la app.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setRestarting(true);
+                  void restartFromCleanState().finally(() => setRestarting(false));
+                }}
+                disabled={restarting}
+                className="w-full min-h-[48px] rounded-2xl bg-black text-[#ccff00] text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 disabled:opacity-60 active:scale-98 transition-transform cursor-pointer"
+              >
+                {restarting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Cerrando sesión…</span>
+                  </>
+                ) : (
+                  <span>Cerrar sesión y volver a entrar</span>
+                )}
+              </button>
+              <p className="text-[11px] text-slate-400 font-medium leading-snug text-center">
+                Cierra tu sesión en Privy y vuelve al ingreso por correo. Eso deja el
+                navegador en un estado limpio para el próximo intento.
+              </p>
+            </div>
           </div>
         ) : sessionStatus === 'anonymous' ? (
-          <LoginGate onSessionOpened={confirmSessionOpened} />
+          <LoginGate />
         ) : (
           /* =========================================================================
               CUANDO HAY SESIÓN:

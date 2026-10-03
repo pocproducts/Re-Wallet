@@ -1,6 +1,21 @@
 /**
  * La puerta de entrada: **una sola**, correo y código.
  *
+ * ── Esta pantalla es para gente que NO está autenticada en Privy ─────────────
+ *
+ * Ese es el cambio que evita el bug de producción. Cuando Privy ya reporta una
+ * persona autenticada y lo único que falta es el intercambio con nuestro
+ * backend, pedir un código por correo no es un reintento: Privy lo interpreta
+ * como un intento de **enlazar** un segundo correo del mismo tipo y contesta
+ * `cannot_link_more_of_type`, todas las veces. Ese camino ya no existe acá:
+ *
+ *   - Si `usePrivy().authenticated` es `true`, esta pantalla **no se muestra**.
+ *     Lo decide `hooks/useSessionGate.ts`, que va directo a `getAccessToken()` +
+ *     `POST /api/auth/session`.
+ *   - Y si por un desajuste de render se llegara a montar con `authenticated` en
+ *     `true`, el guarda de más abajo vuelve a negarse a mostrar el formulario.
+ *     La defensa está en los dos lados a propósito: el síntoma era invisible.
+ *
  * ── Una puerta, no dos ───────────────────────────────────────────────────────
  *
  * Antes había dos: "Comenzar" contra "Ya tengo cuenta", y esa bifuración fue
@@ -17,49 +32,39 @@
  * segunda entrada de dígitos es una segunda fuente de bugs de la misma
  * pantalla.
  *
- * ── Después de entrar a Privy todavía falta entrar a ReWALLET ─────────────────
+ * ── Después del código no hay nada nuestro que hacer ──────────────────────────
  *
- * Que Privy diga "entraste" no es que la app tenga sesión: la sesión de
- * ReWALLET es la cookie httpOnly que emite `POST /auth/session` con el access
- * token. Si ese paso falla, **no se entra a la app** y se dice qué pasó, porque
- * Entrar sin sesión es mostrarle a alguien una app que va a fallar en la primera
- * llamada de verdad.
+ * Si `loginWithCode` sirve, Privy queda autenticado, y desde ese momento el
+ * intercambio con el backend lo maneja `useSessionGate` por su cuenta. Esta
+ * pantalla no llama a `/api/auth/session` ni vuelve a pedir tokens: si lo
+ * hiciera, tendría dos caminos al mismo `POST` y volvería el bug de las dos
+ * verdades.
  */
 import React, { useCallback, useState } from 'react';
 import { useLoginWithEmail, usePrivy } from '@privy-io/react-auth';
 import { Loader2, Mail } from 'lucide-react';
 
 import { CodeVerification } from './CodeVerification';
-import { API_BASE_URL, ApiError } from '../../services/api';
-import { openRewalletSession, SESSION_ERROR_IDENTITY_UNAVAILABLE } from '../../services/session';
+import { API_BASE_URL } from '../../services/api';
 import {
   CODE_RESEND_AVAILABLE_IN_SECONDS,
   PRIVY_ERROR_TOO_MANY_REQUESTS,
   readPrivyErrorCode,
   reportPrivyError,
+  toDiagnosticCode,
 } from '../../services/privy';
 
 /** Una etapa del circuito, para que el log del Worker diga dónde se cortó. */
 const ETAPA_ENVIO = 'login_envio_codigo';
 const ETAPA_CODIGO = 'login_codigo';
-const ETAPA_TOKEN = 'login_token';
-const ETAPA_SESION = 'login_sesion';
 
 /** Lo más honesto que se puede validar en el navegador, sin adivinar. */
 const esCorreo = (valor: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valor.trim());
 
 type Etapa = 'correo' | 'codigo';
 
-interface LoginGateProps {
-  /**
-   * Avisa que la sesión de ReWALLET **ya está abierta**. No se llama cuando
-   * Privy deja entrar: se llama después de que el `POST` responde bien.
-   */
-  onSessionOpened: () => void;
-}
-
-export const LoginGate: React.FC<LoginGateProps> = ({ onSessionOpened }) => {
-  const { ready, getAccessToken } = usePrivy();
+export const LoginGate: React.FC = () => {
+  const { ready, authenticated } = usePrivy();
   const { sendCode, loginWithCode } = useLoginWithEmail();
 
   const [etapa, setEtapa] = useState<Etapa>('correo');
@@ -85,7 +90,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onSessionOpened }) => {
       setEtapa('codigo');
     } catch (error) {
       const codigo = readPrivyErrorCode(error);
-      void reportPrivyError(ETAPA_ENVIO, codigo, API_BASE_URL);
+      void reportPrivyError(ETAPA_ENVIO, toDiagnosticCode(codigo), API_BASE_URL);
 
       setErrorMessage(
         codigo === PRIVY_ERROR_TOO_MANY_REQUESTS
@@ -106,7 +111,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onSessionOpened }) => {
       await sendCode({ email: email.trim() });
     } catch (error) {
       const codigo = readPrivyErrorCode(error);
-      void reportPrivyError(ETAPA_ENVIO, codigo, API_BASE_URL);
+      void reportPrivyError(ETAPA_ENVIO, toDiagnosticCode(codigo), API_BASE_URL);
       setErrorMessage(
         codigo === PRIVY_ERROR_TOO_MANY_REQUESTS
           ? 'Pedimos demasiados códigos seguidos. Esperá un minuto y probá de nuevo.'
@@ -123,12 +128,16 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onSessionOpened }) => {
       setErrorMessage(null);
       setVerificando(true);
 
-      // 1) El código contra Privy.
+      /*
+       * `loginWithCode` es **todo** lo que esta pantalla hace. Si el código
+       * sirve, Privy queda autenticado y `useSessionGate` sigue solo con el
+       * intercambio; si no sirve, el código va al log del Worker con su etapa.
+       */
       try {
         await loginWithCode({ code });
       } catch (error) {
         const codigoPrivy = readPrivyErrorCode(error);
-        void reportPrivyError(ETAPA_CODIGO, codigoPrivy, API_BASE_URL);
+        void reportPrivyError(ETAPA_CODIGO, toDiagnosticCode(codigoPrivy), API_BASE_URL);
         setCodigoInvalido(true);
         setErrorMessage(
           codigoPrivy === PRIVY_ERROR_TOO_MANY_REQUESTS
@@ -136,46 +145,9 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onSessionOpened }) => {
             : 'Ese código no sirvió. Revisá el correo y pedí uno nuevo.',
         );
         setVerificando(false);
-        return;
       }
-
-      // 2) El access token. Sin token no hay `POST`, y sin `POST` no hay cookie.
-      let accessToken: string | null = null;
-      try {
-        accessToken = await getAccessToken();
-      } catch (error) {
-        void reportPrivyError(ETAPA_TOKEN, readPrivyErrorCode(error), API_BASE_URL);
-      }
-
-      if (!accessToken) {
-        void reportPrivyError(ETAPA_TOKEN, 'must_be_authenticated', API_BASE_URL);
-        setErrorMessage(
-          'Entramos a tu cuenta pero no pudimos abrir la sesión de la app. Probá de nuevo en un momento.',
-        );
-        setVerificando(false);
-        return;
-      }
-
-      // 3) La sesión de ReWALLET: el `POST` que emite la cookie httpOnly.
-      try {
-        await openRewalletSession({ accessToken });
-      } catch (error) {
-        const codigoApi = error instanceof ApiError ? error.code : null;
-        void reportPrivyError(ETAPA_SESION, codigoApi, API_BASE_URL);
-
-        setErrorMessage(
-          codigoApi === SESSION_ERROR_IDENTITY_UNAVAILABLE
-            ? 'No pudimos leer tu cuenta, así que no se creó nada. Probá de nuevo en un momento.'
-            : 'Entramos a tu cuenta pero no pudimos abrir la sesión de la app. Probá de nuevo en un momento.',
-        );
-        setVerificando(false);
-        return;
-      }
-
-      setVerificando(false);
-      onSessionOpened();
     },
-    [getAccessToken, loginWithCode, onSessionOpened],
+    [loginWithCode],
   );
 
   /*
@@ -187,6 +159,20 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onSessionOpened }) => {
       <div className="w-full h-full bg-[#f8f9fa] flex flex-col items-center justify-center gap-3 font-sans">
         <Loader2 className="w-6 h-6 text-black animate-spin" />
         <p className="text-xs font-medium text-slate-500">Preparando el ingreso…</p>
+      </div>
+    );
+  }
+
+  /*
+   * Privy ya tiene a esta persona autenticada. El formulario de correo **no**
+   * puede mostrarse acá: sería pedirle un código para algo que ya tiene, y la
+   * respuesta sería `cannot_link_more_of_type`. Se espera el intercambio.
+   */
+  if (authenticated) {
+    return (
+      <div className="w-full h-full bg-[#f8f9fa] flex flex-col items-center justify-center gap-3 font-sans">
+        <Loader2 className="w-6 h-6 text-black animate-spin" />
+        <p className="text-xs font-medium text-slate-500">Abriendo tu sesión…</p>
       </div>
     );
   }
@@ -207,18 +193,6 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onSessionOpened }) => {
             setEtapa('correo');
           }}
         />
-
-        {/*
-         * El error de la sesión no es un "código inválido": es otra cosa
-         * enteramente, y por eso va **debajo** de la pantalla de código, no en
-         * la caja del mensaje de código incorrecto. `CodeVerification` ya está
-         * completo y esta capa no le mete un segundo bloque de error encima.
-         */}
-        {!codigoInvalido && errorMessage && (
-          <p className="absolute bottom-24 left-5 right-5 text-[12px] font-bold text-rose-600 text-center">
-            {errorMessage}
-          </p>
-        )}
 
         {verificando && (
           <div className="absolute inset-0 bg-[#f8f9fa]/80 flex items-center justify-center">

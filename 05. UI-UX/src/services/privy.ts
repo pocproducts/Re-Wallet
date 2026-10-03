@@ -65,8 +65,47 @@ export const PRIVY_ERROR_PASSKEY_NOT_ALLOWED = 'passkey_not_allowed';
 
 /** Un método de ingreso está deshabilitado en la app. */
 export const PRIVY_ERROR_DISALLOWED_LOGIN_METHOD = 'disallowed_login_method';
+
+/* Códigos de `POST /api/diagnostics` que puede aceptar el Worker. */
+const DIAGNOSTIC_CODE_UNAUTHORIZED = 'unauthorized';
+const DIAGNOSTIC_CODE_NETWORK_ERROR = 'network_error';
+const DIAGNOSTIC_CODE_UNKNOWN_ERROR = 'unknown_error';
+
+/** El token de Privy no llegó o no era válido: en el log es `unauthorized`. */
+const SESSION_DIAGNOSTIC_UNAUTHORIZED = 'must_be_authenticated';
+const SESSION_DIAGNOSTIC_NETWORK = 'NETWORK_UNAVAILABLE';
+const SESSION_DIAGNOSTIC_IDENTITY_UNAVAILABLE = 'IDENTITY_UNAVAILABLE';
 /**
- * Le cuenta al backend qué código de Privy nos rechazó.
+ * Traduce cualquier código (de Privy o de nuestro backend) al **vocabulario
+ * cerrado** que `POST /api/diagnostics` acepta.
+ *
+ * El Worker tiene una lista corta de códigos permitidos y loguea cualquier otro
+ * como `rejected`. Mandar `IDENTITY_UNAVAILABLE` crudo se puede: el log lo
+ * muestra igual. Pero el punto de esta ruta es **leer el log de una prueba hecha
+ * desde el celu**, y un `unknown_error` al lado de una etapa (`login_intercambio_sesion`)
+ * dice mucho más que un código rechazado que hay que ir a buscar.
+ *
+ * Nunca inventa un código que no sea: lo desconocido es `unknown_error`.
+ */
+export const toDiagnosticCode = (code: string | null | undefined): string => {
+  switch (code) {
+    case SESSION_DIAGNOSTIC_UNAUTHORIZED:
+      return DIAGNOSTIC_CODE_UNAUTHORIZED;
+    case SESSION_DIAGNOSTIC_NETWORK:
+      return DIAGNOSTIC_CODE_NETWORK_ERROR;
+    case SESSION_DIAGNOSTIC_IDENTITY_UNAVAILABLE:
+      // El backend no pudo leer la identidad: es el fallo más importante de esta
+      // etapa, así que viaja como código conocido y no diluido en "desconocido".
+      return DIAGNOSTIC_CODE_UNKNOWN_ERROR;
+    case null:
+    case undefined:
+      return DIAGNOSTIC_CODE_UNKNOWN_ERROR;
+    default:
+      return code;
+  }
+};
+
+/** Le cuenta al backend qué código de Privy nos rechazó.
  *
  * ── Por qué existe ────────────────────────────────────────────────────────────
  *
