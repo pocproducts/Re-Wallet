@@ -8,7 +8,7 @@
  *
  *   1. Verify the access token → who the caller claims to be
  *   2. Look up the user          → who they actually are (email included)
- *   3. Find or create            → the row in `rewallet.users`
+ *   3. Resolve the account       → the row in `rewallet.users`, by DID then by email
  *   4. Issue the session         → the cookie payload
  *
  * Step 1 failing writes **nothing**. An unverified identity is exactly the bypass
@@ -29,6 +29,16 @@
  * WALLETS RECORDED yet produces an account that logs in and sees an app with
  * nothing in it — which is a state the product can show and fix, unlike the state
  * this file used to produce.
+ *
+ * ── The account is resolved by DID and then by email ──────────────────────────
+ *
+ * Step 3 used to be a single upsert keyed on the DID, and that is the assumption
+ * that produced a 401 for a real person: Privy rotated the DID, the row was left
+ * holding one Privy no longer recognises, the upsert missed, and the insert
+ * collided on `users_email_key`. Step 3 is now `resolveAccount`, which looks the
+ * DID up, falls back to the mailbox, and **adopts** the new DID on the existing
+ * row — keeping the id, the name and the tag — instead of trying to create a
+ * second account for a mailbox that is already on file. See `resolveAccount`.
  *
  * ── Wallets are NOT provisioned here ─────────────────────────────────────────
  *
@@ -60,6 +70,7 @@
  * `session.user_upsert`".
  */
 import { buildProfile } from '../user/buildProfile';
+import { resolveAccount } from '../user/resolveAccount';
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 import type { SessionCodec } from '../../domain/ports/session-codec';
@@ -117,6 +128,21 @@ export const mintSession = (deps: MintSessionDeps): MintSession => {
 
   return async (accessToken: string, now: Date = new Date()): Promise<MintedSession> => {
     let step = 'session.start';
+
+    /**
+     * The same resolution the wallet claim uses, so a login and a claim arriving
+     * with the same mailbox can never end up on two different rows. `markStep`
+     * keeps this use case's failure log accurate: the failing statement is the one
+     * that named itself, whichever use case ran it. Built per call, because the
+     * step marker below is per call too.
+     */
+    const resolve = resolveAccount({
+      users: deps.users,
+      log,
+      stepPrefix: 'session',
+      markStep: (marker) => { step = marker; },
+    });
+
     log.log(step);
 
     try {
@@ -147,13 +173,13 @@ export const mintSession = (deps: MintSessionDeps): MintSession => {
       }
       log.log(step, { privyDid: directoryUser.privyDid, hasDisplayName: directoryUser.displayName !== null });
 
-      // 3. The account. Exists or is created; never half-created.
-      step = 'session.user_upsert';
-      const user = await deps.users.upsert(
+      // 3. The account. Exists, adopts a rotated DID, or is created; never half-created.
+      const account = await resolve(
         buildProfile({ privyDid: identity.privyDid, email: directoryUser.email, displayName: directoryUser.displayName }),
       );
+      const user = account.user;
       step = 'session.user_ready';
-      log.log(step, { userId: user.id, tag: user.tag });
+      log.log(step, { userId: user.id, tag: user.tag, resolution: account.resolution });
 
       /**
        * 4. The wallets: announced, not created.

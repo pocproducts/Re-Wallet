@@ -19,10 +19,11 @@ import {
 } from '../../src/application/wallet-claim/claimWalletsFor';
 import type { DirectoryUser, UserDirectory } from '../../src/domain/ports/user-directory';
 import type { OwnedWallet, WalletOwnershipVerifier } from '../../src/domain/ports/wallet-ownership-verifier';
-import type { NewUserProfile, StoredUser, UserStore } from '../../src/domain/ports/user-store';
+import type { NewUserProfile } from '../../src/domain/ports/user-store';
 import type { KnownWallet, WalletStore } from '../../src/domain/ports/wallet-store';
 import { FIRST_CHAIN, SECOND_CHAIN, WALLET_CHAIN_ORDER } from '../../src/domain/wallet/chains';
 import { DID, EVM_ADDRESS, recordingLogger, SOLANA_ADDRESS, USER_ID } from '../support/fixtures';
+import { inMemoryUserStore, seedUser } from '../support/userStore';
 
 const EVM_WALLET_ID = 'wallet-ethereum-1';
 const SOLANA_WALLET_ID = 'wallet-solana-1';
@@ -77,15 +78,10 @@ const createDirectory = (): UserDirectory & { readonly asked: string[] } => {
 };
 
 const createUsers = () => {
-  const profiles: NewUserProfile[] = [];
-  const user: StoredUser = { id: USER_ID, privyDid: DID, name: 'ana.abcd', email: 'ana@example.com', tag: 'ana.abcd' };
-  const users: UserStore = {
-    upsert: async (profile) => {
-      profiles.push(profile);
-      return { ...user, email: profile.email, name: profile.name, tag: profile.tag };
-    },
-  };
-  return { users, profiles };
+  // The same account the session already wrote, so this use case resolves the row
+  // the wallets are keyed on instead of creating one of its own.
+  const store = inMemoryUserStore([seedUser({ id: USER_ID, privyDid: DID, email: 'ana@example.com' })]);
+  return { users: store.users, profiles: store.profiles, rows: store.rows };
 };
 
 /** Everything wired, so a test only states the part it is actually about. */

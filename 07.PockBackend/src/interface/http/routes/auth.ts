@@ -27,6 +27,7 @@ import { IdentityUnavailable, type MintSession } from '../../../application/sess
 import type { Logger } from '../../../domain/ports/logger';
 import { noopLogger } from '../../../domain/ports/logger';
 import type { SessionCodec } from '../../../domain/ports/session-codec';
+import { accountConflict } from '../errors';
 import {
   buildSessionCookie,
   clearSessionCookie,
@@ -101,6 +102,15 @@ export const createAuthRoutes = (deps: AuthDeps) => {
         log.error('POST /auth/session could not resolve an identity', error);
         return c.json(IDENTITY_UNAVAILABLE_BODY, 502);
       }
+
+      /**
+       * Authenticated, and the account cannot be resolved without contradicting
+       * something. Answered as a conflict, never as the 401 below: a 401 sends
+       * the browser round the login loop, and a DID whose stored mailbox is not
+       * the one that just logged in fails identically on every attempt.
+       */
+      const conflict = accountConflict(error, c, log);
+      if (conflict !== null) return conflict;
 
       // A Privy token that does not verify is an invalid token. The person sees
       // exactly what a dead cookie looks like; the reason stays in the log.

@@ -34,6 +34,9 @@
  * - `502 …` we believe you and we could not finish: the identity could not be
  *   read, or the provider record could not be consulted. Telling somebody to log
  *   in again would be a lie about the cause, because it would fail identically.
+ * - `409 …` the account itself cannot be resolved without contradicting something:
+ *   the DID on file and the verified mailbox disagree, or a unique constraint
+ *   raced the write. Same answers as `/api/auth/session`, for the same reasons.
  *
  * The reason for every one of them is in the log; the person gets the code.
  */
@@ -48,6 +51,7 @@ import { IdentityUnavailable } from '../../../application/session/mintSession';
 import type { Logger } from '../../../domain/ports/logger';
 import { noopLogger } from '../../../domain/ports/logger';
 import type { TokenVerifier } from '../../../domain/ports/token-verifier';
+import { accountConflict } from '../errors';
 
 export const WALLET_CLAIM_REJECTED_BODY = { error: { code: 'WALLET_CLAIM_REJECTED' } } as const;
 export const WALLET_OWNERSHIP_UNAVAILABLE_BODY = { error: { code: 'WALLET_OWNERSHIP_UNAVAILABLE' } } as const;
@@ -140,6 +144,11 @@ export const createWalletsRoutes = (deps: WalletsDeps) => {
         log.error('POST /wallets/claim could not resolve an identity', error);
         return c.json(IDENTITY_UNAVAILABLE_BODY, 502);
       }
+
+      // The same two account conditions the session answers, because it is the
+      // same resolution: both routes key their writes on the same users row.
+      const conflict = accountConflict(error, c, log);
+      if (conflict !== null) return conflict;
 
       // Anything else is ours, and it is not the person's answer to guess at.
       throw error;

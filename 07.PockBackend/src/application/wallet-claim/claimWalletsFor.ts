@@ -49,6 +49,14 @@
  * read before the write is what keeps it from even attempting one. The database's
  * `UNIQUE (user_id, chain_type)` is still there as the last line of defence for
  * two claims that overlap in time.
+ *
+ * ── Why the account is resolved with the same use case as the session ─────────
+ *
+ * Because this path keys the wallet rows on `rewallet.users.id`, so it must land
+ * on exactly the same row the session did — including when Privy has rotated the
+ * DID in between. It therefore calls `resolveAccount` (by DID, then by mailbox,
+ * then adopt/create) rather than its own upsert: two resolutions of "who is this
+ * person" would be two chances to disagree.
  */
 import { WALLET_CHAIN_ORDER } from '../../domain/wallet/chains';
 import type { WalletChain } from '../../domain/wallet/chains';
@@ -56,6 +64,7 @@ import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 import type { UserDirectory } from '../../domain/ports/user-directory';
 import type { NewUserProfile, UserStore } from '../../domain/ports/user-store';
+import { resolveAccount } from '../user/resolveAccount';
 import type { OwnedWallet, WalletOwnershipVerifier } from '../../domain/ports/wallet-ownership-verifier';
 import type { KnownWallet, WalletStore } from '../../domain/ports/wallet-store';
 import { buildProfile } from '../user/buildProfile';
@@ -169,6 +178,14 @@ export const claimWalletsFor = (deps: {
     let step = 'wallets.claim_start';
     log.log(step, { privyDid, claimed: claimed.length });
 
+    // The same resolver the session uses, so both paths land on the same row.
+    const resolve = resolveAccount({
+      users: deps.users,
+      log,
+      stepPrefix: 'wallets',
+      markStep: (marker) => { step = marker; },
+    });
+
     try {
       const byChain = parseClaims(claimed);
 
@@ -179,7 +196,8 @@ export const claimWalletsFor = (deps: {
        * where that translation belongs.
        *
        * The row already exists (the session was minted before this call): this is
-       * an `ON CONFLICT (privy_did) DO UPDATE` no-op that returns the same id.
+       * a lookup that resolves to the same id, adopting the DID first if Privy
+       * rotated it since the session was issued.
        */
       step = 'wallets.identity_lookup';
       const directoryUser = await deps.directory.lookup(privyDid);
@@ -192,8 +210,9 @@ export const claimWalletsFor = (deps: {
         email: directoryUser.email,
         displayName: directoryUser.displayName,
       });
-      const user = await deps.users.upsert(profile);
-      log.log('wallets.user_ready', { userId: user.id });
+      const account = await resolve(profile);
+      const user = account.user;
+      log.log('wallets.user_ready', { userId: user.id, resolution: account.resolution });
 
       /*
        * ── The trust boundary ──────────────────────────────────────────────────

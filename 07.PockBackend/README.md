@@ -174,16 +174,76 @@ anything**. Run it after `npm run build`. A real deploy — which does publish, 
    `@privy-io/node@0.35.0` because it shadows the older token-based
    `users().get({ id_token })`; it is the SDK's own documented-by-example path for
    a single user by id.)
-3. **Upsert `rewallet.users`.** `email`, `name`, `tag` and `tag_normalized` are all
-   `NOT NULL` and `UNIQUE`, and all four are built from the real email plus a short
-   SHA-256 digest of the DID, so a re-login resolves to the same row instead of
-   colliding. If the lookup cannot produce a real email, the login is **refused**
-   with a 502 and the failing step in the log. No address is ever invented.
+3. **Resolve `rewallet.users`, by DID and then by mailbox.** `email`, `name`,
+   `tag` and `tag_normalized` are all `NOT NULL` and `UNIQUE`. On a first login
+   all four are built from the real email plus a short SHA-256 digest of the DID.
+   If the lookup cannot produce a real email, the login is **refused** with a 502
+   and the failing step in the log. No address is ever invented. On a later login
+   the resolution is one of four answers — see
+   [One email, one account](#one-email-one-account).
 4. **Announce that the wallets are pending.** Nothing is created here — see
    [Who owns the wallet](#who-owns-the-wallet) — and the step can never fail this
    login.
 5. **Issue the session cookie.** The body of the response is empty; the token
    travels in the httpOnly cookie and nowhere else.
+
+## One email, one account
+
+**The mailbox is the identity. The DID is an identifier Privy may rotate.**
+
+Step 3 used to be a single `INSERT ... ON CONFLICT (privy_did)`, and that is what
+broke in production:
+
+```
+session.failed  { step: 'session.user_upsert',
+                  reason: 'duplicate key value violates unique constraint "users_email_key"' }
+→ 401
+```
+
+Both systems were checked. Privy had exactly one user for that mailbox,
+`did:privy:cmut0tb8i00d10cktp99v35vb`, created minutes earlier, and the previous
+DID no longer existed. Neon had exactly one row for the same mailbox, still bound
+to the **old** DID. The row was an orphan: the upsert looked up by DID, missed, and
+the insert collided with the mailbox that was already on file.
+
+So the resolution is four explicit steps (`resolveAccount`), never one clever
+statement, because the interesting branch needs a **read** to exist:
+
+| The DID | The mailbox | What happens | Log line |
+| --- | --- | --- | --- |
+| known | same | ordinary re-login; the row is upserted so two simultaneous logins still resolve to one row | `session.account_existing` |
+| **unknown** | **known** | the existing row **adopts** the new DID; nothing else changes | `session.account_adopted` (with `previousPrivyDid`) |
+| unknown | unknown | a new account | `session.account_created` |
+| known | **different** | **refused**: `409 IDENTITY_CONFLICT` | `session.failed` with `IdentityConflict` |
+
+Two people cannot collide on the second row: reaching it requires having received
+the code sent to that mailbox, and it only ever rewrites `privy_did`.
+
+**Adoption preserves the person.** `name`, `tag` and `tag_normalized` are a
+handle, not a function of the DID, so the adoption statement is
+`UPDATE … SET privy_did = $1` and nothing else. The `id` every wallet, movement
+and policy row already points at does not change either. Regenerating a tag
+because a provider rotated a technical identifier would break every existing
+reference to that human.
+
+**A mailbox that differs only in case is the same mailbox.** `rewallet.users.email`
+is `citext`, and so is every comparison on the way in — a provider-side casing
+change is not a second person.
+
+**A known DID with a different mailbox is refused, not resolved.** Overwriting the
+stored address is the one move that could hand one person's account to another, so
+the login fails closed. 409, not 401: the person *is* authenticated, and a 401
+would send the browser round the login loop forever.
+
+**A raced unique violation is a clean failure.** Postgres `23505` is translated
+into `UserStoreConflict`, which carries the constraint name for the log and
+answers `409 ACCOUNT_CONFLICT`. No driver message, table name or index name
+reaches a browser. Anything that is *not* a unique violation — an outage, say —
+is re-thrown untouched rather than disguised as a conflict.
+
+Both write paths use it. `/api/auth/session` and `/api/wallets/claim` key their
+writes on the same `rewallet.users.id`, so they call the same resolver rather than
+each having their own idea of who the person is.
 
 ## Who owns the wallet
 
@@ -216,7 +276,9 @@ client-side creations a user owner) and the **backend verifies** it:
 1. The `accessToken` is verified **exactly** as `POST /api/auth/session` does, and
    its DID is the only key the rest of the request may use.
 2. The user is fetched from Privy with the same directory lookup, which also
-   resolves the `rewallet.users.id` the wallets table is keyed by.
+   resolves the `rewallet.users.id` the wallets table is keyed by — through the
+   same account resolver the session uses, so a claim that arrives after Privy
+   rotated the DID lands on the same row instead of failing on the mailbox.
 3. **Ownership proof.** Every claimed `walletId` must appear in *that* user's Privy
    record (`linked_accounts`, the embedded-wallet entries). If one does not, the
    **entire claim is rejected and nothing is written** — a partial write is worse
@@ -231,7 +293,9 @@ client-side creations a user owner) and the **backend verifies** it:
 Answers: `204` on success (no body), `400` for a malformed body, `401
 UNAUTHENTICATED` for a token that does not verify, `403 WALLET_CLAIM_REJECTED` for
 a claim that is not true, `502 WALLET_OWNERSHIP_UNAVAILABLE` / `502
-IDENTITY_UNAVAILABLE` when the provider cannot answer. A provider outage is never
+IDENTITY_UNAVAILABLE` when the provider cannot answer, and `409 IDENTITY_CONFLICT` /
+`409 ACCOUNT_CONFLICT` when the account itself cannot be resolved (see
+[One email, one account](#one-email-one-account)). A provider outage is never
 dressed up as a refusal: telling somebody to try again would fail identically.
 
 ## Layout

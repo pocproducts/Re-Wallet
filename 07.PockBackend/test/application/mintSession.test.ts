@@ -4,9 +4,10 @@ import { IdentityUnavailable, mintSession } from '../../src/application/session/
 import { buildProfile, MissingRealEmail, USER_TAG_PATTERN } from '../../src/application/user/buildProfile';
 import type { TokenVerifier } from '../../src/domain/ports/token-verifier';
 import type { DirectoryUser, UserDirectory } from '../../src/domain/ports/user-directory';
-import type { NewUserProfile, StoredUser, UserStore } from '../../src/domain/ports/user-store';
+import type { NewUserProfile, StoredUser } from '../../src/domain/ports/user-store';
 import type { SessionCodec } from '../../src/domain/ports/session-codec';
 import { DID, recordingLogger, USER_ID } from '../support/fixtures';
+import { inMemoryUserStore, seedUser } from '../support/userStore';
 
 const ACCESS_TOKEN = 'a.b.c';
 
@@ -29,18 +30,23 @@ const directoryFor = (overrides: Partial<DirectoryUser> = {}): UserDirectory & {
   };
 };
 
-const recordingUserStore = () => {
-  const calls: string[] = [];
-  const profiles: NewUserProfile[] = [];
-  const user: StoredUser = { id: USER_ID, privyDid: DID, name: 'ana.abcd', email: 'ana@example.com', tag: 'ana.abcd' };
-  const users: UserStore = {
-    upsert: async (profile) => {
-      calls.push(profile.privyDid);
-      profiles.push(profile);
-      return { ...user, email: profile.email, name: profile.name, tag: profile.tag };
-    },
+const recordingUserStore = (seed = [seedUser({ id: USER_ID, privyDid: DID, email: 'ana@example.com' })]) => {
+  const store = inMemoryUserStore(seed);
+  const user: StoredUser = {
+    id: USER_ID,
+    privyDid: DID,
+    name: 'ana.abcd',
+    email: 'ana@example.com',
+    tag: 'ana.abcd',
+    tagNormalized: 'ana.abcd',
   };
-  return { users, calls, profiles, user };
+  return {
+    users: store.users,
+    calls: store.calls,
+    profiles: store.profiles,
+    user,
+    rows: store.rows,
+  };
 };
 
 const stubCodec = (): SessionCodec => ({
@@ -91,6 +97,10 @@ describe('mintSession', () => {
       'session.start',
       'session.token_verified',
       'session.identity_resolved',
+      // The account resolution is its own line: a re-login, an adoption of a
+      // rotated DID and a brand new account are three different answers, and the
+      // log has to say which one this was.
+      'session.account_existing',
       'session.user_ready',
       'session.wallets_pending',
       'session.issued',
@@ -137,7 +147,9 @@ describe('mintSession', () => {
   // ── The identity, as stored ──────────────────────────────────────────────────
 
   it('stores the REAL email from the Privy user record', async () => {
-    const { users, profiles } = recordingUserStore();
+    // An empty table: this is the creating path, where the profile is written as
+    // it comes. The conflict path is exercised in `resolveAccount.test.ts`.
+    const { users, profiles } = recordingUserStore([]);
 
     const mint = mintSession({
       verify: validVerifier(),
@@ -212,6 +224,45 @@ describe('mintSession', () => {
 
     await expect(mint(ACCESS_TOKEN)).rejects.toBeInstanceOf(IdentityUnavailable);
     expect(calls).toEqual([]);
+  });
+
+  // ── The failure this whole rule exists for ─────────────────────────────────
+
+  it('logs a DID rotation as the SAME account, with no second row', async () => {
+    // Production: Privy rotated the DID of somebody who had already signed up. The
+    // row kept the old DID, the lookup by DID missed, and the insert collided on
+    // `users_email_key` — a 401 for a person who had just proved they own the
+    // mailbox. The login must now succeed, on the row that was already there.
+    const orphan = seedUser({
+      id: 'aaaaaaaa-0000-4000-8000-000000000009',
+      privyDid: 'did:privy:2old00000000000000000000000000000000',
+      email: 'ana@example.com',
+      name: 'ana.abcd',
+      tag: 'ana.abcd',
+      tagNormalized: 'ana.abcd',
+    });
+    const store = inMemoryUserStore([orphan]);
+    const log = recordingLogger();
+
+    const mint = mintSession({
+      verify: validVerifier(),
+      directory: directoryFor(),
+      users: store.users,
+      sessions: stubCodec(),
+      log,
+    });
+
+    const minted = await mint(ACCESS_TOKEN);
+
+    expect(minted.userId).toBe(orphan.id);
+    // The row is now reachable by the new DID, and its handle is untouched.
+    expect(store.rows()[0]?.privyDid).toBe(DID);
+    expect(store.rows()[0]?.tag).toBe('ana.abcd');
+    expect(store.rows()).toHaveLength(1);
+    // The log distinguishes this from an ordinary re-login.
+    expect(log.lines).toContain('session.account_adopted');
+    expect(log.lines).not.toContain('session.account_existing');
+    expect(log.lines).not.toContain('error:session.failed');
   });
 });
 

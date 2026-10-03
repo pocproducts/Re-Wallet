@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { MintSession } from '../../src/application/session/mintSession';
 import { IdentityUnavailable } from '../../src/application/session/mintSession';
+import { IdentityConflict } from '../../src/application/user/resolveAccount';
+import { UserStoreConflict } from '../../src/domain/ports/user-store';
 import type { SessionCodec } from '../../src/domain/ports/session-codec';
 import { SESSION_COOKIE_NAME } from '../../src/interface/http/cookie';
 import { createApp } from '../../src/interface/http/app';
@@ -112,6 +114,50 @@ describe('POST /api/auth/session', () => {
 
     expect(response.status).toBe(400);
     expect(setCookieOf(response)).toBe('');
+  });
+
+  // ── The account cannot be resolved ──────────────────────────────────────────
+
+  it('answers 409, not 401, when the DID on file and the mailbox disagree', async () => {
+    // The person proved the mailbox, and the DID already on file is filed under a
+    // different one. Retrying cannot resolve a contradiction, so a 401 — which
+    // sends the browser round the login loop forever — would be the wrong answer.
+    const log = recordingLogger();
+    const response = await createApp({
+      mint: async () => { throw new IdentityConflict('the account filed under did:privy:2x is not the mailbox Privy reports for it'); },
+      sessions: acceptingCodec(),
+      log,
+    }).request('/api/auth/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(BODY),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: 'IDENTITY_CONFLICT' } });
+    expect(setCookieOf(response)).toBe('');
+  });
+
+  it('answers 409 when a unique constraint races the account write', async () => {
+    const log = recordingLogger();
+    const response = await createApp({
+      mint: async () => { throw new UserStoreConflict('users_email_key'); },
+      sessions: acceptingCodec(),
+      log,
+    }).request('/api/auth/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(BODY),
+    });
+
+    expect(response.status).toBe(409);
+    // A distinct code from the contradiction above: different causes need
+    // different conversations in support.
+    const body = await response.text();
+    expect(JSON.parse(body)).toEqual({ error: { code: 'ACCOUNT_CONFLICT' } });
+    // And no driver message, table name or index name reaches the browser.
+    expect(body).not.toContain('users_email_key');
+    expect(body).not.toContain('rewallet');
   });
 
   it('accepts a body carrying only the access token, and ignores extras', async () => {
