@@ -817,19 +817,169 @@ wallet and real MON. `gasBalance` is reported so the screen can say **"no tenés
 para el gas"** *before* the first signature; nothing here estimates gas, because
 an estimate that guesses wrong costs the person the deposit.
 
+## `POST /api/send/prepare` — the first route that moves money
+
+Request: the chain, the asset **with its decimals**, the recipient and the amount
+in the **smallest unit**, plus a `requestId` the client generates.
+
+```json
+{
+  "requestId": "3b6f1f2e-6a6d-4a2f-9a44-9f2b1c9d0e11",
+  "chain": "monad",
+  "asset": { "symbol": "USDC", "decimals": 6 },
+  "recipient": "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+  "amountRaw": "1500000"
+}
+```
+
+Response: the chain to sign on, **one** unsigned transaction, and the pending
+movement that was written.
+
+```json
+{
+  "requestId": "3b6f1f2e-6a6d-4a2f-9a44-9f2b1c9d0e11",
+  "chain": "monad",
+  "chainId": 143,
+  "network": "eip155:143",
+  "transactions": [
+    { "purpose": "transfer", "to": "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
+      "data": "0xa9059cbb…", "value": "0", "chainId": 143 }
+  ],
+  "movement": { "id": "…", "status": "pending" }
+}
+```
+
+**Nothing here signs.** The browser signs the returned transaction with the
+person's Privy wallet, exactly as it signs the Aave deposit.
+
+### The order of the checks, and which error wins
+
+1. `REQUEST_ID_INVALID` — a send with no usable `requestId` cannot be protected
+   from a double tap, so it is refused before anything is read.
+2. **Replay** — the same `requestId`, from this person, at this endpoint, answers
+   `409` with the stored response **before** validating, before any RPC and
+   before any write.
+3. `CHAIN_UNKNOWN` → 4. `ASSET_NOT_ON_CHAIN` → 5. `INVALID_AMOUNT` →
+   6. `INVALID_RECIPIENT` → 7. `WALLETS_UNAVAILABLE` (502) →
+   8. `BALANCE_UNREADABLE`, then `AMOUNT_EXCEEDS_BALANCE` →
+   9. `BALANCE_UNREADABLE`, then `NO_GAS`.
+
+**Two rules broken at once: the earlier one wins.** Everything above step 8 is a
+pure function of the request, so a refusal there costs no RPC and answers the same
+way tomorrow; and a request with a bad chain *and* a bad amount says
+`CHAIN_UNKNOWN`, because there is nothing to say about the amount of a chain that
+does not exist. Inside the balance rules, the amount is checked before the gas: it
+answers "is the money there", which is the question that decides the send at all.
+
+### One catalog, and what `decimals` is doing in the request
+
+The **deposit catalog** (`src/domain/deposit/catalog.ts`) is the only list of what
+exists where. USDC on Monad and USDC on Ethereum are different contracts and both
+come from that one file. The `decimals` in the body must equal the catalog's:
+at the wrong scale, `1500000` is not the transfer the person asked for, so it is
+refused as `INVALID_AMOUNT` rather than sent at a scale nobody chose.
+
+### The recipient, per chain
+
+- **EVM**: `0x` plus forty hex digits, **and** a valid EIP-55 checksum when the
+  address is mixed-case. A mistyped character changes `keccak256(lowercase
+  address)`, and on an EVM chain nothing checks that character again — the
+  transfer is final and goes nowhere. All-lowercase and all-uppercase addresses
+  are accepted: they carry no checksum information, so there is nothing to verify.
+- **Solana**: base58 that decodes to exactly 32 bytes.
+- **One chain's address in the other's send is refused, not interpreted.** The
+  alphabets do not overlap and neither do the decoded lengths.
+
+The checksum is computed by `src/domain/send/keccak256.ts`, a dependency-free
+keccak-256 (the only hashing library here is `viem`, and it is a **dev**
+dependency, which a Worker cannot ship). It is cross-checked against `viem` in
+`test/domain/send.test.ts`. The `transfer(address,uint256)` selector is **derived**
+with it, not typed — the story of `reserveData.ts` and a remembered selector is in
+that file's header.
+
+### No approval, ever
+
+An ERC-20 send is `transfer(recipient, amount)` called by the **owner** from the
+token contract. An approval would only be needed by a spender; adding one costs a
+second signature and writes a standing allowance nobody asked for. A native send
+is `to` + `value` with `data: '0x'`.
+
+### Idempotency
+
+`rewallet.idempotency_keys` is claimed **before** the transaction is built and
+completed with the answer afterwards, so two overlapping taps prepare one send:
+
+| Step | What it does |
+|---|---|
+| `find` | the stored answer for `userId + endpoint + requestId`, or nothing |
+| `reserve` | claims the key; the loser gets `false`, not an error |
+| `complete` | writes the answer onto the claim |
+| `release` | gives an **empty** claim back, so a refusal never burns a `requestId` |
+
+The stored `key` is `userId|endpoint|requestId` because `key` is the table's
+PRIMARY KEY: without the person inside it, one person's `requestId` would block
+another's send. The answer lives for `expires_at` — 24 hours by default.
+
+**Another person's `requestId` is not a replay for them**: it is a different key
+and a fresh, ordinary preparation.
+
+### What is written to `rewallet.movements`
+
+One row per prepared transfer, so Activity and "recent sends" have something real
+to read before anything is signed:
+
+| Column | Value | Why |
+|---|---|---|
+| `type` | `send` | what `movements_type_valid` allows for this |
+| `status` | `pending` | the transaction exists and **nobody signed it yet** |
+| `amount` | the readable amount at `numeric(20,6)` scale | six places is the column's; SOL has nine, so the exact integer travels in `meta.amountRaw` |
+| `title` | `Send 1.5 USDC to 0x5aAe…eAed` | one line a list can show, truncated so it cannot be copied |
+| `meta` | `chain`, `network`, `symbol`, `decimals`, `token`, `recipient`, `amountRaw`, `requestId` | everything a confirmation needs, and the key the send can be found by |
+
+Moving it to `completed` with the hash belongs to the task that signs.
+
+| Status | When |
+|---|---|
+| 200 | one unsigned transaction to sign |
+| 400 | refused, with one bounded code per distinct fact |
+| 401 `UNAUTHENTICATED` | no cookie, or a cookie that does not verify |
+| 409 `IDEMPOTENT_REPLAY` | this `requestId` already prepared a transfer; the old answer travels back under `replay` |
+| 409 `IDEMPOTENT_IN_FLIGHT` | the claim exists and has no answer yet |
+| 502 `WALLETS_UNAVAILABLE` | the rows could not be read: no address, nothing written |
+
+`REQUEST_ID_INVALID` and `IDEMPOTENT_IN_FLIGHT` are the only two codes outside the
+list in `odd/tasks/pagar-enviar.md`, and both were added on purpose: the first
+because a request with no key cannot be protected from a double tap, the second
+because "somebody else is preparing this right now" is not the same answer as
+"this already happened" and must not be dressed as it.
+
+### What is not proven here
+
+No signed transfer has gone through this path. The calldata is asserted against
+`viem`'s own selector derivation and composed ABI words, the balances come from an
+injected reader, and the signing happens in Privy in the browser. What a real
+signed transfer would additionally prove: that the wallet signs `chainId` 143 and
+not another network, that a Solana transfer built here is accepted by a Solana
+wallet as it stands, and that a pending movement becomes a completed one with a
+hash.
+
 ## Layout
 
 ```
 src/
   domain/ports/        the interfaces: what the application needs, in our words
   domain/deposit/      the deposit catalog: what can be received, where, and the
-                       per-token balance-readability flag
+                       per-token balance-readability flag — also the only list of
+                       what a send may move, and on which chain
+  domain/send/         a recipient validated for its chain, the EIP-55 checksum
+                       and its dependency-free keccak-256, and the transfer
+                       calldata plus the chain identity
   domain/pool/         the Aave V3 Monad addresses, the twelve-output reserve
                        decode, the RAY arithmetic, the deposit calldata
   domain/webhooks/     the signature scheme, the event→sentence table, attribution
   application/         the use cases: session minting, wallet claiming, portfolio
                        reads, deposit catalog, webhook intake, notification feed,
-                       pool read and deposit preparation
+                       pool read and deposit preparation, send preparation
   infrastructure/      the adapters: Privy, Postgres, JWT, JSON-RPC balance reads,
                        and the Aave pool reader
   interface/http/      Hono: routes, cookies, the error boundary

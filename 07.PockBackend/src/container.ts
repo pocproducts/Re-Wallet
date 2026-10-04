@@ -27,6 +27,7 @@ import { mintSession } from './application/session/mintSession';
 import { readPortfolio } from './application/portfolio/readPortfolio';
 import { readPool } from './application/pool/readPool';
 import { prepareDeposit } from './application/pool/prepareDeposit';
+import { prepareSend } from './application/send/prepareSend';
 import { readDepositInfo } from './application/deposit-info/readDepositInfo';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
 import { ingestPrivyWebhook } from './application/webhooks/ingestPrivyWebhook';
@@ -35,6 +36,8 @@ import { createDatabase, readEnv } from './infrastructure/db/client';
 import { createPostgresUserStore } from './infrastructure/db/userStore.pg';
 import { createPostgresWalletStore } from './infrastructure/db/walletStore.pg';
 import { createPostgresWebhookEventStore } from './infrastructure/db/webhookEventStore.pg';
+import { createPostgresMovementStore } from './infrastructure/db/movementStore.pg';
+import { createPostgresIdempotencyStore } from './infrastructure/db/idempotencyStore.pg';
 import { createPrivyTokenVerifier } from './infrastructure/privy/privyTokenVerifier';
 import { createPrivyUserDirectory } from './infrastructure/privy/privyUserDirectory';
 import { createPrivyWalletOwnershipVerifier } from './infrastructure/privy/privyWalletOwnershipVerifier';
@@ -179,6 +182,20 @@ export const buildApp = (config: Config, log: Logger) => {
      */
     readPool: readPool({ wallets: walletStore, pool: aavePool, log }),
     prepareDeposit: prepareDeposit({ wallets: walletStore, pool: aavePool, log }),
+    /*
+     * El envío. Mismos lectores de saldo que el portfolio —una sola fuente de
+     * saldos— y el mismo catálogo como fuente de verdad de qué activo existe en
+     * qué red. El store de movimientos y el de idempotencia son nuevas filas en
+     * tablas que ya existen; no se crea nada acá.
+     */
+    prepareSend: prepareSend({
+      wallets: walletStore,
+      evm,
+      solana,
+      movements: createPostgresMovementStore(db),
+      idempotency: createPostgresIdempotencyStore(db),
+      log,
+    }),
     /*
      * The deposit catalog and the addresses that go with it, read through the
      * **same** store. One store, una sola fuente de dirección: si esta ruta

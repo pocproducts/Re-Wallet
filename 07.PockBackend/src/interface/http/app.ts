@@ -20,6 +20,7 @@ import type { ReadPortfolio } from '../../application/portfolio/readPortfolio';
 import type { ReadPool } from '../../application/pool/readPool';
 import type { PrepareDeposit } from '../../application/pool/prepareDeposit';
 import type { ReadDepositInfo } from '../../application/deposit-info/readDepositInfo';
+import type { PrepareSend } from '../../application/send/prepareSend';
 import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
 import type { IngestPrivyWebhook } from '../../application/webhooks/ingestPrivyWebhook';
 import type { ReadNotifications } from '../../application/webhooks/readNotifications';
@@ -33,6 +34,7 @@ import { createDepositInfoRoutes } from './routes/depositInfo';
 import { createDiagnosticsRoutes } from './routes/diagnostics';
 import { createNotificationsRoutes } from './routes/notifications';
 import { createPortfolioRoutes } from './routes/portfolio';
+import { createSendRoutes } from './routes/send';
 import { createPoolRoutes } from './routes/pool';
 import { createWalletsRoutes } from './routes/wallets';
 import { createWebhookRoutes } from './routes/webhooks';
@@ -64,6 +66,15 @@ export interface AppDeps {
    * that the route does not exist.
    */
   readonly readDepositInfo?: ReadDepositInfo;
+  /**
+   * Absent when the send use case is not wired: the route is then not there.
+   *
+   * Same reasoning as the deposit, and sharper: this is the first route that
+   * moves money. A send screen with no route behind it can be mistaken, from the
+   * outside, for a send that failed — and a browser cannot tell the difference
+   * between "this deployment cannot send" and "your send was refused".
+   */
+  readonly prepareSend?: PrepareSend;
   /** Absent when no signing secret is wired: the intake is then not there. */
   readonly ingestWebhook?: IngestPrivyWebhook;
   readonly readNotifications?: ReadNotifications;
@@ -160,6 +171,24 @@ export const createApp = (deps: AppDeps) => {
       createDepositInfoRoutes({
         sessions: deps.sessions,
         readDepositInfo: deps.readDepositInfo,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
+  /*
+   * `/api/send/prepare`. Mounted only when the use case exists, for the same
+   * reason the claim route is mounted on its dependencies: the honest answer to
+   * "this deployment cannot move money" is that the route does not exist.
+   */
+  if (deps.prepareSend) {
+    app.route(
+      '/api/send',
+      createSendRoutes({
+        sessions: deps.sessions,
+        prepareSend: deps.prepareSend,
         cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
         now: deps.now,
         log,
