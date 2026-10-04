@@ -346,11 +346,157 @@ sesión real para probar el feed de punta a punta.
 **Gate**: la dirección del pool está verificada en cadena antes de que exista una
 línea de código que la use.
 
+**Estado: hecho.** El backend lee la reserva y arma las transacciones; el front
+las firma y vuelve a leer la posición.
+
+#### Las direcciones (verificadas por tres fuentes el 2026-10-04)
+
+| Qué | Dirección | Verificada por |
+|---|---|---|
+| Pool | `0x69a5F9AD4f96ebf0a0C792dD42a01cC5C0102fef` | `aave-address-book` `AaveV3Monad.POOL`, **y** `aMonUSDC.POOL()` en cadena |
+| Data provider | `0xB65A68B98274ef7D9a60E0C0747dD1BEc3D32fad` | `AAVE_PROTOCOL_DATA_PROVIDER`, y `getReserveTokensAddresses(USDC)` |
+| USDC (reserva 1) | `0x754704Bc059F8C67012fEd69BC8A327a5aafb603` | `ASSETS.USDC.UNDERLYING`, 6 decimales |
+| aUSDC | `0x35a73BAcb179d3740395A3ceCc87FF2e581d6042` | `ASSETS.USDC.A_TOKEN`, `symbol()` = `aMonUSDC` |
+| Cadena | 143 | `eth_chainId` en `rpc.monad.xyz` = `0x8f` |
+
+Viven en `07.PockBackend/src/domain/pool/aaveMonad.ts`. **El front no lleva
+ninguna**: pide `POST /api/pool/deposit` y recibe transacciones ya construidas.
+
+#### La trampa del selector y del ABI, cerrada con tests
+
+`getReserveData(address)` es **`0x35ea6a75`** en V3. `0x026b1d5f` es el selector de
+**V2** y revierte sobre un pool V3, y ese revert se leyó una sesión entera como "el
+pool se movió". El selector ahora es una constante con un test.
+
+El ABI oficial tiene **doce** salidas, en ese orden. Declarar menos, o en otro
+orden, no tira: todo lo que viene después de la palabra que falta se corre un
+slot, y de ahí salieron un `lastUpdateTimestamp` de `4e25` y un APR de
+`130.281.299%`. Por eso `decodeReserveData` **rechaza** cualquier respuesta que no
+sea exactamente doce palabras, y `RESERVE_DECODE_FAILED` es un motivo propio: una
+estructura que no se puede leer es problema nuestro, no del endpoint.
+
+La tasa es **anual en RAY** (`RAY = 1e27`), no por segundo. La conversión es
+`rate x 1e6 / RAY`, entera, y la escala de todo porcentaje de la respuesta es
+**una unidad = 0.0001%**.
+
+#### El número que se comprobó, y cómo
+
+Leído de `getReserveData(USDC)` con `https://rpc.monad.xyz` el 2026-10-04
+(`lastUpdate` 1791088293 → `2026-10-04T04:31:33Z`):
+
+```
+total depositado     173.874.477,777314 USDC
+deuda variable       159.699.152,138313 USDC
+disponible            14.175.325,639001 USDC
+utilización           91,8473%
+supply APR            4,1196%      borrow APR   4,9876%
+reserve factor        10% (1000 bps, de getReserveConfigurationData)
+```
+
+La comprobación: **`liquidityRate = variableBorrowRate x utilización x (1 - rf)`**
+
+```
+4,9876 x 0,918473 x 0,9 = 4,1228%     contra 4,1196%     diferencia 0,0032 pp
+```
+
+Una diferencia así es el spread de la estrategia de tasas, que el provider no
+entrega. Y la coherencia con el resto de la reserva: la utilización está apenas
+arriba del kink de 90%, muy lejos de una reserva al 99% (donde la tasa de
+préstamo sería otra magnitud), el supply está por debajo del borrow, y el spread
+es de 0,87 puntos.
+
+Eso no es decorativo: `reconciliation` viaja en la respuesta con un `agrees`, y
+cuando `agrees` es `false` el front **no muestra la tasa** (`displayableSupplyApr`
+pasa a `null`). Una tasa que no se puede reproducir desde el resto de la reserva es
+justo lo que produce un decode desalineado.
+
+#### Backend
+
+- `GET /api/pool`: los números de la reserva (supply APR, borrow APR, total
+  depositado, prestado, disponible, utilización, última actualización) y **la
+  posición de la persona**: su `aMonUSDC`, su USDC libre y su MON de gas.
+  Cada campo con su estado: `ok` o `unreadable` con un motivo acotado. **Un campo
+  ilegible nunca es un cero.** Importes como texto decimal exacto, con `decimals` y
+  `unit`. Sin floats, sin redondeo en el backend.
+- `POST /api/pool/deposit` con el monto en **unidad mínima como texto**, devuelve
+  las transacciones sin firmar, en orden: `approve(spender = pool, amount exacto)`
+  y `deposit(asset, amount, onBehalfOf = dirección de la base, referralCode = 0)`,
+  cada una con `to`, `data`, `value: '0'` y `chainId: 143`. La dirección sale de
+  `rewallet.wallets` y **ningún parámetro del pedido puede cambiarla**. Cero y
+  negativos se rechazan; por encima del saldo, con un motivo propio
+  (`AMOUNT_EXCEEDS_BALANCE`, distinto de `BALANCE_UNREADABLE`). Si el allowance ya
+  alcanza, `approvalRequired: false` y la primera firma se salta.
+- Contrato completo en `07.PockBackend/README.md`.
+
+Lo que quedó demostrado por test: **308 tests verdes (antes 263)**, `tsc --noEmit`
+limpio y `dist-worker.js` construido. El transcript de la reserva real es un
+fixture, no un número inventado, así que un decoder roto falla acá. Cubierto: el
+decode de doce salidas con su APR plausible, la reconciliación de la tasa contra
+utilización y reserve factor, el rechazo de una respuesta de seis palabras, una
+posición de cero reportada como cero, una lectura fallida reportada como ilegible,
+`approve` y luego `deposit` con el pool como spender y la dirección de la base
+como `onBehalfOf`, cero/negativo/por encima del saldo, que ningún parámetro cambia
+la dirección, el allowance que ya alcanza, que un allowance ilegible mantiene la
+aprobación, y `401` sin sesión.
+
+#### Front
+
+- `services/pool.ts` + `types/pool.types.ts`: el contrato, la normalización y la
+  aritmética en `bigint` (conversión coma/punto a entero, redondeo **una sola vez**
+  y recién para pintar, proyección anual en enteros). `projectYearlyGain`
+  multiplica el depósito por el APR de este momento y la pantalla la llama
+  **estimación**: no es una promesa.
+- `hooks/usePool.ts`: **una lectura por sesión**, mismo patrón que `usePortfolio`, con
+  `reload()` para después de un depósito firmado.
+- `hooks/usePoolDeposit.ts`: pide las transacciones al backend, cambia la wallet a
+  Monad (`eip155:143`) **antes** de la primera firma, y firma `approve` y `deposit`
+  **una por una y en orden**, reportando cada paso. Verifica que la wallet
+  conectada sea la misma que la fila de la base. Un paso fallado frena el flujo: la
+  pantalla no dice "listo".
+- `components/Yield/AavePoolsView.tsx`: la tasa real (o la frase de que no se pudo
+  leer), la posición, la estimación anual y el detalle de la reserva.
+- `components/Yield/DepositToPoolModal.tsx`: el monto con `NumericKeypad`,
+  "depositar todo lo disponible" con la cifra exacta de la cadena, y los estados
+  honestos **antes** de firmar.
+- `components/Investments/DigitalDollarsView.tsx` y `components/Wallet/WalletView.tsx`:
+  la tarjeta de rendimiento muestra el APR real y la posición; si la lectura no
+  llega, lo dicen.
+
+Lo que una persona ve, en cada estado: **no hay USDC libre** → "No tenés USDC
+libre en esta billetera", con el botón de depósito igual visible pero el monto en
+cero rechazado; **no hay MON** → "No tenés MON para el gas", con la explicación de
+que el depósito es en la red principal y paga gas aunque el monto sea de USDC, y el
+botón deshabilitado; **la reserva no se pudo leer** → guion con "sin cifra legible"
+y la explicación de que no es que el pool no rinda; **la posición no se pudo leer**
+→ "No pudimos leer tu posición" y el depósito bloqueado sobre un saldo que no se
+conoce; **un paso falla** → el paso queda en rojo con "falló" y un cartel que dice
+que el depósito no se completó; **todo salió bien** → la posición se vuelve a leer
+de la cadena y la pantalla muestra lo que dijo el pool.
+
+Lo que **no** quedó demostrado: **ninguna transacción firmada**. El camino de
+prueba es un lector inyectado, el calldata se comprueba contra palabras ABI
+compuestas en el test, y la firma ocurre en la wallet de Privy en un navegador con
+MON de verdad. En el front no hay runner de tests —y está prohibido agregarlo—, así
+que lo verificado ahí fue `npm run lint` y `npm run build`.
+
+#### Lo que quedó pendiente de esta tarea
+
+- **El retiro.** Se lee la disponibilidad del pool, pero no existe `withdraw`.
+- **`getAllReservesTokens` devuelve un listado de relleno** (`…01a0`, `…0220`): los
+  aTokens que responde el provider en esta cadena no coinciden con `A_TOKEN` del
+  address book, aunque `getReserveTokensAddresses(USDC)` sí devuelve
+  `0x35a7…6042`. Vale investigarlo antes de confiar en ese listado para otra cosa.
+- **`wrangler.jsonc` sigue listando secretos en su comentario**: falta agregar
+  `MONAD_POOL_RPC_URL` (opcional) y dejar constancia de que las cinco variables
+  obligatorias siguen siendo las mismas.
+
 ## Superficies de edición
 
 - `07.PockBackend/src/**`
 - `07.PockBackend/test/**`
 - `07.PockBackend/sql/**`
+- `05. UI-UX/src/components/Yield/**` (detalle del pool y depósito, T5)
+- `05. UI-UX/src/config/**`
 - `05. UI-UX/src/App.tsx`
 - `05. UI-UX/src/main.tsx`
 - `05. UI-UX/src/components/Wallet/**`

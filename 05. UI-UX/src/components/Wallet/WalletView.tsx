@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 
 import { splitUsdDisplay } from '../../services/portfolio';
+import { formatPercent } from '../../services/pool';
+import type { PoolScreenView } from '../../hooks/usePool';
 import { usePortfolio, type PortfolioView } from '../../hooks/usePortfolio';
 import {
   Bug,
@@ -22,6 +24,8 @@ interface WalletViewProps {
    * cerrar la lista de cripto sería una lectura de blockchain por cada apertura.
    */
   portfolio?: PortfolioView;
+  /** El pool de Aave en Monad, leído una vez por sesión en el `App`. */
+  pool?: PoolScreenView;
   onOpenProfile?: () => void;
   onNavigateToInvestments?: () => void;
   onNavigateToActivity?: () => void;
@@ -43,6 +47,7 @@ interface WalletViewProps {
 export const WalletView: React.FC<WalletViewProps> = ({
   profile,
   portfolio,
+  pool,
   onOpenProfile,
   onNavigateToInvestments,
   onOpenAction,
@@ -213,11 +218,12 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
             {/*
               La píldora antes decía `Rindiendo 3,90% anual`, con el número
-              escrito a mano en `config/markets.ts`. Sin conexión con Aave no hay tasa
-              que leer, y una tasa escrita a mano se lee como plata que la persona
-              ya está ganando. La píldora sigue siendo el mismo botón —abre el
-              detalle del pool— pero dice lo que es verdad: todavía no hay
-              rendimiento. El número vuelve con T5, desde el backend.
+              escrito a mano en `config/markets.ts`. Ahora muestra la tasa que
+              devolvió `GET /api/pool` —la reserva leída en la cadena— y cuando esa
+              lectura no llegó, dice que no se pudo leer en vez de inventar un 0%:
+              un 0% de rendimiento es una afirmación sobre plata.
+
+              Sigue siendo el mismo botón: abre el detalle del pool.
             */}
             <div>
               <button
@@ -225,7 +231,13 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 type="button"
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#ccff00] hover:bg-[#b8e600] text-black text-xs font-bold shadow-sm active:scale-95 transition-all cursor-pointer"
               >
-                <span>Todavía no hay rendimiento</span>
+                <span>
+                  {(() => {
+                    const apr = pool?.pool?.displayableSupplyApr ?? null;
+                    const label = formatPercent(apr);
+                    return label === null ? 'Tasa no disponible' : `Rindiendo ${label} anual`;
+                  })()}
+                </span>
                 <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
               </button>
             </div>

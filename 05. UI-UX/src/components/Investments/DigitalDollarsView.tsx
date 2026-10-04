@@ -7,6 +7,8 @@ import React, { useMemo, useState } from 'react';
  */
 import { splitUsdDisplay } from '../../services/portfolio';
 import type { PortfolioView } from '../../hooks/usePortfolio';
+import { formatAmount, formatPercent, projectYearlyGain } from '../../services/pool';
+import type { PoolScreenView } from '../../hooks/usePool';
 import {
   ArrowLeft,
   HelpCircle,
@@ -22,12 +24,15 @@ interface DigitalDollarsViewProps {
   onOpenSend?: () => void;
   /** Saldos de la cadena, leídos una vez por sesión en el `App`. */
   portfolio?: PortfolioView;
+  /** El pool de Aave, leído una vez por sesión en el `App`. */
+  pool?: PoolScreenView;
 }
 
 export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
   onBack,
   onOpenAavePools,
   portfolio,
+  pool,
 }) => {
   const [showInfoModal, setShowInfoModal] = useState(false);
 
@@ -124,52 +129,87 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
             </button>
           </div>
 
-          {/* =
-            ESTA TARJETA NO MUESTRA NINGÚN NÚMERO, Y ESO ES LO VERDADERO.
+          {/*
+            LA TARJETA DE RENDIMIENTO, CON LOS NÚMEROS DE LA CADENA.
 
-            Antes ponía `3,90%`, `$150 . 198 . 641` y `89%`: una tasa y dos
-            cifras escritas a mano. No había ninguna conexión con Aave —la tarea
-            T5 del plan todavía no arrancó—, así que ninguna de esas tres cosas
-            venía de la cadena. Y el riesgo no era que estuvieran viejas: una
-            cifra de rendimiento escrita a mano se lee como plata que la persona
-            ya está ganando. Por eso no se cambia el número por otro número, ni
-            por un cero: se dice la verdad sobre lo que todavía no existe.
+            Antes ponía `3,90%` y dos cifras más escritas a mano, y después de eso
+            un guion con la palabra "sin cifra todavía". Ahora hay una sola fuente
+            —`GET /api/pool`— y cuatro estados distintos que antes no existían: la
+            tasa real, la tasa que no se pudo leer, la posición que no se pudo
+            leer, y el caso de que no haya nada depositado.
 
-            Lo que queda son palabras. El guion es el que ya usa el resto de la
-            app para "acá no hay dato" —el precio del activo, el detalle del
-            pool—, no una cifra escondida.
-          = */}
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl sm:text-4xl font-black font-display text-slate-300 tracking-tight">
-              —
-            </span>
-            <span className="text-sm font-semibold text-slate-500">
-              sin cifra todavía
-            </span>
-          </div>
+            Un guion acá no es estilo: es la diferencia entre "el pool no paga" y
+            "no lo sabemos", y con plata de por medio esa diferencia importa.
+          */}
+          {(() => {
+            const view = pool?.pool;
+            const supplyApr = view?.displayableSupplyApr ?? null;
+            const position = view?.position.aTokenBalance;
+            const positionRaw = position?.status === 'ok' ? BigInt(position.value?.raw ?? '0') : null;
+            const yearly =
+              positionRaw !== null && position?.status === 'ok' && supplyApr !== null
+                ? projectYearlyGain(positionRaw, position.value?.decimals ?? 6, supplyApr)
+                : null;
 
-          <div className="space-y-3 pt-3 border-t border-slate-100 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400 font-medium">Conectado a Aave</span>
-              <span className="font-extrabold text-black">
-                Todavía no
-              </span>
-            </div>
+            return (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl sm:text-4xl font-black font-display text-slate-900 tracking-tight">
+                    {supplyApr === null ? '—' : formatPercent(supplyApr)}
+                  </span>
+                  {supplyApr !== null && (
+                    <span className="text-sm font-semibold text-slate-500">anual</span>
+                  )}
+                </div>
 
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400 font-medium">Tu dinero en el pool</span>
-              <span className="font-extrabold text-black">
-                No depositás nada
-              </span>
-            </div>
+                {supplyApr === null && (
+                  <div className="bg-amber-50 rounded-2xl p-3 text-[11px] text-amber-700 leading-relaxed">
+                    {pool === undefined || pool.status === 'idle' || pool.status === 'loading'
+                      ? 'Estamos leyendo el pool.'
+                      : 'No pudimos leer la tasa del pool, así que no te mostramos un número. No es que el pool no rinda: es que no lo supimos leer.'}
+                  </div>
+                )}
 
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400 font-medium">Podés sacar</span>
-              <span className="font-extrabold text-black">
-                No hay depósito
-              </span>
-            </div>
-          </div>
+                <div className="space-y-3 pt-3 border-t border-slate-100 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">Conectado a Aave</span>
+                    <span className="font-extrabold text-black">
+                      {view === null ? 'No todavía' : 'Sí, en lectura'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">Tu dinero en el pool</span>
+                    {positionRaw === null ? (
+                      <span className="font-extrabold text-amber-600">No se pudo leer</span>
+                    ) : positionRaw === 0n ? (
+                      <span className="font-extrabold text-black">No depositás nada</span>
+                    ) : (
+                      <span className="font-extrabold text-black">
+                        {formatAmount(positionRaw, position?.value?.decimals ?? 6, 'U$')}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">En un año (estimación)</span>
+                    {yearly === null ? (
+                      <span className="font-extrabold text-slate-400">—</span>
+                    ) : (
+                      <span className="font-extrabold text-emerald-600">+{yearly.label} U$</span>
+                    )}
+                  </div>
+                </div>
+
+                {supplyApr !== null && (
+                  <p className="text-[11px] text-slate-500 leading-relaxed font-normal">
+                    La estimación multiplica tu depósito por el ritmo de este momento,
+                    que cambia con el uso del pool. No es una promesa.
+                  </p>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         {/* =====================================================================
@@ -197,9 +237,8 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
             TEXTO LEGAL / EXPLICATIVO AL PIE
            ===================================================================== */}
         <p className="text-center text-[11px] text-slate-400 leading-relaxed px-4 pt-2 font-medium">
-          Todavía no estamos conectados a Aave, así que la tasa no sale de la
-          cadena todavía. Tu rendimiento es cero porque no hay nada depositado, no
-          porque el pool rinda poco.
+          La tasa sale del pool de Aave en Monad, leído de la cadena. Depositar
+          requiere USDC y MON para el gas: es la red principal.
         </p>
       </div>
 

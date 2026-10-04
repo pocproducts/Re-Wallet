@@ -20,6 +20,7 @@ import { useSessionGate } from './hooks/useSessionGate';
 import { useNotifications } from './hooks/useNotifications';
 import { usePortfolio } from './hooks/usePortfolio';
 import { useDepositInfo } from './hooks/useDepositInfo';
+import { usePool } from './hooks/usePool';
 import { useUserWallets } from './hooks/useUserWallets';
 import { ChargeQrModal, type ChargeReceiveAddress } from './components/Charge/ChargeQrModal';
 import { NavTab, TransactionItem } from './types';
@@ -98,6 +99,18 @@ export default function App() {
    * catálogo no trae cifras y no puede inventar un `0`.
    */
   const depositInfo = useDepositInfo(sessionStatus === 'authenticated');
+
+  /*
+   * El pool de Aave en Monad, leído UNA vez por sesión, acá y no en cada pantalla.
+   *
+   * `GET /api/pool` va a la cadena por pedido —la reserva, tres saldos—, así que un
+   * hook por pantalla sería un viaje a Monad por cada navegación. El `App` lee una
+   * vez y le pasa el resultado a las dos vistas que lo muestran.
+   *
+   * `reload()` es lo que se llama después de un depósito firmado: el número de
+   * pantalla tiene que salir de la cadena, no del hecho de que la persona firmó.
+   */
+  const pool = usePool(sessionStatus === 'authenticated');
 
   /*
    * Los avisos de la cuenta también se leen UNA vez por sesión, con el mismo
@@ -379,6 +392,7 @@ export default function App() {
                       <WalletView
                         profile={profile}
                         portfolio={portfolio}
+                        pool={pool}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToInvestments={() => setCurrentTab('investments')}
                         onNavigateToActivity={() => setCurrentTab('activity')}
@@ -479,6 +493,8 @@ export default function App() {
         {isAavePoolsOpen && (
           <AavePoolsView
             onBack={() => setIsAavePoolsOpen(false)}
+            pool={pool}
+            onReload={pool.reload}
           />
         )}
 
@@ -487,6 +503,7 @@ export default function App() {
           <DigitalDollarsView
             onBack={() => setIsDigitalDollarsOpen(false)}
             portfolio={portfolio}
+            pool={pool}
             onOpenAavePools={() => {
               setIsDigitalDollarsOpen(false);
               setIsAavePoolsOpen(true);

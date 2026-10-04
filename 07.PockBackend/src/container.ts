@@ -25,6 +25,8 @@ import { PrivyClient } from '@privy-io/node';
 
 import { mintSession } from './application/session/mintSession';
 import { readPortfolio } from './application/portfolio/readPortfolio';
+import { readPool } from './application/pool/readPool';
+import { prepareDeposit } from './application/pool/prepareDeposit';
 import { readDepositInfo } from './application/deposit-info/readDepositInfo';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
 import { ingestPrivyWebhook } from './application/webhooks/ingestPrivyWebhook';
@@ -37,6 +39,10 @@ import { createPrivyTokenVerifier } from './infrastructure/privy/privyTokenVerif
 import { createPrivyUserDirectory } from './infrastructure/privy/privyUserDirectory';
 import { createPrivyWalletOwnershipVerifier } from './infrastructure/privy/privyWalletOwnershipVerifier';
 import { createJsonRpcEvmBalanceReader, DEFAULT_EVM_ENDPOINTS } from './infrastructure/rpc/jsonRpcEvmBalanceReader';
+import {
+  createJsonRpcAavePoolReader,
+  DEFAULT_POOL_ENDPOINTS,
+} from './infrastructure/rpc/jsonRpcAavePoolReader';
 import {
   createHttpSolanaBalanceReader,
   DEFAULT_SOLANA_RPC_URL,
@@ -67,6 +73,14 @@ export interface Config {
   readonly monadRpcUrl: string;
   readonly ethereumRpcUrl: string;
   readonly solanaRpcUrl: string;
+  /**
+   * Optional: the endpoint the **pool** reads go through.
+   *
+   * Same reasoning as `monadRpcUrl`: a public endpoint is a deployment detail with
+   * a verified default, not an identity. Failing closed on it would stop the whole
+   * Worker from booting for a route that has a working default.
+   */
+  readonly monadPoolRpcUrl: string;
 }
 
 /** The one place that knows which environment variables exist. */
@@ -94,6 +108,7 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
     monadRpcUrl: readEnv(env, 'MONAD_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.monad),
     ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.ethereum),
     solanaRpcUrl: readEnv(env, 'SOLANA_RPC_URL') || DEFAULT_SOLANA_RPC_URL,
+    monadPoolRpcUrl: readEnv(env, 'MONAD_POOL_RPC_URL') || firstCandidate(DEFAULT_POOL_ENDPOINTS),
   };
 };
 
@@ -126,6 +141,18 @@ export const buildApp = (config: Config, log: Logger) => {
   });
   const solana = createHttpSolanaBalanceReader({ url: config.solanaRpcUrl });
 
+  /*
+   * The Aave V3 pool on Monad. It reads the same network as the Monad balances but
+   * through its own adapter, because `getReserveData` answers with a struct and a
+   * `bigint` port would be the wrong shape for it.
+   */
+  const aavePool = createJsonRpcAavePoolReader({
+    endpoints:
+      config.monadPoolRpcUrl === DEFAULT_POOL_ENDPOINTS[0]
+        ? DEFAULT_POOL_ENDPOINTS
+        : [config.monadPoolRpcUrl, ...DEFAULT_POOL_ENDPOINTS],
+  });
+
   return createApp({
     mint: mintSession({
       verify,
@@ -145,6 +172,13 @@ export const buildApp = (config: Config, log: Logger) => {
     sessions,
     // The same wallet store the claim writes through, read through.
     readPortfolio: readPortfolio({ wallets: walletStore, evm, solana, log }),
+    /*
+     * The pool read and the deposit, over the same store the portfolio reads: one
+     * source of addresses, so the position shown on the pool screen belongs to the
+     * wallet the portfolio shows and the deposit signs for.
+     */
+    readPool: readPool({ wallets: walletStore, pool: aavePool, log }),
+    prepareDeposit: prepareDeposit({ wallets: walletStore, pool: aavePool, log }),
     /*
      * The deposit catalog and the addresses that go with it, read through the
      * **same** store. One store, una sola fuente de dirección: si esta ruta

@@ -649,6 +649,174 @@ in two places — `webhook.privy stored` in the logs, and
 if it ever comes, is one idempotent `ADD COLUMN IF NOT EXISTS` in `sql/` plus one
 condition in the adapter, not a redesign.
 
+## `GET /api/pool` — the Aave V3 USDC reserve on Monad, and this person's position
+
+**Mainnet. Real money. The contract addresses live here and nowhere else: the
+frontend receives transactions to sign, never a contract to call.**
+
+```json
+{
+  "generatedAt": "2026-10-04T05:00:00.000Z",
+  "network": { "name": "monad", "chainId": 143, "protocol": "Aave V3" },
+  "asset": { "symbol": "USDC", "unit": "USDC", "decimals": 6 },
+  "reserve": { "status": "ok", "reason": null },
+  "reserveDecimals": 6,
+  "apr":  { "supply": { "status": "ok", "value": "4.1196" },
+            "borrow": { "status": "ok", "value": "4.9876" } },
+  "totals": {
+    "supplied":   { "status": "ok", "value": { "raw": "173874477777314", "amount": "173874477.777314", "decimals": 6, "unit": "USDC" } },
+    "borrowed":   { "status": "ok", "value": { "raw": "159699152138313", … } },
+    "available":  { "status": "ok", "value": { "raw": "14175325639001",  … } },
+    "utilisation":{ "status": "ok", "value": "91.8473" }
+  },
+  "lastUpdate": { "status": "ok", "value": { "unix": 1791088293, "iso": "2026-10-04T04:31:33.000Z" } },
+  "reconciliation": { "status": "ok", "value": { "percent": "4.1228", "agrees": true } },
+  "position": {
+    "address": "0x…",
+    "aTokenBalance": { "status": "ok", "value": { "raw": "820428", "amount": "0.820428", "decimals": 6, "unit": "aMonUSDC" } },
+    "availableUsdc": { "status": "ok", "value": { "raw": "5000000",  … } },
+    "gasBalance":    { "status": "ok", "value": { "raw": "3000000000000000000", "amount": "3", "decimals": 18, "unit": "MON" } }
+  }
+}
+```
+
+### The addresses, and where they came from
+
+| What | Address | Verified by |
+|---|---|---|
+| Pool | `0x69a5F9AD4f96ebf0a0C792dD42a01cC5C0102fef` | `aave-address-book` `AaveV3Monad.POOL`, **and** `aMonUSDC.POOL()` on chain |
+| Data provider | `0xB65A68B98274ef7D9a60E0C0747dD1BEc3D32fad` | `AAVE_PROTOCOL_DATA_PROVIDER`, and `getReserveTokensAddresses(USDC)` returns `A_TOKEN` |
+| USDC (reserve 1) | `0x754704Bc059F8C67012fEd69BC8A327a5aafb603` | `ASSETS.USDC.UNDERLYING`, 6 decimals, `symbol()` = USDC |
+| aUSDC | `0x35a73BAcb179d3740395A3ceCc87FF2e581d6042` | `ASSETS.USDC.A_TOKEN`, `symbol()` = `aMonUSDC` |
+| Chain | 143 | `eth_chainId` on `rpc.monad.xyz` = `0x8f` |
+
+They live in `src/domain/pool/aaveMonad.ts`, which is also where the four
+selectors are: `getReserveData` `0x35ea6a75`, `approve` `0x095ea7b3`,
+`deposit` `0xe8eda9df`, `allowance` `0xdd62ed3e`.
+
+### The two ways this read was wrong before
+
+**The selector.** `getReserveData(address)` is `0x35ea6a75` on **V3**.
+`0x026b1d5f` is the **V2** selector and *reverts* on a V3 pool — and a revert was
+read, for a whole session, as "the pool moved". A selector is four bytes of ABI,
+so it is a constant with a test, not a comment.
+
+**The ABI.** The official declaration
+(`@aave/core-v3/contracts/misc/AaveProtocolDataProvider.sol`) has **twelve**
+outputs, in this order:
+
+```
+uint256 unbacked, uint256 accruedToTreasuryScaled, uint256 totalAToken,
+uint256 totalStableDebt, uint256 totalVariableDebt, uint256 liquidityRate,
+uint256 variableBorrowRate, uint256 stableBorrowRate, uint256 averageStableBorrowRate,
+uint256 liquidityIndex, uint256 variableBorrowIndex, uint40 lastUpdateTimestamp
+```
+
+Declaring fewer, or in another order, does not throw: everything after the missing
+word slides one slot early. That is how a `lastUpdateTimestamp` of `4e25` (the year
+4921) and a supply APR of `130.281.299%` were produced. `decodeReserveData`
+therefore **refuses** any answer that is not exactly twelve hex words, and
+`RESERVE_DECODE_FAILED` is a failure reason of its own — a struct we cannot read is
+ours to investigate, not "the endpoint did not answer".
+
+**The rate is an annual rate in RAY** (`RAY = 1e27`). Read per second, the same
+number is `130.281.299%`. The conversion is `rate x 1e6 / RAY`, in integers, and
+the scale of every percentage in the response is **one unit = 0.0001%**.
+
+### The check that a rate has to pass
+
+`liquidityRate = variableBorrowRate x utilisation x (1 - reserveFactor)`. With the
+reserve factor of this deployment (`1000` bps = 10%, from
+`getReserveConfigurationData`):
+
+```
+supply   4.1196%      utilisation 91.8473%      borrow 4.9876%
+4.9876 x 0.918473 x 0.9 = 4.1228%      difference 0.0032 pp = the strategy spread
+```
+
+The response carries that number in `reconciliation`, with `agrees`. The
+application does not reconcile it to be decorative: `agrees: false` is the signal
+the frontend uses to **not show a rate at all** (`displayableSupplyApr` becomes
+`null` on the client), because a rate that cannot be reproduced from the rest of
+the reserve is exactly what a misaligned decode produces.
+
+### `unreadable` is not `0`
+
+Every field carries its own state. A reserve that could not be read answers 200
+with `status: "unreadable"` and a bounded `reason`
+(`RPC_UNAVAILABLE`, `RPC_REJECTED`, `RPC_MALFORMED_RESPONSE`,
+`RESERVE_DECODE_FAILED`, `CONFIG_UNREADABLE`); the provider's own words go to the
+log. A position of `0` answers `status: "ok"` with `raw: "0"`. The two are different
+truths and the screen is told which one it has. One trap worth naming: a `0n` is
+falsy, so the application tests `'ok' in result` and **not** truthiness — otherwise
+a real zero position is reported as a failed read.
+
+## `POST /api/pool/deposit` — the unsigned transactions, built here, signed there
+
+Request: `{ "amount": "1000000" }` — the amount in the **smallest unit**, as a
+decimal string. No decimal fraction is accepted: there is nothing to convert, so
+there is nothing to get wrong.
+
+Response:
+
+```json
+{
+  "chainId": 143,
+  "address": "0x…",
+  "asset": { "symbol": "USDC", "unit": "USDC", "decimals": 6 },
+  "amount": { "raw": "1000000", "amount": "1", "decimals": 6, "unit": "USDC" },
+  "approvalRequired": true,
+  "allowance": { "status": "ok", "value": { "raw": "0", "amount": "0", "decimals": 6, "unit": "USDC" } },
+  "transactions": [
+    { "purpose": "approve", "to": "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
+      "data": "0x095ea7b3…", "value": "0", "chainId": 143 },
+    { "purpose": "deposit", "to": "0x69a5F9AD4f96ebf0a0C792dD42a01cC5C0102fef",
+      "data": "0xe8eda9df…", "value": "0", "chainId": 143 }
+  ],
+  "gasBalance": { "status": "ok", "value": { "raw": "3000000000000000000", "amount": "3", "decimals": 18, "unit": "MON" } }
+}
+```
+
+- **`approve` first, then `deposit`,** in that order, because the deposit reverts
+  without the allowance.
+- **The approval is the exact amount**, never `2^256 - 1`. An infinite approval is
+  a standing permission that outlives this deposit and nobody asked for one.
+- **`onBehalfOf` is the address from `rewallet.wallets`.** No request parameter can
+  change it: the body carries only `amount`, and an `address` or an `onBehalfOf` in
+  the body or the query is not read.
+- **Already approved → `approvalRequired: false`** and the `approve` is absent from
+  `transactions`, so the app skips that signature. An allowance that could *not* be
+  read keeps the approval: an unnecessary one costs a signature, a missing one costs
+  the deposit.
+- **Refusals**, one code per distinct fact: `AMOUNT_INVALID`, `AMOUNT_NOT_POSITIVE`,
+  `AMOUNT_EXCEEDS_BALANCE`, and `BALANCE_UNREADABLE` — which is *not* "you have
+  nothing": an unreadable balance never becomes a zero one.
+
+| Status | When |
+|---|---|
+| 400 | the amount is refused (one of the codes above) |
+| 401 `UNAUTHENTICATED` | no cookie, or a cookie that does not verify |
+| 502 `WALLETS_UNAVAILABLE` | the wallet rows could not be read: no address, nothing to sign |
+
+The route is mounted only when **both** use cases are wired: a deposit route next
+to a read that cannot answer would be a deposit nobody priced.
+
+### Environment
+
+`MONAD_POOL_RPC_URL` is optional and **defaults to `https://rpc.monad.xyz`**, the
+same endpoint the Monad balances already use. Like the other RPC overrides, it
+adds a candidate endpoint ahead of the defaults; a public endpoint going down is a
+per-field `unreadable`, not a Worker that cannot boot.
+
+### What is not proven
+
+No signed transaction has gone through this path. The calldata is asserted against
+composed ABI words, the amounts and the balances come from an injected reader, and
+the signing itself happens in Privy in the browser — on a machine with a real
+wallet and real MON. `gasBalance` is reported so the screen can say **"no tenés MON
+para el gas"** *before* the first signature; nothing here estimates gas, because
+an estimate that guesses wrong costs the person the deposit.
+
 ## Layout
 
 ```
@@ -656,10 +824,14 @@ src/
   domain/ports/        the interfaces: what the application needs, in our words
   domain/deposit/      the deposit catalog: what can be received, where, and the
                        per-token balance-readability flag
+  domain/pool/         the Aave V3 Monad addresses, the twelve-output reserve
+                       decode, the RAY arithmetic, the deposit calldata
   domain/webhooks/     the signature scheme, the event→sentence table, attribution
   application/         the use cases: session minting, wallet claiming, portfolio
-                       reads, deposit catalog, webhook intake, notification feed
-  infrastructure/      the adapters: Privy, Postgres, JWT, JSON-RPC balance reads
+                       reads, deposit catalog, webhook intake, notification feed,
+                       pool read and deposit preparation
+  infrastructure/      the adapters: Privy, Postgres, JWT, JSON-RPC balance reads,
+                       and the Aave pool reader
   interface/http/      Hono: routes, cookies, the error boundary
   container.ts         reads config, builds adapters, wires the app
   index.ts             the Worker's `fetch`

@@ -17,6 +17,8 @@ import { Hono } from 'hono';
 
 import type { MintSession } from '../../application/session/mintSession';
 import type { ReadPortfolio } from '../../application/portfolio/readPortfolio';
+import type { ReadPool } from '../../application/pool/readPool';
+import type { PrepareDeposit } from '../../application/pool/prepareDeposit';
 import type { ReadDepositInfo } from '../../application/deposit-info/readDepositInfo';
 import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
 import type { IngestPrivyWebhook } from '../../application/webhooks/ingestPrivyWebhook';
@@ -31,6 +33,7 @@ import { createDepositInfoRoutes } from './routes/depositInfo';
 import { createDiagnosticsRoutes } from './routes/diagnostics';
 import { createNotificationsRoutes } from './routes/notifications';
 import { createPortfolioRoutes } from './routes/portfolio';
+import { createPoolRoutes } from './routes/pool';
 import { createWalletsRoutes } from './routes/wallets';
 import { createWebhookRoutes } from './routes/webhooks';
 
@@ -42,6 +45,16 @@ export interface AppDeps {
   readonly claim?: ClaimWalletsFor;
   /** Absent when no chain readers are wired: the route is then not there. */
   readonly readPortfolio?: ReadPortfolio;
+  /**
+   * Absent when the pool reader is not wired.
+   *
+   * `/api/pool` answers with the live reserve and the person's position, and
+   * `/api/pool/deposit` with unsigned mainnet transactions. A pool screen with no
+   * chain behind it is the screen that invents a rate, so the honest answer to
+   * "this deployment cannot read the reserve" is that the route is not there.
+   */
+  readonly readPool?: ReadPool;
+  readonly prepareDeposit?: PrepareDeposit;
   /**
    * Absent when the wallet store is not wired: the route is then not there.
    *
@@ -107,6 +120,27 @@ export const createApp = (deps: AppDeps) => {
       createPortfolioRoutes({
         sessions: deps.sessions,
         readPortfolio: deps.readPortfolio,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
+  /*
+   * The pool and its deposit are mounted as one pair, and only when both exist.
+   * The deposit route hands out transactions for **mainnet**, real money, so it is
+   * not mounted next to a read that cannot answer: a screen with a real rate and
+   * no deposit is a smaller feature, while a screen with a deposit and no rate is
+   * a deposit nobody priced.
+   */
+  if (deps.readPool && deps.prepareDeposit) {
+    app.route(
+      '/api/pool',
+      createPoolRoutes({
+        sessions: deps.sessions,
+        readPool: deps.readPool,
+        prepareDeposit: deps.prepareDeposit,
         cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
         now: deps.now,
         log,
