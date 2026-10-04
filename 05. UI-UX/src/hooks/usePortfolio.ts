@@ -27,6 +27,15 @@
  * un cero y no calcula precios: el portfolio no trae precios, así que nada de
  * dólares por activo existe acá. Un saldo que no se pudo leer es `null`, y
  * `null` se muestra como ausencia, no como `0`.
+ *
+ * ── Lo que sí cambia: el cero que sí se sabe ────────────────────────────────
+ *
+ * `null` es "no lo sé". El otro estado era indistinguible de él: una billetera
+ * leída, vacía, se veía igual que una caída. Ahora el cero conocido se dice
+ * (`cryptoBalanceIsZero`, `balanceIsZero` y el `usdcTotal` en `"0,00"`), porque
+ * cero por cualquier precio es cero y esa persona tiene que poder ver que su
+ * billetera existe. El precio sigue sin existir: cuando hay saldo, el total en
+ * dólares sigue siendo ausencia.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -34,6 +43,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   readRewalletPortfolio,
   sumAssetAmounts,
+  allBalancesAreZero,
   type Portfolio,
   type PortfolioChainId,
   type PortfolioHolding,
@@ -79,6 +89,27 @@ export interface PortfolioView {
   readonly usdcNote: string | null;
   /** Las cadenas sin saldo legible, con el motivo. */
   readonly unreadableChains: readonly UnreadableChain[];
+  /**
+   * ¿Toda la cripto leída suma exactamente cero?
+   *
+   * `true` significa **"lo sé y es cero"**, y recién ahí la pantalla de *Bitcoin
+   * & Cripto* puede pintar `U$0,00`: cero por cualquier precio es cero, así que
+   * no hace falta un precio para afirmarlo. `false` significa que hay saldo —que
+   * no se puede valorar sin un feed— o que no se pudo leer: los dos casos siguen
+   * mostrando `—`, que es "no lo sé".
+   *
+   * Sale de `allBalancesAreZero` con aritmética `bigint` sobre los `amount`
+   * textuales del backend. No hay ningún precio acá ni se inventa uno.
+   */
+  readonly cryptoBalanceIsZero: boolean;
+  /**
+   * Lo mismo, sobre **todo** el portfolio: cripto y dólares digitales juntos.
+   *
+   * Es el "balance total" de la pantalla de inversiones. Con cripto por un lado y
+   * dólares por el otro, alcanza con que uno de los dos tenga saldo para que el
+   * total no sea un cero: el total en dólares es `—`.
+   */
+  readonly balanceIsZero: boolean;
   /**
    * La dirección real de esta persona, para cada red donde el backend la devolvió.
    *
@@ -261,19 +292,31 @@ export const usePortfolio = (enabled: boolean): PortfolioView => {
      * Si ninguna cadena se leyó, o si ninguna de las leídas trae dólares, el
      * total es `null` y no `"0,00"`: un cero por una cadena caída es la forma
      * más cara de mentir, porque se ve como una billetera vacía.
+     *
+     * La excepción es la que sí sabemos: si **todas** las cadenas responden
+     * —leídas o sin billetera— y ninguna trae dólares, entonces el saldo de
+     * dólares es cero, y un cero que se sabe se muestra como cero. Lo que no se
+     * puede pintar es `0,00` cuando falta una lectura, y para eso hace falta que
+     * ninguna cadena haya caído.
      */
+    const usdcAssets =
+      portfolio === null
+        ? []
+        : portfolio.chains.flatMap((chain) =>
+            chain.status !== 'ok'
+              ? []
+              : chain.assets
+                  .filter((asset) => asset.symbol === DIGITAL_DOLLAR_TICKER)
+                  .map((asset) => ({ amount: asset.amount, decimals: asset.decimals })),
+          );
+
+    const isUsdc = (symbol: string): boolean => symbol === DIGITAL_DOLLAR_TICKER;
+
     const usdcTotal =
       portfolio === null
         ? null
-        : sumAssetAmounts(
-            portfolio.chains.flatMap((chain) =>
-              chain.status !== 'ok'
-                ? []
-                : chain.assets
-                    .filter((asset) => asset.symbol === DIGITAL_DOLLAR_TICKER)
-                    .map((asset) => ({ amount: asset.amount, decimals: asset.decimals })),
-            ),
-          );
+        : (sumAssetAmounts(usdcAssets) ??
+          (allBalancesAreZero(portfolio.chains, isUsdc) ? '0,00' : null));
 
     let usdcNote: string | null = null;
     if (usdcTotal === null && status === 'ready') {
@@ -292,6 +335,9 @@ export const usePortfolio = (enabled: boolean): PortfolioView => {
       cryptoHoldings: holdings.filter((holding) => !isDigitalDollar(holding.symbol)),
       usdcTotal,
       usdcNote,
+      cryptoBalanceIsZero:
+        portfolio !== null && allBalancesAreZero(portfolio.chains, (s) => !isDigitalDollar(s)),
+      balanceIsZero: portfolio !== null && allBalancesAreZero(portfolio.chains),
       unreadableChains,
       receiveAddresses: receiveAddressesFrom(portfolio),
       reload: load,

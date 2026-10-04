@@ -37,6 +37,12 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
    * Antes esta tarjeta escribía `U$0,82` en el JSX: una cantidad inventada con
    * forma de saldo. Ahora sale de `portfolio.usdcTotal`, y cuando no se pudo leer
    * no muestra un cero: dice que no se pudo leer.
+   *
+   * Y al revés: un cero que **sí** se sabe se muestra como cero, `U$0,00`. El
+   * hook ya trae `"0,00"` en los dos casos honestos —el activo reportado con
+   * saldo cero, y ninguna cadena con dólares, siempre que ninguna haya caído—,
+   * así que acá no hay decisión que tomar: `null` es "no lo sé" y cualquier otra
+   * cosa es una cifra. Los puntos son sólo para el caso que no lo sabemos.
    */
   const usd = useMemo(
     () => splitUsdDisplay(portfolio?.usdcTotal ?? null, 'U$'),

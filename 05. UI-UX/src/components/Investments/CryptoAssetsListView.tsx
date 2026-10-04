@@ -29,8 +29,11 @@ interface CryptoAssetsListViewProps {
   portfolio?: PortfolioView;
 }
 
-/** El texto de la card superior cuando no hay un total que mostrar. */
+/** El texto de la card superior cuando **no** hay un total que mostrar. */
 const SIN_VALOR = '—';
+
+/** El total cuando sí se sabe que no hay nada: cero por cualquier precio es cero. */
+const VALOR_CERO = 'U$0,00';
 
 export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
   onBack,
@@ -87,6 +90,21 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
   /* Las cadenas que no se pudieron leer, o donde no hay billetera. */
   const unreadableChains = portfolio?.unreadableChains ?? [];
 
+  /*
+   * El total en dólares, y por qué puede ser cero.
+   *
+   * `—` dice "no lo sé" y `U$0,00` dice "lo sé". Sólo se puede pintar el cero
+   * cuando la lectura llegó entera y lo que llegó fue cero: cero por cualquier
+   * precio es cero, así que acá no hace falta un feed de precios para afirmarlo,
+   * y una billetera vacía tiene que poder parecer vacía.
+   *
+   * Lo que **no** habilita el cero: que haya cripto sin precio —ahí el total es
+   * incómputo y el guion va con la frase que ya estaba— ni que una cadena haya
+   * caído. `cryptoBalanceIsZero` ya viene con esas dos condiciones resueltas.
+   */
+  const cryptoBalanceIsZero =
+    portfolio?.status === 'ready' && portfolio.cryptoBalanceIsZero === true;
+
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans">
       {/* =========================================================================
@@ -131,7 +149,7 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
 
           <div className="flex items-baseline font-display">
             <span className="text-4xl sm:text-5xl font-extrabold text-black tracking-tight">
-              {SIN_VALOR}
+              {cryptoBalanceIsZero ? VALOR_CERO : SIN_VALOR}
             </span>
           </div>
 
@@ -140,7 +158,11 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
               ? 'Leyendo la cadena…'
               : portfolio?.status === 'error'
                 ? 'No pudimos leer tus saldos.'
-                : 'Sin precio de mercado, sin total en dólares.'}
+                : cryptoBalanceIsZero
+                  ? /* Leímos todo y no hay nada. El cero es el dato, no una falla. */
+                    'No tenés criptoactivos en tus billeteras.'
+                  : /* Hay saldo y no hay precio: el total no existe. */
+                    'Sin precio de mercado, sin total en dólares.'}
           </p>
         </div>
 

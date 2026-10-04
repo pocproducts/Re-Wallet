@@ -297,6 +297,68 @@ export const sumAssetAmounts = (
 };
 
 /**
+ * ¿Lo que se leyó suma exactamente cero?
+ *
+ * ── El guion de la pantalla, en una línea ────────────────────────────────────
+ *
+ * Un `—` significa **"no lo sé"** y un `0,00` significa **"lo sé"**. Cuando el
+ * resultado es cero, el valor en dólares también es cero: cero por cualquier
+ * precio es cero, así que no hace falta un feed de precios para afirmarlo. Y es un
+ * dato que la persona necesita ver —una billetera vacía tiene que poder parecer
+ * vacía— así que el cero se muestra como cero.
+ *
+ * ── Lo que este `true` NO autoriza ──────────────────────────────────────────
+ *
+ * Nunca muestra `U$0,00` cuando lo que falta es el **precio**: acá no hay ningún
+ * precio en juego. Si hay cripto y no se lo puede valorar, el total sigue siendo
+ * `—`, y eso es otra pantalla. Y una cadena que no se pudo leer vuelve el total
+ * incómputo: `false` es exactamente la respuesta que evita pintar cero sobre una
+ * lectura fallida.
+ *
+ * ── Qué cuenta como "leído" ──────────────────────────────────────────────────
+ *
+ * - `error`: **bloquea**. Hubo una caída, y con una caída el total no existe.
+ * - `ok`: aporta lo que trajo, incluso una lista vacía: una billetera leída y
+ *   vacía vale cero, y eso es un hecho, no una ausencia.
+ * - `no_wallet`: tampoco bloquea. La cadena respondió que acá no hay billetera, o
+ *   sea que en esta red no hay nada. Es un cero conocido, no un dato faltante.
+ * - Una lista de cadenas vacía —o que sólo trae errores— no es un cero: no se leyó
+ *   nada, así que no se sabe nada.
+ *
+ * ── Por qué suma y no compara ───────────────────────────────────────────────
+ *
+ * La suma es exacta, con `bigint` y los `amount` textual del backend: es la misma
+ * aritmética que usa `sumAssetAmounts`, sin flotantes ni redondeo. El resultado
+ * **nunca se formatea ni se muestra como cantidad**: sumar 3 MON con 40 SOL no es
+ * una cantidad de nada, es sólo la forma exacta de preguntar "¿hay algo?". Los
+ * saldos de una billetera no son negativos, así que la suma es cero si y sólo si
+ * cada saldo es cero, que es la pregunta que se quiere responder.
+ *
+ * @param accept Filtra por símbolo cuando la pregunta es sólo sobre una parte
+ * del portfolio —los dólares digitales, o la cripto—. Por defecto, todos.
+ */
+export const allBalancesAreZero = (
+  chains: readonly PortfolioChainOutcome[],
+  accept: (symbol: string) => boolean = () => true,
+): boolean => {
+  if (chains.length === 0) return false;
+  if (chains.some((chain) => chain.status === 'error')) return false;
+  if (!chains.some((chain) => chain.status === 'ok' || chain.status === 'no_wallet')) return false;
+
+  const assets = chains.flatMap((chain) =>
+    chain.status === 'ok' ? chain.assets.filter((asset) => accept(asset.symbol)) : [],
+  );
+
+  const scale = assets.reduce((max, asset) => Math.max(max, asset.decimals), 0);
+  const total = assets.reduce(
+    (sum, asset) => sum + toScaled(asset.amount, asset.decimals, scale),
+    0n,
+  );
+
+  return total === 0n;
+};
+
+/**
  * Traduce el cuerpo de la respuesta a la forma que la pantalla usa.
  *
  * Se lee defensivo a propósito: un `status` desconocido, un `assets` que no es

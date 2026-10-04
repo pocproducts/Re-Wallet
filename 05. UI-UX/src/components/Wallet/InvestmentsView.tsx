@@ -55,11 +55,26 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
    * (`U$20,15` y su `≈ $31.640,71`) eran números escritos a mano, y una
    * invertidora ve más que nada cuando ve un total: se quedan con ese número.
    * Sin precio, se dice que no hay precio.
+   *
+   * ── El cero que sí se sabe ────────────────────────────────────────────────
+   *
+   * `—` significa "no lo sé" y `U$0,00` significa "lo sé". Con todo leído y todo
+   * en cero, el total en dólares también es cero —cero por cualquier precio es
+   * cero—, así que ahí el total se muestra, y una billetera vacía tiene que poder
+   * parecer vacía. Con saldo pero sin precio, el total sigue siendo `—` con la
+   * frase de siempre: no hay feed, y no se inventa.
+   *
+   * Son dos signals distintos a propósito: alcanza con que **uno** de los dos
+   * tenga saldo para que el balance total deje de ser un cero.
    */
   const usd = useMemo(
     () => splitUsdDisplay(portfolio?.usdcTotal ?? null, 'U$'),
     [portfolio?.usdcTotal],
   );
+
+  const balanceIsZero = portfolio?.status === 'ready' && portfolio.balanceIsZero === true;
+  const cryptoBalanceIsZero =
+    portfolio?.status === 'ready' && portfolio.cryptoBalanceIsZero === true;
 
   const userTag = profile?.nombre
     ? '$' + profile.nombre.toLowerCase().replace(/\s+/g, '').slice(0, 10)
@@ -172,14 +187,19 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
           {/* Importe U$20,15 */}
           <div className="flex items-baseline font-display">
             <span className="text-4xl font-extrabold text-black tracking-tight">
-              {showBalance ? '—' : '••••'}
+              {showBalance ? (balanceIsZero ? 'U$0,00' : '—') : '••••'}
             </span>
           </div>
 
           {/* Sin precio de mercado no hay total en dólares. La frase va donde
-              estaba el equivalente en pesos, que tampoco se puede calcular. */}
+              estaba el equivalente en pesos, que tampoco se puede calcular.
+              Con todo en cero sí hay total —cero— y se dice otro motivo. */}
           <p className="text-xs font-semibold text-slate-400 font-mono tracking-tight pt-1">
-            {showBalance ? 'Sin precio de mercado, sin total' : '≈ ••••••••'}
+            {showBalance
+              ? balanceIsZero
+                ? 'No tenés saldos en ninguna billetera.'
+                : 'Sin precio de mercado, sin total'
+              : '≈ ••••••••'}
           </p>
         </div>
       </div>
@@ -208,7 +228,7 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 block">Bitcoin & Crypto</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
-                {showBalance ? '—' : '••'}
+                {showBalance ? (cryptoBalanceIsZero ? 'U$0,00' : '—') : '••'}
               </span>
             </div>
           </div>
