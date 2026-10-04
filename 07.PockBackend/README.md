@@ -298,6 +298,47 @@ IDENTITY_UNAVAILABLE` when the provider cannot answer, and `409 IDENTITY_CONFLIC
 [One email, one account](#one-email-one-account)). A provider outage is never
 dressed up as a refusal: telling somebody to try again would fail identically.
 
+## `rewallet.wallets.evm_network` — the EVM network a person operates on
+
+**One EVM address serves every configured EVM network, so the network is a column
+and not a row.**
+
+Privy's embedded wallets are chain-agnostic EVM accounts: the EVM address in the
+`ethereum` row (`0xaA8A88A0005707D8A90D725fe654A6C06b255f75`) is the address that
+reads balances on Ethereum **and** on Monad. There is no second address to write,
+so a second EVM row would be refused by `wallets_address_key UNIQUE(address)` —
+and would require a wallet the person does not have. `WALLET_CHAIN_ORDER` stays
+two entries long for the same reason.
+
+The network in use is therefore a recorded fact **on the row**:
+
+```sql
+ALTER TABLE rewallet.wallets
+  ADD COLUMN IF NOT EXISTS evm_network text NOT NULL DEFAULT 'eip155:1';
+```
+
+(`sql/0001_wallets_evm_network.sql`, applied to Neon. `ADD COLUMN IF NOT EXISTS`
+makes it a no-op the second time, and Postgres fills existing rows with the
+default, so **no `UPDATE` and no data migration step**.)
+
+| | |
+|---|---|
+| **Format** | CAIP-2: `eip155:<chain id>`. Self-describing — the namespace is part of the value, so `1` never has to be looked up. |
+| **Values** | `eip155:1` Ethereum mainnet (the default, on purpose), `eip155:143` Monad mainnet (verified: `eth_chainId = 0x8f`). |
+| **Default** | `eip155:1`. Ethereum was **added to**, not replaced by, Monad — so an existing row, and a row nobody chose a network for, describes a person on Ethereum. |
+| **Solana rows** | They carry the column too (it is `NOT NULL`) and it means nothing there. The adapter reports `evmNetwork: null` for a non-EVM row rather than "Ethereum". |
+| **Unsupported value** | The adapter reports `null` and the row is still returned. It is never silently defaulted: an operation on a network nobody chose is the one mistake this column exists to prevent (`src/domain/wallet/evmNetwork.ts`). |
+
+No constraint was changed and no row was added or removed. The values the
+application accepts are `SUPPORTED_EVM_NETWORK_IDS` in
+`src/domain/wallet/evmNetwork.ts`, which is also where the reason the default is
+Ethereum is written down.
+
+**Not yet exposed.** Nothing sends a transaction yet, and
+`GET /api/portfolio` is unchanged — it reads balances, not the network in use.
+Writing the value and refusing an unsupported network at the point of signing
+are the next steps, not this one.
+
 ## `GET /api/portfolio` — what the person actually holds
 
 **Balances are read from the chain, in the request. There is no cache, and none is

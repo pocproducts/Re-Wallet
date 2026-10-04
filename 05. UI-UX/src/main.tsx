@@ -4,6 +4,24 @@ import { PrivyProvider } from '@privy-io/react-auth';
 
 import App from './App.tsx';
 import './index.css';
+import { DEFAULT_EVM_CHAIN, SUPPORTED_EVM_CHAINS } from './config/chains';
+
+/**
+ * Las redes EVM las declara `src/config/chains.ts`, no este archivo. Ahí está
+ * escrito por qué **una sola** wallet EVM sirve en todas ellas, y por qué
+ * Ethereum sigue siendo la red por defecto: Monad se suma, no reemplaza.
+ *
+ * En `@privy-io/react-auth@3.47` las cadenas van dentro de `config`
+ * (`PrivyClientConfig`), no como props sueltas del provider. Son los mismos dos
+ * campos —`defaultChain` y `supportedChains`— leídos de las definiciones de tipo
+ * del paquete instalado, no de memoria.
+ */
+const privyConfig = {
+  defaultChain: DEFAULT_EVM_CHAIN,
+  // A mutable array, no `as const`: `PrivyClientConfig.supportedChains` is
+  // `Chain[]`, y un `readonly` no se le puede asignar.
+  supportedChains: [...SUPPORTED_EVM_CHAINS],
+};
 
 /**
  * El app id **va al navegador**, y no es un descuido: es público por diseño.
@@ -32,7 +50,7 @@ if (!appId) {
 } else {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <PrivyProvider appId={appId}>
+      <PrivyProvider appId={appId} config={privyConfig}>
         <App />
       </PrivyProvider>
     </StrictMode>,

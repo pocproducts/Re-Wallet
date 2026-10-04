@@ -114,6 +114,25 @@ wallet. La UI (T3) sigue pendiente: este endpoint todavía no lo consume nadie.
 
 **Gate**: `tsc` limpio, y la red configurada verificada contra la cadena.
 
+**Estado: parcial.** La red quedo configurada y registrada, pero la tercera
+vineta ("un intento de operar en una red que no esta en la lista debe fallar con
+un mensaje que lo diga") **no** esta hecha: todavia no hay una operacion que
+pueda mandarse a la red equivocada, asi que no hay que rechazarla.
+
+- `05. UI-UX/src/config/chains.ts` es **la** configuracion de red: Monad mainnet
+  con `defineChain` de `viem` (id 143 leido de `eth_chainId = 0x8f`,
+  `https://rpc.monad.xyz`, MON 18 decimales) y `monadscan.com` como exploradora,
+  verificada sirviendo una transaccion real de la red 143. `main.tsx` pasa
+  `defaultChain` = Ethereum y `supportedChains` = [Ethereum, Monad] por
+  `config` (en `@privy-io/react-auth@3.47` las cadenas van dentro de `config`,
+  no como props sueltas del provider).
+- `rewallet.wallets.evm_network` (CAIP-2, `NOT NULL DEFAULT 'eip155:1'`) registra
+  en que red EVM opera la persona, sin filas nuevas y sin cambiar ningun
+  constraint. Los dos rows existentes quedaron en `eip155:1` sin paso de datos.
+
+Pendiente de esta tarea: exponer la eleccion de red en la UI y **rechazar** una
+red no soportada antes de firmar nada.
+
 ### T3 — La UI con datos reales
 
 - Billetera: USDC en **u$**, y el resto de los saldos que hoy son de ejemplo,

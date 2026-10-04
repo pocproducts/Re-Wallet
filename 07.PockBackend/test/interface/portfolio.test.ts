@@ -45,8 +45,10 @@ const acceptingCodec = (): SessionCodec => ({
 /** The two rows a person has today: one EVM address, one Solana address. */
 const twoWalletRows: WalletStore = {
   findByUserId: async () => [
-    { address: EVM_ADDRESS, providerWalletId: 'wallet-evm-1', chain: 'ethereum' },
-    { address: SOLANA_ADDRESS, providerWalletId: 'wallet-sol-1', chain: 'solana' },
+    // The EVM row also carries the network in use: one EVM address serves both
+    // supported EVM networks, so the network is on the row, not on a second row.
+    { address: EVM_ADDRESS, providerWalletId: 'wallet-evm-1', chain: 'ethereum', evmNetwork: 'eip155:1' },
+    { address: SOLANA_ADDRESS, providerWalletId: 'wallet-sol-1', chain: 'solana', evmNetwork: null },
   ],
   save: async () => {},
 };
@@ -261,7 +263,9 @@ describe('GET /api/portfolio — zeros and missing wallets', () => {
   it('reports a chain with no wallet row as no_wallet, not as a zero balance', async () => {
     // The person has an EVM address and nothing on Solana.
     const evmOnly: WalletStore = {
-      findByUserId: async () => [{ address: EVM_ADDRESS, providerWalletId: 'wallet-evm-1', chain: 'ethereum' }],
+      findByUserId: async () => [
+        { address: EVM_ADDRESS, providerWalletId: 'wallet-evm-1', chain: 'ethereum', evmNetwork: 'eip155:1' },
+      ],
       save: async () => {},
     };
     const solana = solanaReader({});
