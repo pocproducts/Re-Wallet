@@ -50,6 +50,36 @@ export const AMOUNT_DISPLAY_DECIMALS = 2;
  * Acepta coma o punto, tolera ceros de más en la parte entera y recorta —no
  * redondea— los decimales sobrantes: el dato se conserva tal como vino.
  */
+/**
+ * El **formato de un porcentaje** es un decimal de maquina: `"4.1196"`. No lleva
+ * separador de miles.
+ *
+ * Por eso NO se parsea con `toScaled`, que existe para importes en formato
+ * argentino (`"173.874.477,77"` = 173 millones) y **se come los puntos**:
+ * `"4.1196"` ahi se convierte en `"41196"`, y el resultado es `41.196,00%` en
+ * vez de `4,12%`. La ambiguedad es real e irresoluble — `"1.234"` son mil dos
+ *cientos treinta y cuatro en un formato y uno con doscientos en el otro — asi
+ * que son dos funciones distintas con dos formatos distintos, no una con
+ * parametros.
+ */
+const percentToScaled = (text: string, decimals: number): bigint => {
+  const trimmed = text.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    throw new RangeError(`un porcentaje no puede ser "${text}"`);
+  }
+  const negative = trimmed.startsWith('-');
+  const unsigned = negative ? trimmed.slice(1) : trimmed;
+  const dot = unsigned.indexOf('.');
+  const whole = dot === -1 ? unsigned : unsigned.slice(0, dot);
+  const fraction = dot === -1 ? '' : unsigned.slice(dot + 1);
+  if (fraction.length > decimals) {
+    throw new RangeError(`más decimales de los declarados: ${text} con ${decimals}`);
+  }
+  const value = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0') || '0');
+  return negative ? -value : value;
+};
+
+/** Importes en formato argentino: `"1.234.567,89"` son un millón doscientos. */
 export const toScaled = (text: string, decimals: number): bigint => {
   const normalized = text.trim().replace(/\./g, '').replace(',', '.');
   const negative = normalized.startsWith('-');
@@ -116,7 +146,7 @@ export const formatAmount = (raw: bigint, decimals: number, prefix = ''): string
 export const formatPercent = (percent: PoolPercent | null): string | null => {
   if (percent === null) return null;
 
-  const scaled = toScaled(percent, 4);
+  const scaled = percentToScaled(percent, 4);
   const rounded = roundScaled(scaled, 4, APR_DISPLAY_DECIMALS);
   return `${formatScaled(rounded, APR_DISPLAY_DECIMALS, APR_DISPLAY_DECIMALS)}%`;
 };
@@ -136,7 +166,7 @@ export const projectYearlyGain = (
 ): { readonly gain: bigint; readonly label: string } | null => {
   if (percent === null) return null;
 
-  const aprScaled = toScaled(percent, 4); // 1e-4 de punto
+  const aprScaled = percentToScaled(percent, 4); // 1e-4 de punto
   // gain = raw x apr% / 100, en enteros.
   const gain = (raw * aprScaled) / (1_000_000n * 100n);
 
