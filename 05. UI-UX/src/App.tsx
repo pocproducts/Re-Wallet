@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { BottomNavbar } from './components/Navigation/BottomNavbar';
 import { WalletView } from './components/Wallet/WalletView';
 import { InvestmentsView } from './components/Wallet/InvestmentsView';
@@ -19,7 +19,7 @@ import { LoginGate } from './components/Auth/LoginGate';
 import { useSessionGate } from './hooks/useSessionGate';
 import { usePortfolio } from './hooks/usePortfolio';
 import { useUserWallets } from './hooks/useUserWallets';
-import { ChargeQrModal } from './components/Charge/ChargeQrModal';
+import { ChargeQrModal, type ChargeReceiveAddress } from './components/Charge/ChargeQrModal';
 import { NavTab, TransactionItem } from './types';
 import {
   X,
@@ -82,67 +82,22 @@ export default function App() {
   const [isDigitalDollarsOpen, setIsDigitalDollarsOpen] = useState(false);
   const [isCryptoListOpen, setIsCryptoListOpen] = useState(false);
 
-  // Saldo mock de Bitcoin
-  const [btcBalance, setBtcBalance] = useState<number>(() => {
-    try {
-      const stored = localStorage.getItem('rewallet_btc_balance');
-      return stored ? parseFloat(stored) : 0.000186;
-    } catch {
-      return 0.000186;
-    }
-  });
+  /*
+   * Actividad arranca **vacía**.
+   *
+   * Antes el estado inicial eran cuatro movimientos escritos a mano —cuatro
+   * “Compra de Cryptos”, con fecha de septiembre, `- 4.000,00 ARS`,
+   * `+ 7,193689 TRX`, `+ 18,93880759 DOGE`— y se guardaban en `localStorage`, así
+   * que seguían ahí después de cada recarga. Eran la prueba visible de que
+   * aquella persona había movido plata que nunca movió.
+   *
+   * Hoy la lista es exactamente lo que el backend conoce: nada. El array sigue
+   * viviendo acá porque los cobros que la persona **crea** en la app sí son un
+   * hecho —uno lo generó ella y lo puede ver—, pero ya no se siembra con
+   * ejemplos.
+   */
+  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
 
-  const handleUpdateBtcBalance = (newVal: number) => {
-    setBtcBalance(newVal);
-    try {
-      localStorage.setItem('rewallet_btc_balance', newVal.toString());
-    } catch (e) {
-      console.warn('Error saving btc balance:', e);
-    }
-  };
-
-  // Lista de transacciones en actividad con persistencia
-  const [transactions, setTransactions] = useState<TransactionItem[]>([
-    {
-      id: 'tx-1',
-      title: 'Compra de Cryptos',
-      date: '25 de Septiembre',
-      amount: '- 4.000,00 ARS',
-      isPositive: false,
-      type: 'ars',
-      section: 'Hoy',
-    },
-    {
-      id: 'tx-2',
-      title: 'Compra de Cryptos',
-      date: '25 de Septiembre',
-      amount: '+ 7,193689 TRX',
-      isPositive: true,
-      type: 'trx',
-      section: 'Hoy',
-    },
-    {
-      id: 'tx-3',
-      title: 'Compra de Cryptos',
-      date: '24 de Septiembre',
-      amount: '+ 18,93880759 DOGE',
-      isPositive: true,
-      type: 'doge',
-      section: 'Anteriores',
-    },
-    {
-      id: 'tx-4',
-      title: 'Compra de Cryptos',
-      date: '24 de Septiembre',
-      amount: '- 3.000,00 ARS',
-      isPositive: false,
-      type: 'ars',
-      section: 'Anteriores',
-    },
-  ]);
-
-  // Cargar las transacciones mock guardadas. El perfil **no** se carga de acá:
-  // viene de Privy.
   useEffect(() => {
     try {
       const storedTx = localStorage.getItem(TRANSACTIONS_STORAGE_KEY);
@@ -171,9 +126,23 @@ export default function App() {
   };
 
   /*
+   * La dirección de cobro: la primera red real que el backend reportó.
+   *
+   * Antes el modal de cobrar usaba un saldo de Bitcoin escrito a mano y un
+   * `@user` como destino. Ahora usa la dirección que devolvió
+   * `GET /api/portfolio`, y si no hay ninguna no genera el cobro: es preferible
+   * no poder cobrar antes que mostrar un QR que no lleva a ninguna parte.
+   */
+  const receiveAddress = useMemo<ChargeReceiveAddress | null>(() => {
+    const first = portfolio.receiveAddresses[0];
+    return first ? { label: first.label, address: first.address } : null;
+  }, [portfolio.receiveAddresses]);
+
+  /*
    * Cerrar sesión: primero el backend (borra la cookie) y después la de Privy.
-   * Lo que se mantiene es lo mismo que estaba antes —transacciones, saldo y
-   * posición en las pestañas— porque nada de eso es identidad.
+   * Lo que se mantiene es lo mismo que estaba antes —transacciones y posición
+   * en las pestañas— porque nada de eso es identidad. El saldo mock que
+   * también se mantenía acá ya no existe.
    */
   const handleSignOut = () => {
     void signOut().then(() => {
@@ -397,9 +366,7 @@ export default function App() {
         <ChargeQrModal
           isOpen={isChargeModalOpen}
           onClose={() => setIsChargeModalOpen(false)}
-          userTag={userTag}
-          btcBalance={btcBalance}
-          onUpdateBtcBalance={handleUpdateBtcBalance}
+          receiveAddress={receiveAddress}
           onAddTransaction={handleAddTransaction}
           onNavigateToActivity={() => {
             setIsChargeModalOpen(false);
@@ -421,7 +388,7 @@ export default function App() {
             LAYOUTS DE 3ER NIVEL (PANTALLA COMPLETA SIN HEADER SUPERIOR NI BOTTOM NAVBAR)
            ========================================================================= */}
 
-        {/* 1. Rendimientos Pools de Aave V3 (3er nivel desde píldora 20.77% anual o ver más) */}
+        {/* 1. Rendimientos Pools de Aave V3 (3er nivel desde Inversiones -> Ver más) */}
         {isAavePoolsOpen && (
           <AavePoolsView
             onBack={() => setIsAavePoolsOpen(false)}
@@ -551,28 +518,28 @@ export default function App() {
               </div>
 
               {/*
-               * "Face ID Activo" se fue de acá.
+               * La notificación de rendimiento se fue.
                *
-               * Decía, con un tilde verde, que la sesión biométrica estaba
-               * protegida — y no había **nada** detrás: era un texto fijo que se
-               * mostrara que la passkey existiera o no. La Hoja 1 prohibe que la
-               * persona vea un estado que el sistema no comprobó, y una
-               * notificación con tilde verde es la forma más cara de mentir:
-               * nadie la cuestiona.
+               * Decía “Rendimiento Activo (20.77%) — Tus fondos en pesos están
+               * generando rendimiento anual diario”, con un punto verde. No
+               * había conexión con ningún pool, y el 20,77% era un número
+               * escrito a mano: leía como plata generando renta que no existía.
                *
-               * No se reemplaza con otro avisofixed: se deja de avisar. Cuando
-               * el flujo de Privy esté probado y sepamos leer del usuario si
-               * tiene una passkey, se vuelve a mostrar **derivado de ese dato**.
+               * No se reemplaza por otro texto: se deja de avisar. Cuando haya
+               * un depósito real y su tasa real, la notificación sale de esos
+               * datos —derivados, no escritos— y no antes.
                */}
               <div className="space-y-2.5 text-xs">
-
                 <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-2.5">
-                  <div className="w-4 h-4 rounded-full bg-[#ccff00] text-black font-bold flex items-center justify-center text-[11px] shrink-0 mt-0.5">
+                  <div className="w-4 h-4 rounded-full bg-slate-200 text-slate-500 font-bold flex items-center justify-center text-[11px] shrink-0 mt-0.5">
                     $
                   </div>
                   <div>
-                    <span className="font-bold text-black block">Rendimiento Activo (20.77%)</span>
-                    <span className="text-slate-500 text-[11px]">Tus fondos en pesos están generando rendimiento anual diario.</span>
+                    <span className="font-bold text-slate-600 block">Nada nuevo</span>
+                    <span className="text-slate-400 text-[11px]">
+                      Cuando tengas movimientos o un rendimiento acreditado, te
+                      avisamos acá.
+                    </span>
                   </div>
                 </div>
               </div>

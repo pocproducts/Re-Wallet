@@ -79,9 +79,49 @@ export interface PortfolioView {
   readonly usdcNote: string | null;
   /** Las cadenas sin saldo legible, con el motivo. */
   readonly unreadableChains: readonly UnreadableChain[];
+  /**
+   * La dirección real de esta persona, para cada red donde el backend la devolvió.
+   *
+   * Es la **única** fuente de una dirección de cobro. Una pantalla que muestra
+   * una dirección para recibir plata tiene que mostrar la que devolvió
+   * `GET /api/portfolio`: una dirección escrita a mano manda el dinero a la
+   * billetera de otro.
+   *
+   * Viene de `chain.address` de las cadenas legibles, y no de los holdings: una
+   * cadena puede estar leída y no traer **ningún** activo —una billetera vacía—
+   * y en ese caso igual es una dirección real de esta persona. Lo contrario —
+   * buscar la dirección entre los activos— perdería justo ésas.
+   */
+  readonly receiveAddresses: readonly PortfolioReceiveAddress[];
   /** Vuelve a leer. Lo decide la persona, nunca un render. */
   readonly reload: () => void;
 }
+
+/**
+ * Las direcciones de esta persona, una por red, en el orden en que se ofrecen.
+ *
+ * El orden es el de `config/chains`: **Ethereum primero** —es la red por defecto
+ * del producto y no se reemplaza—, después Monad, después Solana. No es
+ * arbitrario: es el mismo criterio con el que el resto de la app decide en qué
+ * red opera una transacción.
+ *
+ * Sólo entran las cadenas **legibles con dirección**. Una cadena `error` o
+ * `no_wallet` no aporta ninguna: no hay dirección que mostrar, y una dirección
+ * de otra persona no es un plan B.
+ */
+const RECEIVE_CHAIN_ORDER: readonly PortfolioChainId[] = ['ethereum', 'monad', 'solana'];
+
+const receiveAddressesFrom = (portfolio: Portfolio | null): readonly PortfolioReceiveAddress[] => {
+  if (portfolio === null) return [];
+
+  return RECEIVE_CHAIN_ORDER.flatMap((chain) => {
+    const outcome = portfolio.chains.find((entry) => entry.chain === chain);
+    if (outcome === undefined || outcome.status !== 'ok') return [];
+    if (outcome.address === null || outcome.address.length === 0) return [];
+
+    return [{ chain, label: chainLabel(chain), address: outcome.address }];
+  });
+};
 
 /** Junta con "y" una lista de nombres de cadena: `"Monad y Ethereum"`. */
 const joinChainLabels = (labels: readonly string[]): string => {
@@ -253,6 +293,7 @@ export const usePortfolio = (enabled: boolean): PortfolioView => {
       usdcTotal,
       usdcNote,
       unreadableChains,
+      receiveAddresses: receiveAddressesFrom(portfolio),
       reload: load,
     };
   }, [portfolio, status, failureCode, load]);
@@ -260,3 +301,10 @@ export const usePortfolio = (enabled: boolean): PortfolioView => {
 
 /** El tipo de una red de un holding, reexportado para las pantallas. */
 export type { PortfolioChainId, PortfolioHolding, PortfolioNetwork, UnreadableChain };
+
+/** Una red con la dirección real de esta persona, tal como la leyó la cadena. */
+export interface PortfolioReceiveAddress {
+  readonly chain: PortfolioChainId;
+  readonly label: string;
+  readonly address: string;
+}

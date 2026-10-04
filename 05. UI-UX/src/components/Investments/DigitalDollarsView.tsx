@@ -1,6 +1,10 @@
 import React, { useMemo, useState } from 'react';
 
-import { formatApr } from '../../config/markets';
+/*
+ * `formatApr` ya no se importa acá. La tasa del pool no sale de ninguna fuente
+ * real todavía —no hay conexión con Aave—, y una tasa escrita a mano en pantalla
+ * es una promesa de rendimiento. Cuando T5 exista, la tasa entra desde el pool.
+ */
 import { splitUsdDisplay } from '../../services/portfolio';
 import type { PortfolioView } from '../../hooks/usePortfolio';
 import {
@@ -114,35 +118,49 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
             </button>
           </div>
 
+          {/* =
+            ESTA TARJETA NO MUESTRA NINGÚN NÚMERO, Y ESO ES LO VERDADERO.
+
+            Antes ponía `3,90%`, `$150 . 198 . 641` y `89%`: una tasa y dos
+            cifras escritas a mano. No había ninguna conexión con Aave —la tarea
+            T5 del plan todavía no arrancó—, así que ninguna de esas tres cosas
+            venía de la cadena. Y el riesgo no era que estuvieran viejas: una
+            cifra de rendimiento escrita a mano se lee como plata que la persona
+            ya está ganando. Por eso no se cambia el número por otro número, ni
+            por un cero: se dice la verdad sobre lo que todavía no existe.
+
+            Lo que queda son palabras. El guion es el que ya usa el resto de la
+            app para "acá no hay dato" —el precio del activo, el detalle del
+            pool—, no una cifra escondida.
+          = */}
           <div className="flex items-baseline gap-2">
-            {/* El signo lo trae el número, no la pantalla. Ver la nota en AavePoolsView. */}
-            <span className="text-3xl sm:text-4xl font-black font-display text-black tracking-tight">
-              {formatApr()}%
+            <span className="text-3xl sm:text-4xl font-black font-display text-slate-300 tracking-tight">
+              —
             </span>
             <span className="text-sm font-semibold text-slate-500">
-              del pool de Aave
+              sin cifra todavía
             </span>
           </div>
 
           <div className="space-y-3 pt-3 border-t border-slate-100 text-sm">
             <div className="flex items-center justify-between">
-              <span className="text-slate-400 font-medium">Trabajando para vos</span>
-              <span className="font-extrabold text-black font-mono">
-                $150 . 198 . 641
+              <span className="text-slate-400 font-medium">Conectado a Aave</span>
+              <span className="font-extrabold text-black">
+                Todavía no
               </span>
             </div>
 
             <div className="flex items-center justify-between">
-              <span className="text-slate-400 font-medium">Prestado</span>
-              <span className="font-extrabold text-black font-mono">
-                89%
+              <span className="text-slate-400 font-medium">Tu dinero en el pool</span>
+              <span className="font-extrabold text-black">
+                No depositás nada
               </span>
             </div>
 
             <div className="flex items-center justify-between">
               <span className="text-slate-400 font-medium">Podés sacar</span>
               <span className="font-extrabold text-black">
-                Ahora
+                No hay depósito
               </span>
             </div>
           </div>
@@ -173,7 +191,9 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
             TEXTO LEGAL / EXPLICATIVO AL PIE
            ===================================================================== */}
         <p className="text-center text-[11px] text-slate-400 leading-relaxed px-4 pt-2 font-medium">
-          La tasa del pool sale de la cadena. El rendimiento que vos ganás depende de cuánto tengas acá, y todavía no tenés nada depositado.
+          Todavía no estamos conectados a Aave, así que la tasa no sale de la
+          cadena todavía. Tu rendimiento es cero porque no hay nada depositado, no
+          porque el pool rinda poco.
         </p>
       </div>
 
@@ -204,7 +224,11 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
 
             <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-1">
               <p>
-                Generan rendimientos pasivos automáticos segundo a segundo conectándose a los pools descentralizados de Aave V3.
+                <p className="font-medium">
+                Generan rendimientos pasivos automáticos conectándose a los pools
+                descentralizados de Aave V3. Eso es lo que van a hacer cuando la
+                conexión esté; hoy todavía no hay conexión.
+              </p>
               </p>
             </div>
 

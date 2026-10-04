@@ -416,29 +416,35 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               )}
             </div>
 
-            {/* Gráfico de Precio SVG Dinámico en Púrpura con Gradiente */}
+            {/*
+              Aquí ya no hay gráfico.
+
+              Antes dibujaba una curva púrpura fija en el SVG —la misma para todos los
+              activos, idéntica para Bitcoin y para el activo que saliera al
+             azar— y sin ninguna serie de precios detrás. Una curva ascendente
+              dibujada sin datos no es decoración: es la forma de una ganancia.
+              La persona la lee como “esto subió” y no hay nada medido detrás.
+
+              `/api/portfolio` no trae precios ni variaciones, y este archivo ya
+              lo decía arriba: el precio se muestra como guion. El gráfico se
+              va con la misma regla —si no hay serie, no hay curva— y en su lugar
+              queda el mismo espacio con un estado vacío que forma parte de la
+              pantalla en vez de una apology.
+
+              Los selectores de período quedan: son una elección de la persona y no
+              son un dato. Cuando exista la serie, la curva vuelve a este mismo
+              lugar.
+            */}
             <div className="w-full h-44 relative flex items-center justify-center overflow-hidden">
-              <svg viewBox="0 0 400 180" className="w-full h-full overflow-visible">
-                <defs>
-                  <linearGradient id="purpleGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#9333ea" stopOpacity="0.25" />
-                    <stop offset="100%" stopColor="#9333ea" stopOpacity="0.0" />
-                  </linearGradient>
-                </defs>
-                {/* Área bajo la curva */}
-                <path
-                  d="M 0 140 Q 30 110, 60 135 T 120 70 T 150 160 T 200 130 T 250 145 T 300 135 T 350 165 L 400 150 L 400 180 L 0 180 Z"
-                  fill="url(#purpleGradient)"
-                />
-                {/* Línea principal púrpura */}
-                <path
-                  d="M 0 140 Q 30 110, 60 135 T 120 70 T 150 160 T 200 130 T 250 145 T 300 135 T 350 165 L 400 150"
-                  fill="none"
-                  stroke="#8b5cf6"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                />
-              </svg>
+              <div className="space-y-1.5 text-center px-8">
+                <span className="text-sm font-bold text-slate-500 block">
+                  Todavía no hay gráfico
+                </span>
+                <span className="text-[11px] text-slate-400 font-medium block leading-snug">
+                  No estamos leyendo precios, así que no hay nada honesto que dibujar
+                  acá.
+                </span>
+              </div>
             </div>
 
             {/* Selector de Periodo [ 24H | 7D | 1M | 1A | MAX ] */}

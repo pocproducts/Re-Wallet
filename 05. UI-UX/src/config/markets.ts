@@ -32,11 +32,39 @@ export const BALANCE_DECIMALS: Readonly<Record<string, number>> = Object.fromEnt
 );
 
 /**
+ * ── LA TASA DEL POOL NO VIVE ACÁ. NO VIVE EN NINGÚN LUGAR ─────────────────
+ *
+ * Antes este archivo tenía `POOL_SUPPLY_APR = 3.9` y `formatApr()`, y la billetera
+ * y el detalle del pool lo llamaban para pintar `Rindiendo 3,90% anual`. El mismo
+ * número escrito a mano en cuatro lugares de tres archivos, con dos valores
+ * distintos, y **sin ninguna fuente**: todavía no hay conexión con Aave.
+ *
+ * Una tasa escrita a mano no es un dato viejo, es una promesa de rendimiento sobre
+ * plata que la persona no tiene depositada. Por eso no se cambia por otro número
+ * ni por un cero: se borra. La tasa entra cuando T5 conecte el pool y el backend
+ * devuelva la lectura real, y lo único que hace falta entonces es
+ * `formatAmount(bps / 100, 2)` —el formateador de más abajo, que no es mock.
+ *
+ * Quien necesite formatear una tasa cuando exista tiene `formatAmount`. Si no hay
+ * de dónde sacar el número, la respuesta es que falta el dato, nunca un default.
+ */
+
+/**
  * Precio de cada activo, en dólares.
  *
- * Los dólares digitales valen 1 porque es lo que significa ser una stablecoin;
- * no es un número invented para completar la tabla. Para los cripto es un precio
- * de ejemplo y va a ser reemplazado por el oráculo.
+ * ── Sigue siendo MOCK, y esta vez la razón es una pantalla ajena ────────────
+ *
+ * No se borra en esta pasada porque su cadena de consumidores termina en
+ * `components/common/AssetTradeCard.tsx`, que no es de este cambio: ese componente
+ * muestra el equivalente en dólares y la conversión entre dos activos, y los dos
+ * salen de acá. Borrar el precio sin tocar esa pantalla no volvería la app
+ * verdadera: la volvería peor, porque `priceUsd()` devolvería `0` y el
+ * equivalente se mostraría como `$0,00`, que es una cifra falsa con forma de dato.
+ *
+ * Los dólares digitales valen 1 porque es lo que significa ser una stablecoin; no
+ * es un número inventado para completar la tabla. Para los cripto es un precio de
+ * ejemplo y va a ser reemplazado por el oráculo, junto con la pantalla de
+ * conversión que lo consume.
  */
 export const ASSET_PRICE_USD: Readonly<Record<string, number>> = {
   BTC: 95400,
@@ -49,38 +77,35 @@ export const ASSET_PRICE_USD: Readonly<Record<string, number>> = {
 };
 
 /**
- * La tasa anual del pool donde rinde el dinero del usuario, en porcentaje.
+ * ── BORRADO: `POOL_SUPPLY_APR` y `formatApr()` ──────────────────────────────
  *
- * ── Esto es MOCK, y es el único lugar donde vive ────────────────────────────
+ * Eran la tasa anual del pool (3,9) y su formateo. No hay conexión con Aave, así
+ * que ese número no tenía fuente: era una promesa de rendimiento sobre plata que
+ * la persona no depositó. Se borró en vez de ajustarse.
  *
- * Antes el mismo número estaba escrito a mano en cuatro lugares de tres
- * archivos, y con dos valores distintos: la billetera y las pantallas de
- * dólares decían 3,90 y el detalle del pool decía 2,90. Dos tasas en la misma
- * app, y ninguna fuente de verdad.
- *
- * Cuando el backend exista, este valor deja de escribirse acá: llega de la
- * lectura del pool. El laboratorio (`Front End/src/data/poolSummary.ts`) ya lee
- * `GET /yield/summary` y devuelve `supplyAprBps` en puntos básicos, así que la
- * conexión es—fromBps(ese valor)— y **esta línea se borra**. Eso es justo lo que
- * hace que valga la pena tenerla en un solo lugar: cambiar el dato del backend es
- * cambiar una línea, no cuatro.
- *
- * Un punto porcentual está escrito como número y formateado con `formatApr()`,
- * no como texto con coma: el número es el dato, la coma es cómo se muestra.
+ * Reaparecen cuando T5 conecte el pool: la tasa llega del backend y se muestra
+ * con `formatAmount(valor, 2)`, que sigue vivo más abajo. Lo que **no** vuelve
+ * es un valor por defecto — una función que sabe mostrar una tasa sin que nadie
+ * le pase una tasa es exactamente cómo la tasa inventada llegó a cuatro
+ * pantallas.
  */
-export const POOL_SUPPLY_APR = 3.9;
-
-/** La tasa del pool como se muestra: `"3,90"`. */
-export function formatApr(value: number = POOL_SUPPLY_APR): string {
-  return formatAmount(value, 2);
-}
 
 /**
  * Saldo de la cuenta, en la unidad del activo.
  *
- * Los que no están acá valen 0, y es lo honesto: la cuenta no tiene de esos. Un
- * saldo inventado para que un activo "se vea" lleno es un número falso en la
- * pantalla de alguien.
+ * ── Sigue siendo MOCK, por la misma razón que el precio ─────────────────────
+ *
+ * `balanceLabel()` lo renderiza `components/common/AssetSheet.tsx`, el selector de
+ * activo del flujo de comprar y vender, y ese componente está fuera de este
+ * cambio. Borrar el saldo sin tocarlo produciría un `0` en cada activo, y un `0`
+ * en un saldo es una afirmación: la de que la persona no tiene plata.
+ *
+ * Cuando haya backend, esto se borra junto con el precio, cuando el selector
+ * pase a leer el mismo `GET /api/portfolio` que lee el resto de la app.
+ *
+ * Los que no están acá valen 0, y es lo honesto dentro de la tabla: la cuenta no
+ * tiene de esos. Un saldo inventado para que un activo "se vea" lleno es un
+ * número falso en la pantalla de alguien.
  */
 export const BALANCES: Readonly<Record<string, number>> = {
   BTC: 0.00852543,
@@ -98,6 +123,9 @@ export const BALANCES: Readonly<Record<string, number>> = {
  * Queda solo para las pantallas que muestran el equivalente en pesos. En los
  * flujos de comprar y vender ya no se usa: ahí el equivalente es en dólares,
  * que es la unidad en la que el usuario realmente piensa cuando compra.
+ *
+ * No se borra en esta pasada porque lo importa `config/displayCurrency.ts`, que no
+ * es de este cambio y formatea el equivalente en pesos de varias pantallas.
  */
 export const ARS_PER_USD = 1570;
 

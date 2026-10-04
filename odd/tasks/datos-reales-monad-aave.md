@@ -148,6 +148,20 @@ red no soportada antes de firmar nada.
 **Gate**: `tsc` limpio, y los valores de pantalla coinciden con lo que devuelve
 `GET /api/portfolio`.
 
+**Estado: las cifras inventadas de rendimiento ya no están.** El detalle del pool
+(`components/Yield/AavePoolsView.tsx`) no muestra ninguna tasa ni total del pool:
+dice, en las mismas palabras que la tarjeta de `DigitalDollarsView`, que todavía
+no hay conexión con Aave. La píldora de la billetera dejó de decir `Rindiendo
+3,90% anual` por lo mismo, y `POOL_SUPPLY_APR` y `formatApr()` se borraron de
+`config/markets.ts`: la tasa entra con T5, desde el pool.
+
+Lo que sigue mock, y por qué: `ASSET_PRICE_USD`, `BALANCES` y `ARS_PER_USD`
+consumen en `components/common/AssetTradeCard.tsx`, `components/common/AssetSheet.tsx`
+y `config/displayCurrency.ts`, que no son de este cambio. Borrarlos sin tocar esas
+pantallas no haría la app más verdadera: haría que el equivalente en dólares
+muestre `$0,00` y que el selector de activo muestre saldo cero. Se borran cuando
+esas tres pantallas lean el mismo portfolio del backend.
+
 **Estado: hecho en la lectura de saldos; el envío a Solana sigue pendiente.**
 
 La lectura existe de punta a punta y los saldos de pantalla salen de
@@ -204,6 +218,37 @@ los declarados—, pero falta la lectura contra `rpc.monad.xyz` y
 Pendiente de esta tarea: **el envío a Solana con el saldo real de esa wallet**.
 Hoy el backend expone lectura de saldos; la firma y el envío por la wallet de
 Solana son otro circuito.
+
+### T3b — Cifras inventadas que quedaban en pantalla
+
+La lectura de saldos quedó real en T3, pero quedaban cuatro pantallas que
+seguían mostrando números escritos a mano, ninguno de los cuales venía de la
+cadena. En una app de dinero eso no es un bug de estilo: una cifra escrita a
+mano se lee como plata que la persona tiene, o —en el caso del rendimiento—
+como plata que ya está ganando.
+
+Las cuatro, y lo que dice cada una ahora:
+
+| Pantalla | Antes | Ahora |
+|---|---|---|
+| `DigitalDollarsView`, tarjeta de rendimiento | `3,90%`, `$150 . 198 . 641`, `89%` | Sin cifras. Dice que todavía no hay conexión con Aave, que no hay nada depositado y que el rendimiento es cero por eso, no porque el pool rinda poco |
+| `ChargeQrModal` | `btcBalance = 0.000186` por defecto, persistido en `localStorage`, y un pago de `0,00005 BTC` que se daba por hecho a los 1,8 s | Cobra a la dirección real de `GET /api/portfolio`, y sin dirección real no genera el QR. El pago con QR ya no se simula: dice que todavía no puede leer el código |
+| `ActivityView` | Siete movimientos de ejemplo con fechas de septiembre y `- 4.000,00 ARS`, `+ 7,193689 TRX`, `+ 18,93880759 DOGE`, `+ 0,0155256 SOL` | Estado vacío: “Todavía no hay movimientos”. `GET /api/portfolio` devuelve saldos, no movimientos, y no hay fuente real de historial |
+| `CryptoAssetDetailModal` | Una curva púrpura fija en el SVG, idéntica para todos los activos y sin ninguna serie detrás | Sin gráfico, con estado vacío. Los selectores de período quedan: son una elección de la persona, no un dato |
+
+La regla que queda escrita: **una cifra de dinero sale de `GET /api/portfolio` o
+no sale.** Un cero sólo se muestra cuando el cero es lo que dijo la cadena, y
+una cadena que no se pudo leer se dice, no se convierte en cero.
+
+**Lo que quedó fuera y hay que saber**: `src/components/Yield/AavePoolsView.tsx`
+sigue mostrando `$150.198.641`, `89%`, `89,21%` y la tasa de
+`formatApr()`, y esa pantalla se abre desde el botón “Ver más” de la tarjeta que
+recién se limpió. No se tocó porque no estaba en las superficies autorizadas
+para esta pasada. Es la deuda más cara que queda de este trabajo.
+
+**Gate**: `tsc --noEmit` limpio, `vite build` correcto, y
+`grep -rn "0.000186\|150.198.641\|89 %\|89%\|31.640" src` sin coincidencias que
+no sean comentarios al servicio de este registro.
 
 ### T4 — Webhooks que llegan a la UI
 

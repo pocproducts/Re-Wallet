@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 
-import { formatApr } from '../../config/markets';
 import { splitUsdDisplay } from '../../services/portfolio';
 import { usePortfolio, type PortfolioView } from '../../hooks/usePortfolio';
 import {
@@ -189,14 +188,21 @@ export const WalletView: React.FC<WalletViewProps> = ({
               </p>
             )}
 
-            {/* Píldora de Rendimiento Anual Verde Lima Fluo -> Lleva a Pool USDC View */}
+            {/*
+              La píldora antes decía `Rindiendo 3,90% anual`, con el número
+              escrito a mano en `config/markets.ts`. Sin conexión con Aave no hay tasa
+              que leer, y una tasa escrita a mano se lee como plata que la persona
+              ya está ganando. La píldora sigue siendo el mismo botón —abre el
+              detalle del pool— pero dice lo que es verdad: todavía no hay
+              rendimiento. El número vuelve con T5, desde el backend.
+            */}
             <div>
               <button
                 onClick={onOpenAavePools}
                 type="button"
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#ccff00] hover:bg-[#b8e600] text-black text-xs font-bold shadow-sm active:scale-95 transition-all cursor-pointer"
               >
-                <span>Rindiendo {formatApr()}% anual</span>
+                <span>Todavía no hay rendimiento</span>
                 <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
               </button>
             </div>

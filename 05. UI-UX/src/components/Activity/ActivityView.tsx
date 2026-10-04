@@ -37,74 +37,22 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
     ? '$' + profile.nombre.toLowerCase().replace(/\s+/g, '').slice(0, 10)
     : '$joadata';
 
-  // Datos base si no se pasan transacciones
-  const defaultTransactions: TransactionItem[] = [
-    {
-      id: 'tx-1',
-      title: 'Compra de Cryptos',
-      date: '25 de Septiembre',
-      amount: '- 4.000,00 ARS',
-      isPositive: false,
-      type: 'ars',
-      section: 'Hoy',
-    },
-    {
-      id: 'tx-2',
-      title: 'Compra de Cryptos',
-      date: '25 de Septiembre',
-      amount: '+ 7,193689 TRX',
-      isPositive: true,
-      type: 'trx',
-      section: 'Hoy',
-    },
-    {
-      id: 'tx-3',
-      title: 'Compra de Cryptos',
-      date: '24 de Septiembre',
-      amount: '+ 18,93880759 DOGE',
-      isPositive: true,
-      type: 'doge',
-      section: 'Anteriores',
-    },
-    {
-      id: 'tx-4',
-      title: 'Compra de Cryptos',
-      date: '24 de Septiembre',
-      amount: '- 3.000,00 ARS',
-      isPositive: false,
-      type: 'ars',
-      section: 'Anteriores',
-    },
-    {
-      id: 'tx-5',
-      title: 'Compra de Cryptos',
-      date: '24 de Septiembre',
-      amount: '+ 0,0155256 SOL',
-      isPositive: true,
-      type: 'sol',
-      section: 'Anteriores',
-    },
-    {
-      id: 'tx-6',
-      title: 'Compra de Cryptos',
-      date: '24 de Septiembre',
-      amount: '- 3.000,00 ARS',
-      isPositive: false,
-      type: 'ars',
-      section: 'Anteriores',
-    },
-    {
-      id: 'tx-7',
-      title: 'Compra de Cryptos',
-      date: '24 de Septiembre',
-      amount: '- 5.000,00 ARS',
-      isPositive: false,
-      type: 'ars',
-      section: 'Anteriores',
-    },
-  ];
-
-  const transactions = propTransactions && propTransactions.length > 0 ? propTransactions : defaultTransactions;
+  /*
+   * La lista es la que llega, tal cual.
+   *
+   * Antes, cuando no venía nada, esta pantalla fabricaba siete movimientos de
+   * ejemplo —cuatro “Compra de Cryptos”, con fechas de septiembre y
+   * `- 4.000,00 ARS`, `+ 7,193689 TRX`, `+ 18,93880759 DOGE`,
+   * `+ 0,0155256 SOL`— y los pintaba como si fueran de esta persona. El `App`
+   * sembraba otros cuatro más.
+   *
+   * Hoy no hay fuente real de transacciones: `GET /api/portfolio` devuelve
+   * saldos, no movimientos, y la pantalla de cobros sólo conoce lo que la
+   * persona generó ella en el momento. Eso no se rellena con ejemplos: si no
+   * hay nada, la pantalla dice que no hay nada, que es el estado real de una
+   * cuenta nueva.
+   */
+  const transactions = propTransactions ?? [];
 
   const hoyTx = transactions.filter((t) => t.section === 'Hoy');
   const anterioresTx = transactions.filter((t) => t.section === 'Anteriores');
@@ -240,6 +188,23 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
       {/* =========================================================================
           LISTA DE TRANSACCIONES
          ========================================================================= */}
+      {/*
+        Sin movimientos hay una sola respuesta honesta: decirlo. La misma
+        tarjeta blanca del resto de la pantalla, el mismo aire y la misma
+        tipografía; lo que cambia es que no hay filas para rellenar.
+      */}
+      {transactions.length === 0 && (
+        <div className="p-6 bg-white/70 rounded-2xl border border-slate-200/50 shadow-2xs space-y-2">
+          <span className="text-sm font-bold text-black block">
+            Todavía no hay movimientos
+          </span>
+          <span className="text-xs text-slate-500 font-medium block leading-snug">
+            Cuando compres, cobres o pagues, cada movimiento aparece acá con su
+            importe y su estado. Ahora mismo no hay nada que mostrar.
+          </span>
+        </div>
+      )}
+
       <div className="space-y-5">
         {/* SECCIÓN: Hoy */}
         {hoyTx.length > 0 && (
