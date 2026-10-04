@@ -77,6 +77,29 @@ const encodeAddressArgument = (address: string): string => {
   return bare.toLowerCase().padStart(64, '0');
 };
 
+/** El host de un endpoint, sin su ruta ni query: lo unico de una URL externa que es seguro escribir. */
+const hostOf = (url: string): string => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'un endpoint sin URL valida';
+  }
+};
+
+/** Que respondera el endpoint cuando no es JSON: HTML de desafio, vacio, otra cosa. */
+const describeUnparseableBody = async (response: Response): Promise<string> => {
+  let raw: string;
+  try {
+    raw = (await response.clone().text()).slice(0, 120);
+  } catch {
+    return 'a body that cannot be read';
+  }
+  const head = raw.trimStart()[0];
+  if (head === undefined) return 'an empty body';
+  if (head === '<') return 'an HTML page (most likely a bot challenge, not JSON-RPC)';
+  return 'a body that is not JSON-RPC';
+};
+
 /** A JSON-RPC quantity: `0x`-prefixed hex. `BigInt` is the only safe parser. */
 const parseQuantity = (result: unknown): bigint => {
   if (typeof result !== 'string' || !/^0x[0-9a-fA-F]+$/.test(result)) {
@@ -151,16 +174,26 @@ const callOnce = async (
   if (!response.ok) {
       // 429 is a rate limit and 5xx is an outage; both are the endpoint's problem
       // and both mean "no number", which is what the caller has to be told.
-      throw new BalanceReadError('RPC_UNAVAILABLE', `${network} ${method} answered HTTP ${response.status}`);
+      throw new BalanceReadError(
+        'RPC_UNAVAILABLE',
+        `${network} ${method} at ${hostOf(url)} answered HTTP ${response.status}`,
+      );
     }
 
     let body: unknown;
     try {
       body = await response.json();
     } catch (error) {
-      throw new BalanceReadError('RPC_MALFORMED_RESPONSE', `${network} ${method} answered with no JSON`, {
-        cause: error,
-      });
+      // Un endpoint publico puede responder 200 con una pagina de desafio HTML
+      // cuando ve trafico de datacenter. El host y la CLASE del cuerpo bastan
+      // para distinguir eso de un JSON roto, y son lo unico seguro de escribir:
+      // el cuerpo del proveedor no va al log.
+      const kind = await describeUnparseableBody(response);
+      throw new BalanceReadError(
+        'RPC_MALFORMED_RESPONSE',
+        `${network} ${method} at ${hostOf(url)} answered ${response.status} with ${kind}`,
+        { cause: error },
+      );
     }
 
     const payload = body as { error?: unknown; result?: unknown } | null;
@@ -168,7 +201,10 @@ const callOnce = async (
       throw new BalanceReadError('RPC_MALFORMED_RESPONSE', `${network} ${method} answered with no JSON object`);
     }
     if (payload.error !== undefined && payload.error !== null) {
-      throw new BalanceReadError('RPC_REJECTED', `${network} ${method} was rejected by the endpoint`);
+      throw new BalanceReadError(
+        'RPC_REJECTED',
+        `${network} ${method} at ${hostOf(url)} was rejected by the endpoint`,
+      );
     }
 
     return parseQuantity(payload.result);
