@@ -260,6 +260,49 @@ no sean comentarios al servicio de este registro.
 
 **Gate**: un webhook firmado llega y aparece; uno con firma inválida, no.
 
+**Estado: hecho en el backend.** `POST /api/webhooks/privy` y
+`GET /api/notifications`, con `PRIVY_WEBHOOK_SIGNING_SECRET` como quinta variable
+obligatoria (falla cerrada con las otras cuatro).
+
+- **Firma Svix** verificada en `src/domain/webhooks/svixSignature.ts`: contenido
+  firmado `${svix-id}.${svix-timestamp}.${cuerpo crudo}`, clave = secreto sin
+  `whsec_` en base64, HMAC-SHA256 en base64, tolerancia de 5 minutos en **las dos**
+  direcciones. **No se agregó la dependencia `svix`**: el esquema es un HMAC sobre
+  una cadena y Web Crypto ya está en el runtime; la dependencia<Node-oriented`
+  entraría al bundle de workerd, y los tests re-derivan la firma con `node:crypto`
+  para que la implementación se comprueba contra el esquema y no contra sí misma.
+- **Nada sin verificar se guarda.** Sin cabeceras, firma inválida o cuerpo editado
+  tras firmar: `401` y **cero filas**. No existe fila con
+  `signature_valid = false`: la ruta es pública y una fila sin verificar sería una
+  superficie de escritura abierta de la que además lee el feed.
+- **Reintentos**: el duplicado se rechaza por `external_id`
+  (`UNIQUE (source, external_id)` + `ON CONFLICT DO NOTHING`) y responde **200 con
+  cuerpo vacío**. Un timestamp viejo se rechaza como `STALE`. Son dos defensas
+  distintas: la relojera no depende de la base y la deduplicación no depende de la
+  ventana de 5 minutos.
+- **Feed por persona**: misma cookie de sesión que el resto, orden reciente primero,
+  tope de 50, `eventType`/`category`/`message`/`createdAt`, **sin payload**. Un
+  `event_type` desconocido produce una frase usable (`Se recibió un evento de tu
+  cuenta.`, categoría `other`) en `src/domain/webhooks/eventDescription.ts`: nunca
+  en blanco, nunca inventando qué pasó, nunca descartado en silencio.
+- **Sin columna de atribución.** La tabla no se tocó: el feed filtra con
+  `payload @> …` y el índice GIN de `payload` puede servirlo (`jsonb_ops` tiene la
+  estrategia 7 = `@>`, verificado en el catálogo). Una columna `privy_did` sería
+  una copia de un dato que ya está en `payload`, escrita por la misma extracción
+  que hace falta igual, y las dos podrían contradecirse.
+- **Sin efectos secundarios**: ni trabajo de wallet, ni push, ni `processed_at`.
+
+Lo que quedó demostrado por test: 236 tests verdes (antes 157), `tsc --noEmit`
+limpio y `dist-worker.js` construido. Contratos, mapeo y decisión de atribución en
+`07.PockBackend/README.md`.
+
+Lo que **no** quedó demostrado: nada se probó contra la base real (la tabla tiene 0
+filas y no se escribió ninguna), ni contra una entrega real de Privy, ni contra
+una sesión real autenticada. `wrangler.jsonc` sigue listando cuatro secretos en su
+comentario y hay que agregarle el quinto; queda pendiente porque esa superficie no
+era editable en esta tarea. La UI (consumo de `GET /api/notifications`) no se tocó:
+su superficie no estaba autorizada acá.
+
 ### T5 — Aave en Monad, con dirección verificada
 
 - **Primer paso, bloqueante: derivar el pool desde la fuente oficial de Aave para

@@ -26,9 +26,12 @@ import { PrivyClient } from '@privy-io/node';
 import { mintSession } from './application/session/mintSession';
 import { readPortfolio } from './application/portfolio/readPortfolio';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
+import { ingestPrivyWebhook } from './application/webhooks/ingestPrivyWebhook';
+import { readNotifications } from './application/webhooks/readNotifications';
 import { createDatabase, readEnv } from './infrastructure/db/client';
 import { createPostgresUserStore } from './infrastructure/db/userStore.pg';
 import { createPostgresWalletStore } from './infrastructure/db/walletStore.pg';
+import { createPostgresWebhookEventStore } from './infrastructure/db/webhookEventStore.pg';
 import { createPrivyTokenVerifier } from './infrastructure/privy/privyTokenVerifier';
 import { createPrivyUserDirectory } from './infrastructure/privy/privyUserDirectory';
 import { createPrivyWalletOwnershipVerifier } from './infrastructure/privy/privyWalletOwnershipVerifier';
@@ -46,6 +49,13 @@ export interface Config {
   readonly privyAppSecret: string;
   readonly databaseUrl: string;
   readonly sessionSecret: string;
+  /**
+   * The Privy webhook signing secret. Required, and it fails closed with the
+   * other identities: without it the intake cannot tell a delivery from an
+   * anonymous write, and a Worker that accepts both is worse than a Worker with
+   * no intake at all.
+   */
+  readonly privyWebhookSigningSecret: string;
   /**
    * Optional: the endpoints the balance reads use. They have defaults that were
    * verified by hand, so a missing variable is **not** a startup failure here —
@@ -65,6 +75,7 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
     privyAppSecret: readEnv(env, 'PRIVY_APP_SECRET'),
     databaseUrl: readEnv(env, 'DATABASE_URL'),
     sessionSecret: readEnv(env, 'SESSION_SECRET'),
+    privyWebhookSigningSecret: readEnv(env, 'PRIVY_WEBHOOK_SIGNING_SECRET'),
   };
 
   const missing = Object.entries(required)
@@ -93,6 +104,7 @@ export const buildApp = (config: Config, log: Logger) => {
   const directory = createPrivyUserDirectory(privy);
   const ownership = createPrivyWalletOwnershipVerifier(privy);
   const walletStore = createPostgresWalletStore(db);
+  const webhookEvents = createPostgresWebhookEventStore(db);
   const sessions = createJwtSessionCodec({ secret: config.sessionSecret });
 
   /*
@@ -124,6 +136,14 @@ export const buildApp = (config: Config, log: Logger) => {
     sessions,
     // The same wallet store the claim writes through, read through.
     readPortfolio: readPortfolio({ wallets: walletStore, evm, solana, log }),
+    // Intake and feed share one store: one write path and one read path over the
+    // same rows, so "the feed shows what arrived" is a property of the wiring.
+    ingestWebhook: ingestPrivyWebhook({
+      store: webhookEvents,
+      signingSecret: config.privyWebhookSigningSecret,
+      log,
+    }),
+    readNotifications: readNotifications({ store: webhookEvents, log }),
     log,
   });
 };

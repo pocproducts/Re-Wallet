@@ -18,6 +18,8 @@ import { Hono } from 'hono';
 import type { MintSession } from '../../application/session/mintSession';
 import type { ReadPortfolio } from '../../application/portfolio/readPortfolio';
 import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
+import type { IngestPrivyWebhook } from '../../application/webhooks/ingestPrivyWebhook';
+import type { ReadNotifications } from '../../application/webhooks/readNotifications';
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 import type { SessionCodec } from '../../domain/ports/session-codec';
@@ -25,8 +27,10 @@ import type { TokenVerifier } from '../../domain/ports/token-verifier';
 import { SESSION_COOKIE_NAME } from './cookie';
 import { createAuthRoutes } from './routes/auth';
 import { createDiagnosticsRoutes } from './routes/diagnostics';
+import { createNotificationsRoutes } from './routes/notifications';
 import { createPortfolioRoutes } from './routes/portfolio';
 import { createWalletsRoutes } from './routes/wallets';
+import { createWebhookRoutes } from './routes/webhooks';
 
 export interface AppDeps {
   readonly mint: MintSession;
@@ -36,6 +40,9 @@ export interface AppDeps {
   readonly claim?: ClaimWalletsFor;
   /** Absent when no chain readers are wired: the route is then not there. */
   readonly readPortfolio?: ReadPortfolio;
+  /** Absent when no signing secret is wired: the intake is then not there. */
+  readonly ingestWebhook?: IngestPrivyWebhook;
+  readonly readNotifications?: ReadNotifications;
   readonly cookieName?: string;
   readonly now?: () => Date;
   readonly log?: Logger;
@@ -89,6 +96,32 @@ export const createApp = (deps: AppDeps) => {
       createPortfolioRoutes({
         sessions: deps.sessions,
         readPortfolio: deps.readPortfolio,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
+  /*
+   * The webhook intake and the feed it feeds are mounted as one pair. The intake
+   * exists only to have rows for the feed to read, so a deployment with one
+   * without the other is half a feature rather than a smaller one.
+   *
+   * The intake has no cookie: its credential is the Svix signature. What is
+   * *not* mounted without it is an endpoint that would accept anything anybody on
+   * the internet sends.
+   */
+  if (deps.ingestWebhook) {
+    app.route('/api/webhooks/privy', createWebhookRoutes({ ingest: deps.ingestWebhook, now: deps.now, log }));
+  }
+
+  if (deps.readNotifications) {
+    app.route(
+      '/api/notifications',
+      createNotificationsRoutes({
+        sessions: deps.sessions,
+        readNotifications: deps.readNotifications,
         cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
         now: deps.now,
         log,

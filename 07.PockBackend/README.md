@@ -20,17 +20,17 @@ are never in the repository, in the build, in the bundle, or in a `dist-worker.j
 anybody can read.
 
 **So this project has no `.env` and this README is the setup documentation instead.**
-The four variables below are set on the Worker itself with `wrangler secret put`.
+The five variables below are set on the Worker itself with `wrangler secret put`.
 Nothing needs to be created, copied or filled in locally to run the tests, the build
 or the type checker.
 
 > `05. UI-UX/.env` does exist and is a different matter: it holds `VITE_PRIVY_APP_ID`,
-> which is a **public** identifier that is meant to reach the browser. The four
+> which is a **public** identifier that is meant to reach the browser. The five
 > variables below are not, and none of them may ever be placed in a frontend bundle.
 
 ---
 
-## The four required variables
+## The five required variables
 
 None of these is optional. The Worker **fails closed at boot** if any is missing —
 `readConfig` in `src/container.ts` throws before the first request — because a Worker
@@ -43,8 +43,9 @@ healthy and then rejects everybody, or writes to the wrong place.
 | `PRIVY_APP_SECRET` | The server-side credential for that Privy application. It authorises every call this Worker makes to Privy: verifying tokens and reading user records — including the wallets a person owns. It no longer mints wallets. | Full control of the Privy app: read and write every user, and read every wallet they own. |
 | `DATABASE_URL` | The Postgres connection string for the Neon database holding the `rewallet` schema. It carries the database user and its password. | Read and write the entire database, including every user's email, DID, wallets and balances. |
 | `SESSION_SECRET` | The key that signs and verifies the session cookie. It is the only thing standing between a forged cookie and somebody else's account. | Forge a session cookie for any `userId` and walk into that account. |
+| `PRIVY_WEBHOOK_SIGNING_SECRET` | The key Privy's webhooks are signed with (the Svix `svix-*` scheme). It is the **only** credential on `POST /api/webhooks/privy`: that route has no session and no cookie. | Sign any payload as Privy: write rows into `rewallet.webhook_events` with `signature_valid = true`, attributed to whichever DID the payload names, and therefore into that person's notification feed. |
 
-**None of the four ever goes into the frontend.** They are Worker secrets: they are
+**None of the five ever goes into the frontend.** They are Worker secrets: they are
 set per-Worker, they arrive in the `env` parameter of `fetch`, and the built bundle
 never contains them — `dist-worker.js` reads them at request time through
 `readConfig({ ...process.env, ...env })`. `PRIVY_APP_ID` appears in the browser, but
@@ -77,6 +78,12 @@ npx wrangler secret put DATABASE_URL
 # It must be identical across every deployment of this Worker, or sessions issued by
 # the previous deployment stop verifying — which logs everybody out, by design.
 npx wrangler secret put SESSION_SECRET
+
+# The webhook signing secret Privy signs its webhooks with.
+# Privy Dashboard → Settings → Webhooks → the signing secret of the endpoint
+# (it starts with `whsec_`). Changing it invalidates deliveries in flight, so
+# Svix's rotation (send the old and the new in `svix-signature`) is the safe path.
+npx wrangler secret put PRIVY_WEBHOOK_SIGNING_SECRET
 ```
 
 To see the **names** that are set (never their values):
@@ -104,7 +111,7 @@ Run everything from `07.PockBackend`.
 npm install
 ```
 
-The only values the toolchain needs are the four above, and only for commands that
+The only values the toolchain needs are the five above, and only for commands that
 talk to Cloudflare. Install, build, typecheck and test all run without any of them.
 
 ### Build
@@ -432,7 +439,7 @@ third must never be mistaken for a zero, which is why it has its own name.
 
 ### Optional variables
 
-Unlike the four above, these have working defaults and are **not** required to boot:
+Unlike the five above, these have working defaults and are **not** required to boot:
 `MONAD_RPC_URL`, `ETHEREUM_RPC_URL`, `SOLANA_RPC_URL`. They exist so a deployment
 can point at a provider of its own — a public RPC rate-limits, and a rate limit
 should show up as a per-chain error, not as a Worker that cannot boot.
@@ -444,17 +451,151 @@ resolved for **any** chain and there is no per-chain truth to report. Answering 
 would mean reporting all three chains as `no_wallet`, which is a lie about somebody's
 account. Every other failure is a per-chain `status`, not an HTTP status.
 
+## `POST /api/webhooks/privy` and `GET /api/notifications` — what arrived, in sentences
+
+One intake, one feed, and nothing in between: **no background processing, no
+retries, no side effects.** The intake stores; the feed reads. No wallet work, no
+push, and `processed_at` is never written — that column is for a consumer that
+does not exist yet, and setting it would claim something was processed.
+
+### `POST /api/webhooks/privy`
+
+```
+POST /api/webhooks/privy
+svix-id: msg_…
+svix-timestamp: 1748779200
+svix-signature: v1,<base64 HMAC-SHA256>
+
+200  — stored, or already on file. Empty body.
+400  — signed, but the body is not a webhook this Worker understands. Nothing stored.
+401  — no signature, a malformed one, a stale timestamp, or a wrong one. Nothing stored.
+```
+
+**The signature scheme** (Svix, the delivery provider behind Privy webhooks). The
+signed content is the message id, the timestamp and the **raw body** joined with
+dots; the key is `PRIVY_WEBHOOK_SIGNING_SECRET` with `whsec_` stripped and the
+rest base64-decoded; the result is HMAC-SHA256, base64 encoded. The header may
+carry several space-separated `v1,…` values and any one matching is enough, which
+is what makes a key rotation work.
+
+**The freshness rule** is Svix's own: five minutes
+(`DEFAULT_SIGNATURE_TOLERANCE_SECONDS`), compared in **both** directions, so a
+timestamp from the future is stale too. The timestamp is inside the signed
+content, so a captured request cannot be re-stamped without the secret.
+
+**Freshness and replay are two different defences, and both are here.**
+
+- An **old timestamp** is refused as `401 WEBHOOK_SIGNATURE_STALE`. Nothing is
+  stored.
+- A **replay with a fresh signature** is refused by `external_id`: the row already
+  exists, `ON CONFLICT (source, external_id) DO NOTHING` writes nothing, and the
+  route answers **200 with an empty body**. That is deliberate. Privy retries until
+  it gets a 2xx; the delivery *was* honoured, the event is already on file, and a
+  4xx would start a retry loop against an event this Worker already has.
+
+**Why nothing unverified is ever stored, not even "for observability":** this route
+has no session and is reachable by anybody on the internet. Storing a payload the
+signature did not vouch for turns a public endpoint into an open write surface,
+and the feed — which a person trusts — reads from exactly that table. There is no
+row with `signature_valid = false`: rejection is the whole answer.
+
+**Why the `svix` package was not added.** The scheme is one HMAC over one string
+plus one base64 decode, and Web Crypto is already in the runtime. `svix` pulls
+Node-oriented dependencies into a `platform: 'neutral'` workerd bundle, and
+`build.mjs` keeps its Node-builtin list deliberately short so a dependency cannot
+smuggle in a second crypto implementation. `test/domain/svixSignature.test.ts`
+re-derives every signature with `node:crypto`, so the implementation is checked
+against the scheme and not against itself. **No dependency was added.**
+
+### `GET /api/notifications`
+
+Same door as every other route: the session cookie, the same codec, the same 401.
+The person is the DID from the session claims; there is no query parameter, path
+segment or header that can name somebody else.
+
+```json
+{ "generatedAt": "2025-06-01T12:00:00.000Z",
+  "notifications": [
+    { "id": "…", "eventType": "wallet.created", "category": "wallet",
+      "message": "Se creó una billetera nueva en tu cuenta.",
+      "createdAt": "2025-06-01T11:00:00.000Z" } ] }
+```
+
+Newest first, at most **50** items (`NOTIFICATIONS_PAGE_SIZE`). **No payload in
+the item, and no way to ask for one:** a Privy payload carries a DID, an address
+and a wallet id that the UI has no use for. The row stays in the table.
+
+`502 NOTIFICATIONS_UNAVAILABLE` when the rows cannot be read: an empty list is a
+claim ("you have no notifications"), and a failed read is not that claim.
+
+### The `event_type` → sentence mapping
+
+One table, in `src/domain/webhooks/eventDescription.ts`:
+
+| `event_type` | Sentence | Category |
+|---|---|---|
+| `user.created` | Se creó tu cuenta en ReWALLET. | `account` |
+| `user.updated` | Se actualizaron los datos de tu cuenta. | `account` |
+| `user.deleted` | Se eliminó tu cuenta. | `account` |
+| `user.signed_in` | Iniciaste sesión en ReWALLET. | `security` |
+| `user.auth_recovered` | Recuperaste el acceso a tu cuenta. | `security` |
+| `wallet.created` | Se creó una billetera nueva en tu cuenta. | `wallet` |
+| `wallet.deleted` | Se eliminó una billetera de tu cuenta. | `wallet` |
+| `linked_account.created` | Conectaste un método de acceso a tu cuenta. | `link` |
+| `linked_account.deleted` | Desconectaste un método de acceso de tu cuenta. | `link` |
+| **anything else** | **Se recibió un evento de tu cuenta.** (`category: other`) | `other` |
+
+The fallback states one true thing and invents nothing: not the type, not a chain,
+not a success. Privy adds event types without asking, and a blank line renders as a
+broken row while a dropped event is an event that never happened as far as the
+person is concerned. Keys match exactly: `USER.CREATED` is not `user.created`,
+because guessing at case would mean two names for one event.
+
+### Events that belong to nobody
+
+Stored, and shown to nobody. Privy sends app-level events, and an event that cannot
+be attributed to a person is a **normal** case, not an error. Attribution reads a
+fixed list of paths — `user_did`, `user.id`, `object.user_did`, `object.user.id`,
+`wallet.user_did` — and only values shaped like `did:privy:…`. A DID *mentioned*
+in a payload (`invited_by`) is not attributed: that would put one person's event
+in another person's feed.
+
+### Why no attribution column was added
+
+**The table was not touched.** The feed filters on `payload @> …`, one containment
+per path in the list above, and `idx_webhook_events_payload` is a GIN index on
+`payload` — verified in the catalog: `jsonb_ops` has strategy 7 = `@>`, so the
+index can serve the predicate. At the POC's scale the planner picks a sequential
+scan anyway (the table has 0 rows today), and the cost of getting this wrong is
+bounded: one person sees fewer notifications, never another person's.
+
+A `privy_did` column would have been a copy of a fact already inside `payload`,
+written by the same extraction that has to exist anyway, and the two could
+disagree — an extraction bug would then hide events the payload clearly attributes.
+The same list of paths builds the SQL and the attribution, so writing and reading
+cannot drift apart.
+
+The risk this leaves, stated plainly: if Privy changes the shape of a user object,
+events stop being attributed and silently stay out of every feed. That is visible
+in two places — `webhook.privy stored` in the logs, and
+`SELECT count(*) FROM rewallet.webhook_events WHERE NOT (payload @> …)`. The fix,
+if it ever comes, is one idempotent `ADD COLUMN IF NOT EXISTS` in `sql/` plus one
+condition in the adapter, not a redesign.
+
 ## Layout
 
 ```
 src/
   domain/ports/        the interfaces: what the application needs, in our words
-  application/         the use cases: session minting, wallet claiming, portfolio reads
+  domain/webhooks/     the signature scheme, the event→sentence table, attribution
+  application/         the use cases: session minting, wallet claiming, portfolio
+                       reads, webhook intake, notification feed
   infrastructure/      the adapters: Privy, Postgres, JWT, JSON-RPC balance reads
   interface/http/      Hono: routes, cookies, the error boundary
   container.ts         reads config, builds adapters, wires the app
   index.ts             the Worker's `fetch`
 test/                  mirrors src, with every port stubbed
+sql/                   idempotent migrations for tables this project added to
 build.mjs              the esbuild build that produces dist-worker.js
 wrangler.jsonc         name, main, routes, assets, compatibility flags, secrets note
 ```
