@@ -6,7 +6,6 @@ import {
   Copy,
   Check,
   ChevronDown,
-  ChevronUp,
   Share2,
   Eye,
   EyeOff,
@@ -24,6 +23,12 @@ import {
 import confetti from 'canvas-confetti';
 import { AssetTradeCard } from '../common';
 import { useAssetTrade } from '../../hooks/useAssetTrade';
+import type { DepositInfoView } from '../../hooks/useDepositInfo';
+import { assetOn, isEvmNetwork, truncateAddress, type DepositNetworkView } from '../../services/depositInfo';
+import type { DepositChainId } from '../../types/deposit.types';
+import { formatScaledTrimmed, toScaled } from '../../services/portfolio';
+import type { PortfolioHolding } from '../../services/portfolio';
+import { identityOf } from '../../services/portfolioIdentity';
 
 export type ActionModalType = 'depositar' | 'usar' | 'enviar' | null;
 
@@ -31,18 +36,45 @@ interface ActionFlowModalProps {
   action: ActionModalType;
   onClose: () => void;
   userTag: string;
+  /**
+   * El catálogo de depósito y las direcciones de esta persona.
+   *
+   * Viene de `GET /api/deposit-info`. El modal **no** trae ninguna lista propia de
+   * redes ni de activos: antes tenía `Bnb Chain (BEP20)` escrita a mano, nueve
+   * redes más y un catálogo mock, y ninguna dirección. Todo eso ahora es la
+   * respuesta del servidor.
+   */
+  depositInfo: DepositInfoView;
+  /**
+   * Los saldos que ya leyó `GET /api/portfolio`.
+   *
+   * El catálogo de depósito **no** trae saldos —son preguntas distintas— así que
+   * la cifra de un activo sale de acá, y cuando no hay lectura la pantalla dice
+   * que no pudo leer en lugar de pintar un cero.
+   */
+  holdings: readonly PortfolioHolding[];
 }
 
 export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   action,
   onClose,
   userTag,
+  depositInfo,
+  holdings,
 }) => {
   // Estado del flujo
   const [currentStep, setCurrentStep] = useState<string>('initial'); // 'initial' = pantalla lima
   const [selectedCoin, setSelectedCoin] = useState<string>('USDC');
-  const [selectedNetwork, setSelectedNetwork] = useState<string>('Bnb Chain (BEP20)');
-  const [showAllNetworks, setShowAllNetworks] = useState(false);
+  /**
+   * La red elegida, como `chain` del catálogo —no como su nombre.
+   *
+   * Antes era el texto `'Bnb Chain (BEP20)'`: un nombre de red escrito a mano,
+   * que no significaba nada para la billetera que la persona tenía. Ahora es la
+   * clave del catálogo, y la dirección sale de **esa** fila.
+   */
+  const [selectedNetwork, setSelectedNetwork] = useState<DepositChainId | null>(null);
+  /** De qué lista de entrada se eligió el activo: cripto o dólares. */
+  const [depoSource, setDepoSource] = useState<'crypto' | 'dollars'>('crypto');
   const [destinationAddress, setDestinationAddress] = useState('');
   const [cryptoSearch, setCryptoSearch] = useState('');
   const [copied, setCopied] = useState(false);
@@ -84,7 +116,8 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       setLemontagSearch('');
       setSelectedRecipient(null);
       setSendSuccess(false);
-      setShowAllNetworks(false);
+      setSelectedNetwork(null);
+      setDepoSource('crypto');
       setSheetSide(null);
     }
   }, [action]);
@@ -105,6 +138,95 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   const openSell = () => {
     setKeypadAmount('0');
     setCurrentStep('use_sell');
+  };
+
+  /* =========================================================================
+     DEPÓSITO: TODO LO QUE VIENE DE `/api/deposit-info`
+     ========================================================================= */
+
+  /** La red elegida, ya busca en el catálogo. `null` mientras no se eligió. */
+  const depositNetwork: DepositNetworkView | null =
+    selectedNetwork === null
+      ? null
+      : (depositInfo.networks.find((network) => network.chain === selectedNetwork) ?? null);
+
+  /** El activo elegido en la red elegida. `null` si esa red no lo sirve. */
+  const depositAsset = depositNetwork === null ? null : assetOn(depositNetwork, selectedCoin);
+
+  /**
+   * La dirección de esta persona en la red elegida, o `null` si todavía no se
+   * sabe. Un `const` a propósito: el estrechamiento de `null` a `string` se
+   * conserva dentro de los manejadores, y ningún botón de copiar tiene que
+   * repetir un chequeo que ya está hecho.
+   */
+  const depositAddress: string | null = depositNetwork === null ? null : depositNetwork.address;
+
+  /** El saldo de esta persona para `chain:symbol`, si el portfolio lo leyó. */
+  const holdingOf = (chain: DepositChainId, symbol: string): PortfolioHolding | null =>
+    holdings.find((holding) => holding.chain === chain && holding.symbol === symbol) ?? null;
+
+  /**
+   * El saldo de un activo en todas las redes donde se puede leer, exacto.
+   *
+   * `null` significa **"no lo sé"**, y la pantalla lo dice. Nunca devuelve `0`
+   * por una cadena que no se pudo leer: un cero ahí se ve igual que una
+   * billetera vacía, y son dos verdades opuestas.
+   *
+   * La suma es con `bigint` sobre los `amount` textuales del backend —la misma
+   * aritmética de `services/portfolio`—, así que 6 decimales con 18 no pierden
+   * ni inventan un dígito.
+   */
+  const assetBalanceLabel = (symbol: string): string | null => {
+    const networks = depositInfo.assets.find((asset) => asset.symbol === symbol)?.networks ?? [];
+    const readable = networks.filter((network) => assetOn(network, symbol)?.balanceReadable === true);
+
+    // Nadie sabe leerlo en ninguna red: es un activo recibible sin cifra.
+    if (readable.length === 0) return null;
+
+    const found = readable.map((network) => holdingOf(network.chain, symbol));
+    // Una red legible sin holding es una cadena que no se pudo leer: el total no existe.
+    if (found.some((holding) => holding === null)) return null;
+
+    const known = found.filter((holding): holding is PortfolioHolding => holding !== null);
+    const scale = known.reduce((max, holding) => Math.max(max, holding.decimals), 0);
+    const total = known.reduce((sum, holding) => sum + toScaled(holding.amount, holding.decimals, scale), 0n);
+
+    return formatScaledTrimmed(total, scale);
+  };
+
+  /** Las redes del catálogo donde este activo se puede recibir. */
+  const networksForCoin = (symbol: string): readonly DepositNetworkView[] =>
+    depositInfo.networks.filter((network) => assetOn(network, symbol) !== null);
+
+  /** `"Monad y Ethereum"`, o `"Monad"`. Los nombres salen del backend. */
+  const joinNetworkLabels = (labels: readonly string[]): string => {
+    if (labels.length === 0) return '';
+    if (labels.length === 1) return labels[0];
+    return `${labels.slice(0, -1).join(', ')} y ${labels[labels.length - 1]}`;
+  };
+
+  /** ¿Hay más de una red EVM en el catálogo? Así vale la pena explicar la regla. */
+  const evmNetworkLabels = depositInfo.networks.filter(isEvmNetwork).map((network) => network.label);
+
+  /** Abrir la lista de redes de un activo, guardando de qué lista se viene. */
+  const chooseCoin = (symbol: string, source: 'crypto' | 'dollars'): void => {
+    setSelectedCoin(symbol);
+    setSelectedNetwork(null);
+    setDepoSource(source);
+
+    /*
+     * Un activo que vive en **una sola** red no hace falta que se pregunte: se va
+     * directo a la dirección de esa red. Preguntar "¿cuál?" cuando hay una sola
+     * respuesta es una pantalla de más.
+     */
+    const receivable = networksForCoin(symbol).filter((network) => network.address !== null);
+    if (receivable.length === 1 && receivable[0] !== undefined) {
+      setSelectedNetwork(receivable[0].chain);
+      setCurrentStep('depo_qr_result');
+      return;
+    }
+
+    setCurrentStep('depo_network_select');
   };
 
   if (!action) return null;
@@ -487,6 +609,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             </div>
 
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
+              {/*
+                Monedas que el camino de "dólares" ofrece. USDC está en el
+                catálogo; USDT y USDS todavía no, y no se los inventa: si se
+                elige una, la pantalla siguiente lo dice con las alternativas
+                reales en lugar de abrir una lista de redes que no existen.
+              */}
               {[
                 { symbol: 'USDC', name: 'USDC', bg: 'bg-[#2775CA]', icon: '$' },
                 { symbol: 'USDT', name: 'USDT', bg: 'bg-[#26A17B]', icon: '₮' },
@@ -494,10 +622,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               ].map((coin) => (
                 <div
                   key={coin.symbol}
-                  onClick={() => {
-                    setSelectedCoin(coin.symbol);
-                    setCurrentStep('depo_network_select');
-                  }}
+                  onClick={() => chooseCoin(coin.symbol, 'dollars')}
                   className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
                 >
                   <div className="flex items-center gap-3.5">
@@ -519,13 +644,23 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       )}
 
       {/* =====================================================================
-          FLUJO DEPOSITAR DÓLARES: PASO 3 (IMG_4526.PNG, IMG_4528.PNG)
+          DEPÓSITO: PASO "RED" — las redes del catálogo donde el activo se puede
+          recibir.
+
+          Antes esta pantalla tenía cuatro redes "más usadas" y nueve en un
+          desplegable, todas escritas a mano: BNB, Polygon, Ethereum, Solana,
+          Arbitrum, Base, CELO, ZKsync… Ninguna decía nada de esta billetera, y
+          elegir una no cambiaba nada porque la dirección que venía después era
+          siempre la misma y estaba escrita a mano también.
+
+          Ahora la lista es la del backend y cada fila dice la verdad de esa red
+          para esta persona: o tiene una dirección, o no la tiene y se lo dice.
          ===================================================================== */}
       {currentStep === 'depo_network_select' && (
         <div className="flex-1 flex flex-col h-full overflow-y-auto">
           <div className="p-4 pt-5">
             <button
-              onClick={() => setCurrentStep('depo_coin_select')}
+              onClick={() => setCurrentStep(depoSource === 'crypto' ? 'depo_crypto_list' : 'depo_coin_select')}
               type="button"
               className="w-11 h-11 rounded-full bg-white flex items-center justify-center text-black shadow-2xs cursor-pointer"
             >
@@ -535,124 +670,112 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
 
           <div className="px-5 pb-6 space-y-4 max-w-md mx-auto w-full">
             <h1 className="text-2xl font-black font-display text-black tracking-tight leading-tight">
-              Elegí por qué red vas a depositar {selectedCoin}
+              Elegí en qué red vas a depositar {selectedCoin}
             </h1>
 
-            {/* Card $lemontag */}
-            <div
-              onClick={() => setCurrentStep('depo_qr_result')}
-              className="p-4 bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
-            >
-              <div className="flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-sm shadow-xs">
-                  💬
-                </div>
-                <div>
-                  <span className="text-sm font-extrabold text-black block">
-                    $ReTag
-                  </span>
-                  <span className="text-xs text-slate-500 font-medium block leading-tight">
-                    Recibí criptomonedas de tus amigos que utilizan ReWALLET. ¡Es instantáneo y gratuito!
-                  </span>
-                </div>
+            {depositInfo.status === 'loading' && (
+              <p className="text-sm text-slate-500 font-medium">Buscando en qué redes podés recibir…</p>
+            )}
+
+            {/*
+              Un activo que el catálogo no sirve. Se lo dice sin inventar redes:
+              antes, elegir USDS abría la lista de BNB y Ethereum y terminaba en
+              una dirección que no era de nadie.
+            */}
+            {depositInfo.status === 'ready' && networksForCoin(selectedCoin).length === 0 && (
+              <div className="bg-white rounded-3xl border border-slate-200/80 p-5 space-y-1.5">
+                <p className="text-sm font-bold text-black">
+                  Todavía no podemos recibir {selectedCoin}.
+                </p>
+                <p className="text-xs text-slate-500 font-medium leading-snug">
+                  Las redes y los activos que ReWALLET soporta hoy salen de{' '}
+                  {joinNetworkLabels(depositInfo.assets.map((asset) => asset.name))}. Depositá{' '}
+                  {depositInfo.assets.map((asset) => asset.symbol).join(' o ')} y te lo acreditamos.
+                </p>
               </div>
-              <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5] shrink-0" />
-            </div>
+            )}
 
-            {/* Sección: Más usadas */}
-            <div className="space-y-2 pt-2">
-              <span className="text-xs font-bold text-slate-400 font-display uppercase tracking-wider px-1">
-                Más usadas
-              </span>
-
-              <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
-                {[
-                  { name: 'Bnb Chain (BEP20)', sub: 'Red nativa de Binance', bg: 'bg-[#F3BA2F]', icon: '❖' },
-                  { name: 'Polygon', sub: 'Red nativa de MATIC', bg: 'bg-[#8247E5]', icon: '⬡' },
-                  { name: 'Ethereum (ERC20)', sub: 'Red nativa de Ethereum', bg: 'bg-[#627EEA]', icon: 'Ξ' },
-                  { name: 'Solana', sub: 'Red nativa de Solana', bg: 'bg-black text-[#14F195]', icon: '◎' },
-                ].map((net) => (
-                  <div
-                    key={net.name}
-                    onClick={() => {
-                      setSelectedNetwork(net.name);
-                      setCurrentStep('depo_qr_result');
-                    }}
-                    className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
-                  >
-                    <div className="flex items-center gap-3.5">
-                      <div className={`w-10 h-10 rounded-full ${net.bg} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}>
-                        {net.icon}
-                      </div>
-                      <div>
-                        <span className="text-sm font-bold text-black block">{net.name}</span>
-                        <span className="text-xs text-slate-400 font-medium">{net.sub}</span>
-                      </div>
-                    </div>
-                    <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
-                  </div>
-                ))}
+            {depositInfo.status === 'error' && (
+              <div className="bg-white rounded-3xl border border-slate-200/80 p-5 space-y-1.5">
+                <p className="text-sm font-bold text-black">No pudimos leer tus direcciones.</p>
+                <p className="text-xs text-slate-500 font-medium leading-snug">
+                  Sin la dirección real de esta persona no hay a dónde recibir, así que no te
+                  mostramos ninguna red. Probá de nuevo en un momento.
+                </p>
               </div>
-            </div>
+            )}
 
-            {/* Sección: Otras redes desplegable */}
-            <div className="space-y-2 pt-1">
-              <span className="text-xs font-bold text-slate-400 font-display uppercase tracking-wider px-1">
-                Otras redes
-              </span>
+            {/* Sólo las redes del catálogo donde este activo existe. */}
+            {networksForCoin(selectedCoin).map((network) => {
+              const asset = assetOn(network, selectedCoin);
+              const identity = identityOf(selectedCoin);
+              const receivable = network.address !== null;
 
-              <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setShowAllNetworks(!showAllNetworks)}
-                  className="w-full p-4 flex items-center justify-between hover:bg-slate-50 transition-colors text-left"
+              return (
+                <div
+                  key={network.chain}
+                  onClick={() => {
+                    if (!receivable || asset === null) return;
+                    setSelectedNetwork(network.chain);
+                    setCurrentStep('depo_qr_result');
+                  }}
+                  className={
+                    receivable
+                      ? 'p-4 bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors'
+                      : 'p-4 bg-slate-100 rounded-3xl border border-slate-200/80 flex items-center justify-between'
+                  }
                 >
-                  <span className="text-sm font-bold text-black">Ver todas las redes (9)</span>
-                  {showAllNetworks ? (
-                    <ChevronUp className="w-4 h-4 text-slate-400 stroke-[2.5]" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-slate-400 stroke-[2.5]" />
-                  )}
-                </button>
-
-                {showAllNetworks && (
-                  <div className="divide-y divide-slate-100 border-t border-slate-100">
-                    {[
-                      { name: 'Arbitrum', sub: 'Red L2 de Ethereum' },
-                      { name: 'Avax C-Chain', sub: 'Red nativa de Avalanche' },
-                      { name: 'Base', sub: 'Red L2 de Ethereum' },
-                      { name: 'CELO', sub: 'Red nativa de Celo' },
-                      { name: 'Monad', sub: 'Red Monad' },
-                      { name: 'Optimism', sub: 'Red L2 de Ethereum' },
-                      { name: 'Stellar', sub: 'Red Stellar' },
-                      { name: 'World Chain', sub: 'Red Worldchain' },
-                      { name: 'ZKsync Era', sub: 'Red L2 de Ethereum' },
-                    ].map((net) => (
-                      <div
-                        key={net.name}
-                        onClick={() => {
-                          setSelectedNetwork(net.name);
-                          setCurrentStep('depo_qr_result');
-                        }}
-                        className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
-                      >
-                        <div>
-                          <span className="text-sm font-bold text-black block">{net.name}</span>
-                          <span className="text-xs text-slate-400 font-medium">{net.sub}</span>
-                        </div>
-                        <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
-                      </div>
-                    ))}
+                  <div className="flex items-center gap-3.5">
+                    <div
+                      className={`w-10 h-10 rounded-full ${identity?.iconBg ?? 'bg-slate-300'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
+                    >
+                      {identity?.glyph ?? network.label.slice(0, 1)}
+                    </div>
+                    <div>
+                      <span className="text-sm font-bold text-black block">{network.label}</span>
+                      <span className="text-xs text-slate-400 font-medium block leading-tight">
+                        {/*
+                          Sin billetera no hay adónde recibir. Se lo dice en la fila, no
+                          se oculta la fila: una red que desaparece sin explicación
+                          parece un producto roto.
+                        */}
+                        {receivable
+                          ? `Recibís en esta dirección de ${network.label}`
+                          : `No tenés una billetera en ${network.label}`}
+                      </span>
+                    </div>
                   </div>
-                )}
-              </div>
-            </div>
+                  {receivable ? (
+                    <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5] shrink-0" />
+                  ) : (
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 shrink-0">
+                      Sin destino
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+
+            {/*
+              La lista es la de la app, y se dice. Antes la pantalla insinuarba
+              nueve redes y ninguna era de esta billetera.
+            */}
+            {depositInfo.status === 'ready' && networksForCoin(selectedCoin).length > 0 && (
+              <p className="text-xs text-slate-500 font-medium leading-relaxed px-1">
+                Éstas son todas las redes en las que ReWALLET puede recibir {selectedCoin} hoy.
+              </p>
+            )}
           </div>
         </div>
       )}
 
       {/* =====================================================================
-          FLUJO DEPOSITAR DÓLARES: PASO 4 (IMG_4523.PNG, IMG_4524.PNG) QR FINAL
+          DEPÓSITO: PASO "DIRECCIÓN" — el activo, la red y la dirección pegados.
+
+          La fila de la red y la fila de la dirección están en la misma tarjeta,
+          y el aviso de "otra red = fondos perdidos" va debajo de las dos. La
+          dirección real viene de `/api/deposit-info`; antes venía de una
+          constante escrita a mano en este archivo.
          ===================================================================== */}
       {currentStep === 'depo_qr_result' && (
         <div className="flex-1 flex flex-col h-full overflow-y-auto">
@@ -668,111 +791,184 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
 
           <div className="px-5 pb-8 space-y-4 max-w-md mx-auto w-full">
             <h1 className="text-2xl font-black font-display text-black tracking-tight text-center leading-tight">
-              Depositá Dólares digitales
+              Depositá {selectedCoin}
             </h1>
 
-            {/* Card Principal con QR */}
-            <div className="bg-white rounded-[32px] p-6 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80 space-y-4 text-center">
-              <div className="text-left space-y-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-full bg-[#2775CA] text-white flex items-center justify-center text-xs font-bold">
-                    $
-                  </div>
-                  <div>
-                    <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Depositás</span>
-                    <span className="text-xs font-extrabold text-black">{selectedCoin}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-full bg-[#F3BA2F] text-white flex items-center justify-center text-xs font-bold">
-                    ❖
-                  </div>
-                  <div>
-                    <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Red</span>
-                    <span className="text-xs font-extrabold text-black">{selectedNetwork}</span>
-                  </div>
-                </div>
+            {/*
+              Sin red elegida, sin destino. Puede pasar si el backend todavía no
+              respondió: se dice, y no se muestra ninguna dirección.
+            */}
+            {(depositNetwork === null || depositAddress === null) && (
+              <div className="bg-white rounded-3xl border border-slate-200/80 p-6 space-y-2 text-center">
+                <HelpCircle className="w-8 h-8 text-slate-400 mx-auto stroke-[1.8]" />
+                <p className="text-sm font-bold text-black">No pudimos leer tu dirección de depósito.</p>
+                <p className="text-xs text-slate-500 font-medium leading-snug">
+                  No te mostramos ninguna: una dirección inventada manda tu plata a otra
+                  billetera.
+                </p>
               </div>
+            )}
 
-              {/* QR con icono central */}
-              <div className="w-56 h-56 mx-auto bg-black p-3 rounded-3xl flex items-center justify-center relative shadow-md">
-                <div className="w-full h-full bg-white rounded-2xl flex items-center justify-center p-3 relative">
-                  <QrCode className="w-full h-full text-black stroke-[1.2]" />
-                  <div className="w-10 h-10 rounded-xl bg-[#F3BA2F] text-white flex items-center justify-center font-bold absolute text-sm shadow-md">
-                    ❖
+            {depositNetwork !== null && depositAddress !== null && (
+              <>
+                {/* Card Principal con QR */}
+                <div className="bg-white rounded-[32px] p-6 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80 space-y-4 text-center">
+                  <div className="text-left space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-slate-100 text-black flex items-center justify-center text-xs font-bold">
+                        {(identityOf(selectedCoin)?.glyph ?? selectedCoin.slice(0, 1))}
+                      </div>
+                      <div>
+                        <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Depositás</span>
+                        <span className="text-xs font-extrabold text-black">
+                          {depositAsset?.name ?? selectedCoin}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/*
+                      LA RED, EN LA MISMA TARJETA QUE LA DIRECCIÓN.
+
+                      Es la regla del diseño de esta pantalla: una dirección nunca
+                      aparece sin la red a la que pertenece al lado. La misma
+                      dirección EVM sirve en Ethereum y en Monad —por eso la
+                      repetimos—, y sin la fila de al lado "la misma" se lee como
+                      "cualquiera de las dos".
+                    */}
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-black text-[#ccff00] flex items-center justify-center text-xs font-bold">
+                        {depositNetwork.label.slice(0, 1)}
+                      </div>
+                      <div>
+                        <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Red</span>
+                        <span className="text-xs font-extrabold text-black">{depositNetwork.label}</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              {/* Dirección con ver/ocultar y copiar */}
-              <div className="space-y-1">
-                <span className="text-[11px] text-slate-400 font-bold block text-left">Dirección</span>
-                <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-2xl">
-                  <span className="font-mono text-sm font-bold text-black tracking-tight">
-                    0x4613...9e50ba
+                  {/* QR con icono central */}
+                  <div className="w-56 h-56 mx-auto bg-black p-3 rounded-3xl flex items-center justify-center relative shadow-md">
+                    <div className="w-full h-full bg-white rounded-2xl flex items-center justify-center p-3 relative">
+                      <QrCode className="w-full h-full text-black stroke-[1.2]" />
+                      <div className="w-10 h-10 rounded-xl bg-black text-[#ccff00] flex items-center justify-center font-bold absolute text-sm shadow-md">
+                        {depositNetwork.label.slice(0, 1)}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[11px] font-semibold text-slate-400 text-center">
+                    QR de tu dirección de {depositNetwork.label}
+                  </p>
+
+                  {/*
+                    Dirección RECORTADA, con copiar la completa al lado.
+
+                    Se muestra recortada siempre porque una dirección entera escrita
+                    a mano se transcribe mal, y una dirección mal transcrita no da
+                    error: manda el depósito a ninguna parte. El botón copia la
+                    completa, que es lo que se pega en un exchange.
+                  */}
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-slate-400 font-bold block text-left">
+                      Dirección para {depositNetwork.label}
+                    </span>
+                    <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-2xl">
+                      <span className="font-mono text-sm font-bold text-black tracking-tight">
+                        {truncateAddress(depositAddress)}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(depositAddress)}
+                          aria-label={`Copiar la dirección completa de ${depositNetwork.label}`}
+                          title="Copiar la dirección completa"
+                          className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:text-black cursor-pointer"
+                        >
+                          {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    {copied && (
+                      <p className="text-[11px] font-semibold text-emerald-600 text-left">
+                        Dirección completa copiada.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Botón negro: Compartir datos */}
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(depositAddress)}
+                    className="w-full py-3.5 rounded-2xl bg-black hover:bg-slate-900 active:scale-98 text-white font-bold text-sm shadow-md transition-all cursor-pointer"
+                  >
+                    Copiar dirección completa
+                  </button>
+                </div>
+
+                {/* Advertencia */}
+                <p className="text-xs text-slate-600 text-center leading-relaxed px-2 font-semibold">
+                  Asegurate de mandar {selectedCoin} por la red {depositNetwork.label}. Si lo mandás
+                  por otra red, perdés los fondos.
+                </p>
+
+                {/*
+                  EL SALDO, O LA AUSENCIA DE SALDO.
+
+                  Un activo sin lector, o una cadena que no se pudo leer, dicen que
+                  no se pudo leer. Nunca muestran `0`: un cero afirma una
+                  recepción que nadie verificó, y en un producto de pagos eso no
+                  es un detalle de formato.
+                */}
+                <div className="bg-white rounded-3xl border border-slate-200/80 p-4 text-left">
+                  <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">
+                    Tu saldo de {selectedCoin}
                   </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleCopy('0x4613C9A84b55E82dBf9202394e50ba')}
-                      className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:text-black cursor-pointer"
-                    >
-                      {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
-                    </button>
+                  {depositAsset !== null && depositAsset.balanceReadable && assetBalanceLabel(selectedCoin) !== null ? (
+                    <span className="text-base font-black font-display text-black">
+                      {assetBalanceLabel(selectedCoin)} {selectedCoin}
+                    </span>
+                  ) : (
+                    <span className="text-sm font-semibold text-slate-500">
+                      No pudimos leer tu saldo de {selectedCoin} en {depositNetwork.label}.
+                    </span>
+                  )}
+                </div>
+
+                {/*
+                  LA REGLA DE LAS DIRECCIONES EVM, DICHA.
+
+                  No es una nota técnica: es la explicación de por qué la misma
+                  dirección aparece en Ethereum y en Monad, y de por qué una
+                  billetera EVM puede recibir un token que esta app todavía no
+                  lista. Y se aclara que lo que la app lista es una decisión del
+                  producto, no un límite de la billetera.
+                */}
+                {isEvmNetwork(depositNetwork) && evmNetworkLabels.length > 1 && (
+                  <div className="bg-[#ccff00] text-black p-5 rounded-3xl space-y-2 shadow-md font-sans">
+                    <h3 className="text-sm font-extrabold font-display">Tu dirección en las redes EVM</h3>
+                    <p className="text-xs font-medium leading-relaxed">
+                      Esta misma dirección sirve en {joinNetworkLabels(evmNetworkLabels)}: es una sola
+                      billetera EVM y puede recibir cualquier token de esas redes, aunque no esté
+                      en la lista de arriba.
+                    </p>
+                    <p className="text-xs font-medium leading-relaxed">
+                      La lista de esta pantalla es lo que ReWALLET soporta hoy, no lo que tu
+                      billetera puede recibir.
+                    </p>
                   </div>
-                </div>
-              </div>
-
-              {/* Botón negro: Compartir datos */}
-              <button
-                type="button"
-                onClick={() => handleCopy('0x4613C9A84b55E82dBf9202394e50ba')}
-                className="w-full py-3.5 rounded-2xl bg-black hover:bg-slate-900 active:scale-98 text-white font-bold text-sm shadow-md transition-all cursor-pointer"
-              >
-                Compartir datos
-              </button>
-            </div>
-
-            {/* Advertencia */}
-            <p className="text-xs text-slate-500 text-center leading-relaxed px-2 font-medium">
-              Asegurate de depositar {selectedCoin} desde la red {selectedNetwork}. De lo contrario, perderás tus fondos.
-            </p>
-
-            {/* Card Verde Lima: Información Importante */}
-            <div className="bg-[#ccff00] text-black p-5 rounded-3xl space-y-3 shadow-md font-sans">
-              <h3 className="text-sm font-extrabold font-display">
-                Información Importante
-              </h3>
-
-              <div className="space-y-2 text-xs">
-                <div>
-                  <span className="text-black/70 block">Tenés</span>
-                  <span className="font-black text-black">Dólar Digital</span>
-                </div>
-
-                <div>
-                  <span className="text-black/70 block">Tasa de cambio</span>
-                  <span className="font-black text-black">1 {selectedCoin} = 1 Dólar Digital</span>
-                </div>
-
-                <div>
-                  <span className="text-black/70 block">Comisión</span>
-                  <span className="font-black text-black">Sin comisiones</span>
-                </div>
-
-                <div>
-                  <span className="text-black/70 block">En tu cuenta</span>
-                  <span className="font-black text-black">Menos de 1 minuto</span>
-                </div>
-              </div>
-            </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
 
       {/* =====================================================================
-          FLUJO DEPOSITAR CRYPTO: PASO 1 (IMG_4531.PNG)
+          DEPÓSITO: PASO "ACTIVO" — la lista de activos sale del backend.
+
+          Antes eran seis filas escritas a mano —BTC, ETH, USDT, USDC, USDS,
+          PYUSD—, tres de ellas para activos que esta billetera no tiene
+          contrato con el que recibirlos y dos para redes que no aparecen en el
+          catálogo. Elegir cualquiera terminaba en la misma dirección falsa.
          ===================================================================== */}
       {currentStep === 'depo_crypto_list' && (
         <div className="flex-1 flex flex-col h-full overflow-y-auto">
@@ -803,43 +999,83 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             </div>
 
-            {/* Lista Más buscadas */}
-            <div className="space-y-2 pt-2">
-              <span className="text-xs font-bold text-slate-400 font-display uppercase tracking-wider px-1">
-                Más buscadas
-              </span>
+            {depositInfo.status === 'loading' && (
+              <p className="text-sm text-slate-500 font-medium">Cargando los activos que podés recibir…</p>
+            )}
 
-              <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
-                {[
-                  { symbol: 'BTC', name: 'Bitcoin', bg: 'bg-[#F7931A]', icon: '₿' },
-                  { symbol: 'ETH', name: 'Ethereum', bg: 'bg-[#627EEA]', icon: 'Ξ' },
-                  { symbol: 'USDT', name: 'Dólar digital (Tether)', bg: 'bg-[#26A17B]', icon: '₮' },
-                  { symbol: 'USDC', name: 'Dólar digital (Circle)', bg: 'bg-[#2775CA]', icon: '$' },
-                  { symbol: 'USDS', name: 'USDS', bg: 'bg-[#F5AC37]', icon: 'S' },
-                  { symbol: 'PYUSD', name: 'PayPal USD', bg: 'bg-[#0079C1]', icon: 'P' },
-                ].map((c) => (
+            {depositInfo.status === 'error' && (
+              <div className="bg-white rounded-3xl border border-slate-200/80 p-5 space-y-1.5">
+                <p className="text-sm font-bold text-black">No pudimos leer qué se puede recibir.</p>
+                <p className="text-xs text-slate-500 font-medium leading-snug">
+                  Preferimos no mostrarte una lista inventada: una dirección equivocada acá no da
+                  error, te hace perder el depósito.
+                </p>
+              </div>
+            )}
+
+            {depositInfo.status === 'ready' && depositInfo.assets.length === 0 && (
+              <p className="text-sm text-slate-500 font-medium">
+                Todavía no hay ningún activo configurado para recibir.
+              </p>
+            )}
+
+            {/*
+              Una fila por ACTIVO, con las redes donde se puede recibir al lado.
+              Elegir un activo que vive en dos redes lleva a la pantalla de redes:
+              la dirección depende de la red elegida.
+            */}
+            {depositInfo.assets
+              .filter(
+                (asset) =>
+                  cryptoSearch.trim().length === 0 ||
+                  asset.symbol.toLowerCase().includes(cryptoSearch.trim().toLowerCase()) ||
+                  asset.name.toLowerCase().includes(cryptoSearch.trim().toLowerCase()),
+              )
+              .map((asset) => {
+                const identity = identityOf(asset.symbol);
+                const balance = assetBalanceLabel(asset.symbol);
+
+                return (
                   <div
-                    key={c.symbol}
-                    onClick={() => {
-                      setSelectedCoin(c.symbol);
-                      setCurrentStep('depo_network_select');
-                    }}
-                    className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
+                    key={asset.symbol}
+                    onClick={() => chooseCoin(asset.symbol, 'crypto')}
+                    className="p-4 mb-2 bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] flex items-center justify-between cursor-pointer hover:bg-slate-50 active:scale-99 transition-all"
                   >
                     <div className="flex items-center gap-3.5">
-                      <div className={`w-10 h-10 rounded-full ${c.bg} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}>
-                        {c.icon}
+                      <div
+                        className={`w-10 h-10 rounded-full ${identity?.iconBg ?? 'bg-slate-300'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
+                      >
+                        {identity?.glyph ?? asset.symbol.slice(0, 1)}
                       </div>
                       <div>
-                        <span className="text-sm font-extrabold text-black block leading-none">{c.symbol}</span>
-                        <span className="text-xs text-slate-400 font-medium block mt-0.5">{c.name}</span>
+                        <span className="text-sm font-extrabold text-black block leading-none">{asset.symbol}</span>
+                        <span className="text-xs text-slate-400 font-medium block mt-0.5">{asset.name}</span>
+                        <span className="text-[11px] text-slate-400 font-medium block mt-0.5">
+                          {/*
+                            Las redes van en la fila del activo, no en una lista aparte: la
+                            pregunta "¿en qué red?" tiene que aparecer antes de la
+                            dirección, no después.
+                          */}
+                          {asset.receivableNetworkCount === 0
+                            ? 'Todavía no tenés dónde recibirlo'
+                            : joinNetworkLabels(asset.networks.map((network) => network.label))}
+                        </span>
                       </div>
                     </div>
-                    <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
+                    <div className="text-right">
+                      {/* `null` es "no lo sé": no se pinta un cero. */}
+                      <span className="text-sm font-extrabold text-black block leading-none">
+                        {balance === null ? '—' : balance}
+                      </span>
+                      <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5] ml-auto mt-1" />
+                    </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                );
+              })}
+
+            <p className="text-xs text-slate-500 font-medium leading-relaxed px-1">
+              Estos son los activos que ReWALLET puede recibir hoy. Elegí uno y después la red.
+            </p>
           </div>
         </div>
       )}

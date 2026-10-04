@@ -451,6 +451,73 @@ resolved for **any** chain and there is no per-chain truth to report. Answering 
 would mean reporting all three chains as `no_wallet`, which is a lie about somebody's
 account. Every other failure is a per-chain `status`, not an HTTP status.
 
+## `GET /api/deposit-info` — what can be received, on which network, and where
+
+The deposit screen is the one place where a mistake does not produce an error: it
+produces a lost deposit. That is why this route exists instead of the frontend
+holding a list of networks — see `src/domain/deposit/catalog.ts` for why the
+catalog is a server fact and not a client constant.
+
+```
+GET /api/deposit-info            (the same session cookie as every other route)
+
+200
+{
+  "generatedAt": "2025-01-01T00:00:00.000Z",
+  "networks": [
+    { "chain": "monad", "label": "Monad", "evmNetwork": "eip155:143",
+      "hasWallet": true, "address": "0x…",
+      "assets": [
+        { "symbol": "MON",  "name": "Monad",  "decimals": 18, "native": true,
+          "token": null, "balanceReadable": true },
+        { "symbol": "USDC", "name": "Dólares digitales", "decimals": 6,
+          "native": false,
+          "token": "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
+          "balanceReadable": true } ] },
+    { "chain": "solana", "label": "Solana", "evmNetwork": null,
+      "hasWallet": false,
+      "assets": [ { "symbol": "SOL", … } ] }
+  ]
+}
+
+401  — no cookie, or a cookie that does not verify. Nothing was read.
+502  — WALLETS_UNAVAILABLE: the wallet rows could not be read.
+404  — not mounted when `readDepositInfo` is not wired.
+```
+
+### Four rules the response cannot break
+
+1. **`address` comes from `rewallet.wallets`, and from nowhere else.** The use case
+   takes a user id and nothing else: no address parameter, no chain parameter, no
+   body, and no `POST`. "We ignored the parameter you sent" is a much better
+   property than "we validated the parameter you sent".
+2. **A network with no wallet row carries `hasWallet: false` and no `address`
+   field at all.** Not `""`, not `null`. There is nowhere to receive, and an empty
+   address in a QR is a destination nobody can claim.
+3. **`balanceReadable` travels per asset, not per network.** It depends on what can
+   be read on-chain for that token. `false` still means **receivable**: the asset
+   appears with its network and its address, and only the figure is missing. The
+   screen says "we could not read it". It never renders `0` — unreadable is not
+   zero, and this is a consumer payments product.
+4. **The asset order per network is stable**, and a test asserts it. A list that
+   reorders between reads turns "the second one" into "the one you then pick".
+
+### The one EVM address, twice
+
+`monad` and `ethereum` resolve to the **same** `ethereum` wallet row: Privy's
+embedded wallets are chain-agnostic EVM accounts, so one address is valid on both
+networks and can receive any ERC-20 of either. The response states it twice, each
+time attached to its network, because an address without its network next to it is
+exactly the mistake this route exists to prevent. `solana` has its own address.
+
+### Adding an asset
+
+One entry in `DEPOSIT_NETWORKS`, **after** its contract has been verified on the
+network where the entry declares it. The `token` field is per network and is not
+copied: the USDC on Monad (`0x7547…b603`) and the USDC on Ethereum (`0xA0b8…eB48`)
+are different contracts, and reading one from the other network returns a
+plausible zero from an address with no code.
+
 ## `POST /api/webhooks/privy` and `GET /api/notifications` — what arrived, in sentences
 
 One intake, one feed, and nothing in between: **no background processing, no
@@ -587,9 +654,11 @@ condition in the adapter, not a redesign.
 ```
 src/
   domain/ports/        the interfaces: what the application needs, in our words
+  domain/deposit/      the deposit catalog: what can be received, where, and the
+                       per-token balance-readability flag
   domain/webhooks/     the signature scheme, the event→sentence table, attribution
   application/         the use cases: session minting, wallet claiming, portfolio
-                       reads, webhook intake, notification feed
+                       reads, deposit catalog, webhook intake, notification feed
   infrastructure/      the adapters: Privy, Postgres, JWT, JSON-RPC balance reads
   interface/http/      Hono: routes, cookies, the error boundary
   container.ts         reads config, builds adapters, wires the app

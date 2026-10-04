@@ -25,6 +25,7 @@ import { PrivyClient } from '@privy-io/node';
 
 import { mintSession } from './application/session/mintSession';
 import { readPortfolio } from './application/portfolio/readPortfolio';
+import { readDepositInfo } from './application/deposit-info/readDepositInfo';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
 import { ingestPrivyWebhook } from './application/webhooks/ingestPrivyWebhook';
 import { readNotifications } from './application/webhooks/readNotifications';
@@ -144,6 +145,13 @@ export const buildApp = (config: Config, log: Logger) => {
     sessions,
     // The same wallet store the claim writes through, read through.
     readPortfolio: readPortfolio({ wallets: walletStore, evm, solana, log }),
+    /*
+     * The deposit catalog and the addresses that go with it, read through the
+     * **same** store. One store, una sola fuente de dirección: si esta ruta
+     * leyera las carteras por otro lado, la dirección que la pantalla muestra
+     * para recibir podría no ser la misma que la que el portfolio lee.
+     */
+    readDepositInfo: readDepositInfo({ wallets: walletStore, log }),
     // Intake and feed share one store: one write path and one read path over the
     // same rows, so "the feed shows what arrived" is a property of the wiring.
     ingestWebhook: ingestPrivyWebhook({

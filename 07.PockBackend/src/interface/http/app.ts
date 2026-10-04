@@ -17,6 +17,7 @@ import { Hono } from 'hono';
 
 import type { MintSession } from '../../application/session/mintSession';
 import type { ReadPortfolio } from '../../application/portfolio/readPortfolio';
+import type { ReadDepositInfo } from '../../application/deposit-info/readDepositInfo';
 import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
 import type { IngestPrivyWebhook } from '../../application/webhooks/ingestPrivyWebhook';
 import type { ReadNotifications } from '../../application/webhooks/readNotifications';
@@ -26,6 +27,7 @@ import type { SessionCodec } from '../../domain/ports/session-codec';
 import type { TokenVerifier } from '../../domain/ports/token-verifier';
 import { SESSION_COOKIE_NAME } from './cookie';
 import { createAuthRoutes } from './routes/auth';
+import { createDepositInfoRoutes } from './routes/depositInfo';
 import { createDiagnosticsRoutes } from './routes/diagnostics';
 import { createNotificationsRoutes } from './routes/notifications';
 import { createPortfolioRoutes } from './routes/portfolio';
@@ -40,6 +42,15 @@ export interface AppDeps {
   readonly claim?: ClaimWalletsFor;
   /** Absent when no chain readers are wired: the route is then not there. */
   readonly readPortfolio?: ReadPortfolio;
+  /**
+   * Absent when the wallet store is not wired: the route is then not there.
+   *
+   * Same reasoning as the portfolio: a deposit screen without real addresses is
+   * the screen that gets somebody's money sent to a place this app cannot claim
+   * as theirs. The honest answer to "this deployment has no catalog wired" is
+   * that the route does not exist.
+   */
+  readonly readDepositInfo?: ReadDepositInfo;
   /** Absent when no signing secret is wired: the intake is then not there. */
   readonly ingestWebhook?: IngestPrivyWebhook;
   readonly readNotifications?: ReadNotifications;
@@ -96,6 +107,25 @@ export const createApp = (deps: AppDeps) => {
       createPortfolioRoutes({
         sessions: deps.sessions,
         readPortfolio: deps.readPortfolio,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
+  /*
+   * `/api/deposit-info` is the catalog plus this person's real addresses, one per
+   * network. Mounted when the use case exists, for the same reason as the
+   * portfolio: an answer of "the catalog is not configured" would look, from a
+   * deposit screen, exactly like "you have nowhere to receive".
+   */
+  if (deps.readDepositInfo) {
+    app.route(
+      '/api/deposit-info',
+      createDepositInfoRoutes({
+        sessions: deps.sessions,
+        readDepositInfo: deps.readDepositInfo,
         cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
         now: deps.now,
         log,

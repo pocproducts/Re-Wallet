@@ -19,6 +19,7 @@ import { LoginGate } from './components/Auth/LoginGate';
 import { useSessionGate } from './hooks/useSessionGate';
 import { useNotifications } from './hooks/useNotifications';
 import { usePortfolio } from './hooks/usePortfolio';
+import { useDepositInfo } from './hooks/useDepositInfo';
 import { useUserWallets } from './hooks/useUserWallets';
 import { ChargeQrModal, type ChargeReceiveAddress } from './components/Charge/ChargeQrModal';
 import { NavTab, TransactionItem } from './types';
@@ -86,6 +87,17 @@ export default function App() {
    * sesión, y antes de eso la lectura no sirve.
    */
   const portfolio = usePortfolio(sessionStatus === 'authenticated');
+
+  /*
+   * Dónde se puede recibir y con qué dirección.
+   *
+   * Es una lectura distinta de la del portfolio, y por una razón concreta: el
+   * catálogo dice **qué se puede recibir** —incluido un activo que todavía no
+   * podemos leer, que igual es recibible— y el portfolio dice **cuánto** hay. La
+   * pantalla de depósito necesita las dos, y usa el saldo del portfolio: el
+   * catálogo no trae cifras y no puede inventar un `0`.
+   */
+  const depositInfo = useDepositInfo(sessionStatus === 'authenticated');
 
   /*
    * Los avisos de la cuenta también se leen UNA vez por sesión, con el mismo
@@ -455,6 +467,8 @@ export default function App() {
           action={activeActionModal}
           onClose={() => setActiveActionModal(null)}
           userTag={userTag}
+          depositInfo={depositInfo}
+          holdings={portfolio.holdings}
         />
 
         {/* =========================================================================
