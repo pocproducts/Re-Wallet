@@ -106,7 +106,7 @@ export class WalletsUnavailable extends Error {
  */
 const messageOf = (error: unknown): string => {
   const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  return raw.replace(/[^a-zA-Z0-9_:.,/()\- ]/g, '').slice(0, 200);
+  return raw.replace(/[^a-zA-Z0-9_:.,/()\- ]/g, '').slice(0, 500);
 };
 
 const reasonOf = (error: unknown): PortfolioFailureReason =>

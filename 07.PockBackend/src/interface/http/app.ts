@@ -132,5 +132,6 @@ export const createApp = (deps: AppDeps) => {
   // TEMPORARY. Removed together with the browser-side Privy problem it explains.
   app.route('/api/diagnostics', createDiagnosticsRoutes({ log }));
 
+
   return app;
 };

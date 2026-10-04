@@ -77,6 +77,14 @@ const encodeAddressArgument = (address: string): string => {
   return bare.toLowerCase().padStart(64, '0');
 };
 
+/** El mensaje sin el prefijo que `BalanceReadError` antepone: en un agregado se repite y estorba. */
+const bareMessage = (error: unknown): string => {
+  const raw = error instanceof Error ? error.message : 'unknown failure';
+  const marker = '): ';
+  const cut = raw.indexOf(marker);
+  return (cut === -1 ? raw : raw.slice(cut + marker.length)).slice(0, 120);
+};
+
 /** El host de un endpoint, sin su ruta ni query: lo unico de una URL externa que es seguro escribir. */
 const hostOf = (url: string): string => {
   try {
@@ -102,6 +110,13 @@ const describeUnparseableBody = async (response: Response): Promise<string> => {
 
 /** A JSON-RPC quantity: `0x`-prefixed hex. `BigInt` is the only safe parser. */
 const parseQuantity = (result: unknown): bigint => {
+  /*
+   * `0x` a secas es una respuesta valida: es lo que devuelve una llamada a una
+   * direccion sin codigo, y para un `balanceOf` significa cero. Declararlo
+   * corrupto convertia "este contrato no existe en esta red" en "no pudimos
+   * leer la red", que es un hecho distinto y mas grave.
+   */
+  if (result === '0x') return 0n;
   if (typeof result !== 'string' || !/^0x[0-9a-fA-F]+$/.test(result)) {
     throw new BalanceReadError('RPC_MALFORMED_RESPONSE', `expected a hex quantity, got ${typeof result}`);
   }
@@ -145,7 +160,7 @@ export const createJsonRpcEvmBalanceReader = (options: JsonRpcEvmBalanceReaderOp
       } catch (error) {
         // Un endpoint caido no es el final de la cadena: se prueba el siguiente.
         if (firstReason === undefined && error instanceof BalanceReadError) firstReason = error.reason;
-        failures.push(`${hostOf(url)}: ${error instanceof Error ? error.message : 'unknown failure'}`);
+        failures.push(`${hostOf(url)}: ${bareMessage(error)}`);
       }
     }
 

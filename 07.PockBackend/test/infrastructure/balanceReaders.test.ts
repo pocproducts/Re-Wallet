@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { formatUnits, USDC_ADDRESS } from '../../src/domain/portfolio/assets';
+import { formatUnits, USDC_ADDRESS_BY_CHAIN } from '../../src/domain/portfolio/assets';
 import { BalanceReadError } from '../../src/domain/portfolio/errors';
 import { createJsonRpcEvmBalanceReader } from '../../src/infrastructure/rpc/jsonRpcEvmBalanceReader';
 import { createHttpSolanaBalanceReader } from '../../src/infrastructure/rpc/solanaBalanceReader.http';
@@ -40,6 +40,16 @@ describe('jsonRpcEvmBalanceReader', () => {
     const reader = createJsonRpcEvmBalanceReader({ endpoints: ENDPOINTS, fetchImpl });
 
     await expect(reader.nativeBalance('monad', ADDRESS)).resolves.toBe(10n ** 30n);
+  });
+
+  it('reads 0x — an address with no contract — as zero, not as a corrupted answer', async () => {
+    // `eth_call` a una direccion sin codigo responde `0x`. Para un `balanceOf`
+    // eso es cero. Declararlo corrupto convertia "este contrato no existe en
+    // esta red" en "no pudimos leer la red".
+    const { fetchImpl } = answering(() => ({ text: json('0x') }));
+    const reader = createJsonRpcEvmBalanceReader({ endpoints: ENDPOINTS, fetchImpl });
+
+    await expect(reader.erc20Balance('ethereum', USDC_ADDRESS_BY_CHAIN.ethereum, ADDRESS)).resolves.toBe(0n);
   });
 
   it('falls through to the next endpoint when the first one is down', async () => {
@@ -89,11 +99,11 @@ describe('jsonRpcEvmBalanceReader', () => {
     const { fetchImpl, calls } = answering(() => ({ text: json('0x16e360') }));
     const reader = createJsonRpcEvmBalanceReader({ endpoints: ENDPOINTS, fetchImpl });
 
-    await expect(reader.erc20Balance('monad', USDC_ADDRESS, ADDRESS)).resolves.toBe(1500000n);
+    await expect(reader.erc20Balance('monad', USDC_ADDRESS_BY_CHAIN.monad, ADDRESS)).resolves.toBe(1500000n);
 
     const call = calls[0]?.body as { method: string; params: { to: string; data: string }[] };
     expect(call.method).toBe('eth_call');
-    expect(call.params[0]?.to).toBe(USDC_ADDRESS);
+    expect(call.params[0]?.to).toBe(USDC_ADDRESS_BY_CHAIN.monad);
     expect(call.params[0]?.data).toBe(
       `0x70a08231${ADDRESS.slice(2).toLowerCase().padStart(64, '0')}`,
     );

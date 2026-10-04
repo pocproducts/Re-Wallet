@@ -28,7 +28,23 @@ import type { PortfolioAsset } from '../../application/portfolio/readPortfolio';
  * reverts on another is exactly the failure this codebase already paid for once
  * (see `odd/tasks/datos-reales-monad-aave.md`).
  */
-export const USDC_ADDRESS = '0x754704Bc059F8C67012fEd69BC8A327a5aafb603';
+/**
+ * USDC **por cadena**. Una sola direccion para todas las cadenas EVM no es un
+ * atajo: es un contrato equivocado.
+ *
+ * El bug que produjo: la direccion de Monad se usaba tambien para Ethereum, ahi
+ * no hay contrato, `balanceOf` responde `0x` (vacio) y el lector declaraba la
+ * respuesta corrupta. El sintoma era "no pudimos leer tu saldo en Ethereum"
+ * mientras la misma llamada contra la cadena de al lado funcionaba, porque el
+ * codigo era identico y lo unico que cambiaba era la direccion.
+ *
+ * Ambas verificadas en cadena antes de escribirlas: contracto con bytecode,
+ * `symbol()` = USDC y `decimals()` = 6 en cada una.
+ */
+export const USDC_ADDRESS_BY_CHAIN = {
+  monad: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603',
+  ethereum: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+} as const;
 
 export interface PortfolioAssetSpec {
   readonly symbol: string;
@@ -46,11 +62,11 @@ export interface PortfolioAssetSpec {
 export const ASSETS_BY_CHAIN: Readonly<Record<PortfolioChain, readonly PortfolioAssetSpec[]>> = {
   monad: [
     { symbol: 'MON', decimals: 18 },
-    { symbol: 'USDC', decimals: 6, token: USDC_ADDRESS },
+    { symbol: 'USDC', decimals: 6, token: USDC_ADDRESS_BY_CHAIN.monad },
   ],
   ethereum: [
     { symbol: 'ETH', decimals: 18 },
-    { symbol: 'USDC', decimals: 6, token: USDC_ADDRESS },
+    { symbol: 'USDC', decimals: 6, token: USDC_ADDRESS_BY_CHAIN.ethereum },
   ],
   solana: [{ symbol: 'SOL', decimals: 9 }],
 };

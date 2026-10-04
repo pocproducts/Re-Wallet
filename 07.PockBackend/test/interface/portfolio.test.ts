@@ -152,13 +152,20 @@ describe('GET /api/portfolio — happy path', () => {
       headers: { cookie: SESSION_COOKIE },
     });
 
-    // One address, two EVM networks, one Solana address. Never a second EVM read
-    // with a different address: there is no second EVM wallet.
+    /*
+     * One address, two EVM networks, one Solana address. Never a second EVM read
+     * with a different address: there is no second EVM wallet.
+     *
+     * And **the same address for the same symbol is exactly the bug this pins**:
+     * USDC de Monad no es USDC de Ethereum. Con una sola direccion para las dos,
+     * la llamada de Ethereum caia en una direccion sin contrato y la cadena
+     * entera se declaraba ilegible.
+     */
     expect(evm.asked).toEqual([
       `native:monad:${EVM_ADDRESS}`,
       `erc20:monad:0x754704Bc059F8C67012fEd69BC8A327a5aafb603:${EVM_ADDRESS}`,
       `native:ethereum:${EVM_ADDRESS}`,
-      `erc20:ethereum:0x754704Bc059F8C67012fEd69BC8A327a5aafb603:${EVM_ADDRESS}`,
+      `erc20:ethereum:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48:${EVM_ADDRESS}`,
     ]);
     expect(solana.asked).toEqual([SOLANA_ADDRESS]);
   });
