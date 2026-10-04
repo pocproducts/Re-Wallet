@@ -38,11 +38,41 @@
  * from** (`src/domain/webhooks/attribution.ts`), so writing and reading cannot
  * disagree about where a person lives in a payload.
  *
+ * ── Why the same `OR` also matches the person's wallets ──────────────────────
+ *
+ * Privy's money events (`wallet.funds_deposited`, `transaction.*`) carry no DID.
+ * They carry `wallet_id`, so without this the feed answers "no notifications"
+ * with **no error** — silent, and with the wrong explanation.
+ *
+ * Their ids are resolved by the same statement, in a subquery over
+ * `rewallet.wallets w JOIN rewallet.users u ON u.id = w.user_id` filtered by
+ * `u.privy_did = $n`. One SELECT: the alternative — a port method that reads the
+ * person's wallet ids and then a second query — is a round trip to join a fact
+ * this statement already has both sides of.
+ *
+ * Two properties this buys, and both are the reason for the shape of the SQL:
+ *
+ *   - **An id that is not in `rewallet.wallets` for this person attributes the
+ *     event to nobody.** The subquery is scoped by the person's DID, so another
+ *     person's wallet id is not in it, and an unknown id is in no one else's
+ *     either. There is no fallback to "somebody".
+ *   - **`provider_wallet_id IS NOT NULL` is written out.** The column is
+ *     nullable. A null in the candidate array would build a containment against
+ *     a JSON null and, worse, make the comparison a null — a query that quietly
+ *     stops answering. Skipping nulls keeps "unknown id" an absence, which is
+ *     what it is.
+ *
+ * The wallet-id terms are `payload @> ANY (SELECT …)` rather than one
+ * `payload @> $n::jsonb` per id, because the ids are not known before the
+ * statement runs — that is the cost of resolving them here instead of in a second
+ * round trip. The containment test itself is unchanged, and the DID terms remain
+ * constant per path, so the GIN index still serves them.
+ *
  * The payload is not selected: the item is a sentence, and the sentence is
  * computed from `event_type` in the application layer.
  */
 import type { PersonWebhookEvent, WebhookEventStore } from '../../domain/ports/webhook-event-store';
-import { personDidContainments } from '../../domain/webhooks/attribution';
+import { PERSON_WALLET_ID_PATHS, personDidContainments } from '../../domain/webhooks/attribution';
 import type { Database } from './client';
 
 interface EventRow {
@@ -50,6 +80,32 @@ interface EventRow {
   readonly event_type: string;
   readonly created_at: string | Date;
 }
+
+/**
+ * The `jsonb_build_object` chain for one dotted path, read off the wallet id.
+ *
+ * `walletContainment('wallet_id')` → `jsonb_build_object('wallet_id', w.provider_wallet_id)`;
+ * `walletContainment('data.wallet_id')` wraps it once more. The keys are this
+ * project's own constant list — nothing a request can reach reaches this string.
+ */
+const walletContainment = (path: string): string =>
+  path
+    .split('.')
+    .reverse()
+    .reduce((inner, key) => `jsonb_build_object('${key}', ${inner})`, 'w.provider_wallet_id');
+
+/**
+ * One candidate shape per row of `rewallet.wallets` that is this person's.
+ *
+ * An empty result is not an error: `x @> ANY` over an empty array is `false`, and
+ * an event whose `wallet_id` is unknown to us is simply not in anybody's feed.
+ */
+const walletContainmentTerm = (path: string, personParameter: number): string =>
+  `payload @> ANY (SELECT ${walletContainment(path)}
+         FROM rewallet.wallets w
+         JOIN rewallet.users u ON u.id = w.user_id
+        WHERE u.privy_did = $${personParameter}
+          AND w.provider_wallet_id IS NOT NULL)`;
 
 export const createPostgresWebhookEventStore = (db: Database): WebhookEventStore => ({
   async store(event) {
@@ -74,14 +130,21 @@ export const createPostgresWebhookEventStore = (db: Database): WebhookEventStore
 
   async listForPerson(privyDid, limit) {
     /*
-     * One `OR` per path the intake reads the person from. The number of paths is
+     * One `OR` per known path: the DID paths the intake reads the person from, and
+     * the wallet-id paths the money events carry instead. The number of paths is
      * a list in the domain, not a constant here, so the statement is built with
      * positional parameters — the DID travels as a **bound** parameter inside a
-     * jsonb document and never as SQL text.
+     * jsonb document and never as SQL text, and the same DID is what scopes the
+     * wallet subqueries.
      */
     const shapes = personDidContainments(privyDid);
-    const predicate = shapes.map((_, index) => `payload @> $${index + 1}::jsonb`).join(' OR ');
-    const limitParameter = shapes.length + 1;
+    const personParameter = shapes.length + 1;
+    const terms = [
+      ...shapes.map((_, index) => `payload @> $${index + 1}::jsonb`),
+      ...PERSON_WALLET_ID_PATHS.map((path) => walletContainmentTerm(path, personParameter)),
+    ];
+    const predicate = terms.join(' OR ');
+    const limitParameter = personParameter + 1;
 
     const rows = (await db.query(
       `
@@ -91,7 +154,7 @@ export const createPostgresWebhookEventStore = (db: Database): WebhookEventStore
          ORDER BY created_at DESC
          LIMIT $${limitParameter}
       `,
-      [...shapes.map((shape) => JSON.stringify(shape)), limit],
+      [...shapes.map((shape) => JSON.stringify(shape)), privyDid, limit],
     )) as unknown as EventRow[];
 
     return rows.map((row) => ({

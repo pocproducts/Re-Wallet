@@ -15,6 +15,27 @@
  * dropped event is an event that never happened as far as the person is
  * concerned. So the fallback says exactly one true thing — an event was received
  * — and invents nothing about which, when a chain failed, or whether money moved.
+ *
+ * ── Why the money entries name no amount, no asset and no chain ──────────────
+ *
+ * `wallet.funds_deposited` carries `amount` and `asset`; `transaction.*` carries
+ * neither. A table keyed only by `event_type` cannot say "0.4 MON" for one of them
+ * and stay honest for the other, and a sentence that invents a figure for the
+ * events that lack one is worse than a short one. So each sentence below says
+ * **what happened**, in second person, and stops there.
+ *
+ * Taking the payload into account would mean changing `describeEvent`'s signature
+ * and every caller with it — a deliberate change, not a free one, because the
+ * "unknown type is never blank and never dropped" guarantee above is what this
+ * table exists to keep.
+ *
+ * The `wallet.*` funds entries and the `transaction.*` lifecycle are all
+ * category `wallet`: each one is about the person's wallet.
+ *
+ * `wallet_action.transfer.*` is deliberately **absent**. Those are Wallet Actions
+ * — we ask Privy to perform the transfer. This product signs in the browser with
+ * the person's own wallet, so those events can never fire here, and a sentence
+ * for them would describe a flow this product does not have.
  */
 
 export type NotificationCategory = 'account' | 'security' | 'wallet' | 'link' | 'other';
@@ -51,6 +72,16 @@ const DESCRIPTIONS: Record<string, EventDescription> = {
   'wallet.deleted': { message: 'Se eliminó una billetera de tu cuenta.', category: 'wallet' },
   'linked_account.created': { message: 'Conectaste un método de acceso a tu cuenta.', category: 'link' },
   'linked_account.deleted': { message: 'Desconectaste un método de acceso de tu cuenta.', category: 'link' },
+
+  /* Money. What happened, in the second person, with nothing the payload does not carry. */
+  'wallet.funds_deposited': { message: 'Llegaron fondos a tu billetera.', category: 'wallet' },
+  'wallet.funds_withdrawn': { message: 'Salieron fondos de tu billetera.', category: 'wallet' },
+  'transaction.broadcasted': { message: 'Se envió una transacción desde tu billetera.', category: 'wallet' },
+  'transaction.confirmed': { message: 'Se confirmó una transacción de tu billetera.', category: 'wallet' },
+  'transaction.execution_reverted': { message: 'Una transacción de tu billetera se revirtió.', category: 'wallet' },
+  'transaction.failed': { message: 'Una transacción de tu billetera falló.', category: 'wallet' },
+  'transaction.still_pending': { message: 'Una transacción de tu billetera sigue pendiente.', category: 'wallet' },
+  'transaction.replaced': { message: 'Una transacción de tu billetera fue reemplazada.', category: 'wallet' },
 };
 
 const FALLBACK: EventDescription = { message: UNKNOWN_EVENT_MESSAGE, category: 'other' };

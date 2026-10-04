@@ -122,10 +122,33 @@ describe('ingestPrivyWebhook — one verified event, one row', () => {
 
   it('does not attribute an event from a field name nobody verified', async () => {
     const { stored, webhookStore } = store();
-    // `user_id` is a shape this project has not seen from Privy. Reading it would
-    // be a guess about who an event belongs to, and a wrong guess puts one
-    // person's event in another person's feed.
-    const body = JSON.stringify({ id: 'evt_3', type: 'user.created', user_id: DID });
+    // `invited_by` is a shape this project has not seen from Privy, and which
+    // names somebody else. Reading it would be a guess about who an event belongs
+    // to, and a wrong guess puts one person's event in another person's feed.
+    const body = JSON.stringify({ id: 'evt_3', type: 'wallet.created', invited_by: DID });
+
+    const result = await ingest(webhookStore)(deliver(body));
+
+    expect(result.ok).toBe(true);
+    expect(stored[0]?.privyDid).toBeNull();
+  });
+
+  it('attributes `user_id`, which is the shape Privy demonstrably sends', async () => {
+    const { stored, webhookStore } = store();
+    // The two real events in rewallet.webhook_events both carry `user_id`. While
+    // this path was missing, the feed returned zero rows for both of them, with no
+    // error — an empty notification list that looked exactly like "nothing happened".
+    const body = JSON.stringify({ id: 'evt_4', type: 'user.signed_in', user_id: DID });
+
+    const result = await ingest(webhookStore)(deliver(body));
+
+    expect(result.ok).toBe(true);
+    expect(stored[0]?.privyDid).toBe(DID);
+  });
+
+  it('still refuses a `user_id` that is not a DID', async () => {
+    const { stored, webhookStore } = store();
+    const body = JSON.stringify({ id: 'evt_5', type: 'user.signed_in', user_id: 'someone@example.com' });
 
     const result = await ingest(webhookStore)(deliver(body));
 

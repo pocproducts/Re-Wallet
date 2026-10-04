@@ -44,6 +44,15 @@ export interface WebhookEventStore {
    */
   store(event: VerifiedWebhookEvent): Promise<StoredWebhookEvent>;
 
-  /** This person's events only, newest first, at most `limit` rows. */
+  /**
+   * This person's events only, newest first, at most `limit` rows.
+   *
+   * What counts as theirs is an internal detail of the implementation: account
+   * events carry the person's DID in the payload, Privy's money events carry a
+   * `wallet_id` that only the database can resolve to a person. The port does not
+   * ask for either — it asks for the person's events and gets exactly those, and
+   * an event that cannot be attributed to anyone comes back for nobody rather
+   * than leaking into the nearest feed.
+   */
   listForPerson(privyDid: string, limit: number): Promise<readonly PersonWebhookEvent[]>;
 }
