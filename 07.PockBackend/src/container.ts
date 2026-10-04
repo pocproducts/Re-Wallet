@@ -69,6 +69,9 @@ export interface Config {
 }
 
 /** The one place that knows which environment variables exist. */
+/** El primer endpoint configurado de una lista, o el nombre de una variable sin valor. */
+const firstCandidate = (candidates: readonly string[]): string => candidates[0] ?? '';
+
 export const readConfig = (env: Record<string, unknown> = process.env as Record<string, unknown>): Config => {
   const required = {
     privyAppId: readEnv(env, 'PRIVY_APP_ID'),
@@ -87,8 +90,8 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
 
   return {
     ...required,
-    monadRpcUrl: readEnv(env, 'MONAD_RPC_URL') || DEFAULT_EVM_ENDPOINTS.monad,
-    ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || DEFAULT_EVM_ENDPOINTS.ethereum,
+    monadRpcUrl: readEnv(env, 'MONAD_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.monad),
+    ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.ethereum),
     solanaRpcUrl: readEnv(env, 'SOLANA_RPC_URL') || DEFAULT_SOLANA_RPC_URL,
   };
 };
@@ -113,7 +116,12 @@ export const buildApp = (config: Config, log: Logger) => {
    * up as a per-chain error rather than as a Worker that cannot boot.
    */
   const evm = createJsonRpcEvmBalanceReader({
-    endpoints: { monad: config.monadRpcUrl, ethereum: config.ethereumRpcUrl },
+    // Una variable de entorno **agrega** un endpoint ahead of the defaults, no
+    // los reemplaza: un override no debería dejar la cadena con una sola URL.
+    endpoints: {
+      monad: [...(config.monadRpcUrl !== DEFAULT_EVM_ENDPOINTS.monad[0] ? [config.monadRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.monad],
+      ethereum: [...(config.ethereumRpcUrl !== DEFAULT_EVM_ENDPOINTS.ethereum[0] ? [config.ethereumRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.ethereum],
+    },
   });
   const solana = createHttpSolanaBalanceReader({ url: config.solanaRpcUrl });
 

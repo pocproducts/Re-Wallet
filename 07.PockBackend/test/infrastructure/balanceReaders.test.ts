@@ -13,7 +13,7 @@ import { createJsonRpcEvmBalanceReader } from '../../src/infrastructure/rpc/json
 import { createHttpSolanaBalanceReader } from '../../src/infrastructure/rpc/solanaBalanceReader.http';
 
 const ADDRESS = '0x1234567890abcdef1234567890abcdef12345678';
-const ENDPOINTS = { monad: 'https://monad.invalid', ethereum: 'https://ethereum.invalid' };
+const ENDPOINTS = { monad: ['https://monad.invalid'], ethereum: ['https://ethereum.invalid'] };
 
 /** A `fetch` that answers with whatever the test hands it, and records the calls. */
 const answering = (
@@ -42,6 +42,37 @@ describe('jsonRpcEvmBalanceReader', () => {
     await expect(reader.nativeBalance('monad', ADDRESS)).resolves.toBe(10n ** 30n);
   });
 
+  it('falls through to the next endpoint when the first one is down', async () => {
+    // Un endpoint público caído es martes, no una excepción: se prueba el
+    // siguiente. Depender de una sola URL convierte una caída externa en una
+    // cadena rota en pantalla.
+    const candidates = { monad: ['https://primero.invalid'], ethereum: ['https://primero.invalid'] };
+    const { fetchImpl, calls } = answering((url) =>
+      url === 'https://primero.invalid'
+        ? { status: 503, text: 'down' }
+        : { text: json('0x2a') },
+    );
+    const reader = createJsonRpcEvmBalanceReader({
+      endpoints: { monad: [...candidates.monad, 'https://segundo.invalid'], ethereum: [...candidates.ethereum, 'https://segundo.invalid'] },
+      fetchImpl,
+    });
+
+    await expect(reader.nativeBalance('monad', ADDRESS)).resolves.toBe(42n);
+    expect(calls.map((c) => c.url)).toEqual(['https://primero.invalid', 'https://segundo.invalid']);
+  });
+
+  it('reports the failure when every candidate endpoint is down', async () => {
+    const { fetchImpl, calls } = answering(() => ({ status: 500, text: 'down' }));
+    const reader = createJsonRpcEvmBalanceReader({
+      endpoints: { monad: ['https://a.invalid', 'https://b.invalid'], ethereum: ['https://a.invalid'] },
+      fetchImpl,
+    });
+
+    // Nunca un cero: si toda la lista falla, la cadena se declara ilegible.
+    await expect(reader.nativeBalance('monad', ADDRESS)).rejects.toThrow(BalanceReadError);
+    expect(calls).toHaveLength(2);
+  });
+
   it('asks each network its own endpoint with the same address', async () => {
     const { fetchImpl, calls } = answering(() => ({ text: json('0x0') }));
     const reader = createJsonRpcEvmBalanceReader({ endpoints: ENDPOINTS, fetchImpl });
@@ -49,7 +80,7 @@ describe('jsonRpcEvmBalanceReader', () => {
     await reader.nativeBalance('monad', ADDRESS);
     await reader.nativeBalance('ethereum', ADDRESS);
 
-    expect(calls.map((c) => c.url)).toEqual([ENDPOINTS.monad, ENDPOINTS.ethereum]);
+    expect(calls.map((c) => c.url)).toEqual([ENDPOINTS.monad[0], ENDPOINTS.ethereum[0]]);
     // The same address on both: one EVM wallet, two networks.
     expect(calls.map((c) => c.body['params'])).toEqual([[ADDRESS, 'latest'], [ADDRESS, 'latest']]);
   });

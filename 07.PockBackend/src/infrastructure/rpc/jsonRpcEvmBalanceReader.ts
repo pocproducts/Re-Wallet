@@ -29,11 +29,6 @@ import { BalanceReadError } from '../../domain/portfolio/errors';
 import type { EvmNetwork } from '../../domain/portfolio/networks';
 import type { EvmBalanceReader } from '../../domain/ports/evm-balance-reader';
 
-export interface EvmEndpoints {
-  readonly monad: string;
-  readonly ethereum: string;
-}
-
 /**
  * The public endpoints this POC reads.
  *
@@ -50,9 +45,23 @@ export interface EvmEndpoints {
  * because public endpoints go down and rate-limit. When one does, the chain
  * reports `error` and the screen says it could not be read — never zero.
  */
-export const DEFAULT_EVM_ENDPOINTS: EvmEndpoints = {
-  monad: 'https://rpc.monad.xyz',
-  ethereum: 'https://ethereum-rpc.publicnode.com',
+/**
+ * One or more candidate endpoints per network. Not an open `Record`: with an
+ * index signature a missing key is legal, and a network with no endpoint would
+ * compile and only fail at the moment somebody needed the balance.
+ */
+export interface EvmEndpointCandidates {
+  readonly monad: readonly string[];
+  readonly ethereum: readonly string[];
+}
+
+export const DEFAULT_EVM_ENDPOINTS: EvmEndpointCandidates = {
+  monad: ['https://rpc.monad.xyz'],
+  ethereum: [
+    'https://ethereum-rpc.publicnode.com',
+    'https://rpc.mevblocker.io',
+    'https://eth.drpc.org',
+  ],
 };
 
 /** `balanceOf(address)`, the first four bytes of the keccak of that signature. */
@@ -77,7 +86,16 @@ const parseQuantity = (result: unknown): bigint => {
 };
 
 export interface JsonRpcEvmBalanceReaderOptions {
-  readonly endpoints?: EvmEndpoints;
+  /**
+   * One or more candidate endpoints per network, tried **in order**. A public
+   * endpoint dying is not an exception, it is Tuesday: `cloudflare-eth.com`
+   * answered when it was written down and stopped answering later, and
+   * `ethereum-rpc.publicnode.com` answers from a laptop and does not answer
+   * from the Workers runtime. Depending on one URL makes an outage look like a
+   * broken chain. The last error is the one reported when every candidate
+   * fails, because that is the one worth reading.
+   */
+  readonly endpoints?: EvmEndpointCandidates;
   /** Injected so this adapter is testable without a network. Defaults to `fetch`. */
   readonly fetchImpl?: typeof fetch;
 }
@@ -88,22 +106,49 @@ export const createJsonRpcEvmBalanceReader = (options: JsonRpcEvmBalanceReaderOp
 
   /** One JSON-RPC call. Throws `BalanceReadError`, never returns a wrong number. */
   const rpc = async (network: EvmNetwork, method: string, params: readonly unknown[]): Promise<bigint> => {
-    const url = endpoints[network];
+    const candidates = endpoints[network];
+    let lastFailure: BalanceReadError | undefined;
 
-    let response: Response;
-    try {
-      response = await send(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-      });
-    } catch (error) {
-      throw new BalanceReadError('RPC_UNAVAILABLE', `${network} ${method} did not reach the endpoint`, {
-        cause: error,
-      });
+    for (const url of candidates) {
+      try {
+        return await callOnce(url, network, method, params, send);
+      } catch (error) {
+        // Un endpoint caido no es el final de la cadena: se prueba el siguiente.
+        lastFailure = error instanceof BalanceReadError ? error : lastFailure;
+      }
     }
 
-    if (!response.ok) {
+    throw (
+      lastFailure ??
+      new BalanceReadError('RPC_UNAVAILABLE', `${network} ${method} has no configured endpoint`)
+    );
+  };
+
+    /**
+ * One request against one endpoint. Isolated from the candidate loop so the
+ * loop reads as what it is: "try each endpoint in turn".
+ */
+const callOnce = async (
+  url: string,
+  network: EvmNetwork,
+  method: string,
+  params: readonly unknown[],
+  send: typeof fetch,
+): Promise<bigint> => {
+  let response: Response;
+  try {
+    response = await send(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    });
+  } catch (error) {
+    throw new BalanceReadError('RPC_UNAVAILABLE', `${network} ${method} did not reach the endpoint`, {
+      cause: error,
+    });
+  }
+
+  if (!response.ok) {
       // 429 is a rate limit and 5xx is an outage; both are the endpoint's problem
       // and both mean "no number", which is what the caller has to be told.
       throw new BalanceReadError('RPC_UNAVAILABLE', `${network} ${method} answered HTTP ${response.status}`);
