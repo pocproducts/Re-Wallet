@@ -26,9 +26,19 @@ import { useAssetTrade } from '../../hooks/useAssetTrade';
 import type { DepositInfoView } from '../../hooks/useDepositInfo';
 import { assetOn, isEvmNetwork, truncateAddress, type DepositNetworkView } from '../../services/depositInfo';
 import type { DepositChainId } from '../../types/deposit.types';
+import { SEND_FAILURE_TEXT, useSendTransfer, type SendTransfer } from '../../hooks/useSendTransfer';
+import { sendAmountToRaw } from '../../services/send';
+import {
+  isValidRecipientForChain,
+  sendChainByKey,
+  type SendChainId,
+  type SendChainView,
+} from '../../config/send';
+import { evmChainById } from '../../config/chains';
 import { formatScaledTrimmed, toScaled } from '../../services/portfolio';
 import type { PortfolioHolding } from '../../services/portfolio';
 import { identityOf } from '../../services/portfolioIdentity';
+import { assetByTicker } from '../../config/assets';
 
 export type ActionModalType = 'depositar' | 'usar' | 'enviar' | null;
 
@@ -53,6 +63,15 @@ interface ActionFlowModalProps {
    * que no pudo leer en lugar de pintar un cero.
    */
   holdings: readonly PortfolioHolding[];
+  /**
+   * Avisa que los saldos hay que volver a leerlos.
+   *
+   * Va **opcional** a propósito: el modal no puede exigirle a quien lo usa que
+   * sepa esto, y sin él el flujo del envío sigue funcionando —lo que pasa es que
+   * la pantalla no refresca sola y la persona tiene que recargar. Quien lo tiene
+   * lo pasa, y el refresh del envío es de verdad.
+   */
+  onBalancesChanged?: () => void;
 }
 
 export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
@@ -61,6 +80,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   userTag,
   depositInfo,
   holdings,
+  onBalancesChanged,
 }) => {
   // Estado del flujo
   const [currentStep, setCurrentStep] = useState<string>('initial'); // 'initial' = pantalla lima
@@ -86,7 +106,31 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
     avatarBg: string;
     avatarImg: string;
   } | null>(null);
-  const [sendSuccess, setSendSuccess] = useState(false);
+  /**
+   * La red del envío, como clave de catálogo. `null` mientras no se eligió.
+   *
+   * Antes el flujo no tenía red: anunciaba once redes en la prosa y no firmaba
+   * ninguna. Ahora sale del catálogo del servidor.
+   */
+  const [sendNetwork, setSendNetwork] = useState<SendChainId | null>(null);
+  /** El monto que no se pudo convertir, o `null`. */
+  const [sendAmountError, setSendAmountError] = useState<string | null>(null);
+
+  /* =========================================================================
+     ENVÍO: EL FLUJO QUE FIRMA
+     ========================================================================= */
+
+  /**
+   * Firmar la transferencia, y volver a leer los saldos cuando terminó.
+   *
+   * El refresh usa las dos fuentes que hay: `depositInfo.reload()` relee el
+   * catálogo —que va a la cadena— y `onBalancesChanged` avisa a quien pasó los
+   * saldos. Ninguna de las dos calcula el saldo a partir del botón apretado.
+   */
+  const sendFlow: SendTransfer = useSendTransfer(() => {
+    depositInfo.reload();
+    onBalancesChanged?.();
+  });
 
   /*
    * El par que se convierte en los dos sentidos.
@@ -115,12 +159,18 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       setDestinationAddress('');
       setLemontagSearch('');
       setSelectedRecipient(null);
-      setSendSuccess(false);
+      setSendAmountError(null);
       setSelectedNetwork(null);
       setDepoSource('crypto');
       setSheetSide(null);
+      /*
+       * Abrir el flujo de enviar arranca una intención nueva: el `requestId` con
+       * el que se protege el doble toque pertenece a un intento, no a la app.
+       */
+      setSendNetwork(null);
+      sendFlow.reset();
     }
-  }, [action]);
+  }, [action, sendFlow.reset]);
 
   /**
    * Abrir un flujo es cambiar de paso y vaciar el monto.
@@ -207,6 +257,136 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
 
   /** ¿Hay más de una red EVM en el catálogo? Así vale la pena explicar la regla. */
   const evmNetworkLabels = depositInfo.networks.filter(isEvmNetwork).map((network) => network.label);
+
+  /* =========================================================================
+     ENVÍO: QUÉ SE PUEDE ENVIAR Y A DÓNDE
+     ========================================================================= */
+
+  /**
+   * Las redes en las que este activo se puede **enviar**, según el catálogo.
+   *
+   * Dos filtros, y los dos importan. El primero —"¿este activo está en esta
+   * red?"— sale del backend, así que no hay lista de redes escrita a mano. El
+   * segundo —"¿esta red se puede firmar?"— sale de `config/send.ts`, que es la
+   * configuración de red del proyecto: el flujo firma con `eth_sendTransaction`,
+   * así que una red sin id EIP-155 no se ofrece aunque esté en el catálogo.
+   *
+   * Antes esta pantalla no tenía ninguno de los dos: anunciaba once redes
+   * escritas a mano, de las que el backend soporta dos.
+   */
+  const sendChainsForCoin: readonly SendChainView[] = networksForCoin(selectedCoin).flatMap((network) => {
+    const chain = sendChainByKey(network.chain);
+    // El nombre sale del catálogo del servidor; el de `config` es el respaldo.
+    return chain === null ? [] : [{ ...chain, label: network.label }];
+  });
+
+  /** La red elegida, ya con su catálogo. `null` mientras no se eligió. */
+  const sendChain: SendChainView | null =
+    sendNetwork === null ? null : (sendChainsForCoin.find((chain) => chain.chain === sendNetwork) ?? null);
+
+  /**
+   * La red de envío implícita cuando hay una sola: un activo que sólo existe en
+   * una red no necesita que se le pregunte por ella.
+   */
+  const sendChainResolved: SendChainView | null =
+    sendChain ?? (sendChainsForCoin.length === 1 ? (sendChainsForCoin[0] ?? null) : null);
+
+  /** El activo en la red de envío, con los decimales del catálogo. */
+  const sendAsset =
+    sendChainResolved === null
+      ? null
+      : (depositInfo.networks
+          .find((network) => network.chain === sendChainResolved.chain)
+          ?.assets.find((asset) => asset.symbol === selectedCoin) ?? null);
+
+  /** La dirección de esta persona en la red de envío: contra ella se firma. */
+  const sendSenderAddress: string | null =
+    sendChainResolved === null
+      ? null
+      : (depositInfo.networks.find((network) => network.chain === sendChainResolved.chain)?.address ?? null);
+
+  /**
+   * ¿La dirección pegada sirve para la red elegida?
+   *
+   * Es la misma regla del backend, escrita para frenar el error obvio sin gastar
+   * una ida y vuelta. **No es una garantía**: el servidor vuelve a validarla y es
+   * la que decide. Ver `config/send.ts`.
+   */
+  const sendRecipientValid: boolean =
+    sendChainResolved !== null && isValidRecipientForChain(sendChainResolved.chain, destinationAddress.trim());
+
+  /** Lo que la pantalla dice cuando la dirección no sirve, o `null`. */
+  const sendRecipientError: string | null =
+    destinationAddress.trim().length === 0 || sendChainResolved === null
+      ? null
+      : sendRecipientValid
+        ? null
+        : `Esa dirección no es válida en ${sendChainResolved.label}. Revisala y pegala de nuevo.`;
+
+  /**
+   * El enlace a la transacción en la exploradora de la red, o `null`.
+   *
+   * La base sale de `config/chains.ts`, que ya fue verificada contra la cadena:
+   * un link a una exploradora equivocada en una billetera es una página que
+   * parece phishing. El hash es un identificador de transacción, no una
+   * dirección, y es lo que hace el envío comprobable.
+   */
+  const sendExplorerUrl: string | null = (() => {
+    if (sendFlow.transferHash === null || sendChainResolved === null) return null;
+    const base = evmChainById(sendChainResolved.chainId)?.blockExplorers?.default.url;
+    return base === undefined ? null : `${base}/tx/${sendFlow.transferHash}`;
+  })();
+
+  /**
+   * Los activos que se pueden **enviar**, según el catálogo.
+   *
+   * Las dos listas decoins que elegían el flujo estaban escritas a mano —`USDC`,
+   * `USDT`, `USDS` de un lado; `BTC`, `ETH`, `SOL`, `USDT` del otro— y ninguna
+   * coincidía con el catálogo: `USDT` no existe en el backend y `USDS` tampoco,
+   * así que las dos offers eran destinos que el servidor rechaza. Ahora salen de
+   * `depositInfo.assets`, que es la respuesta del servidor, y se quedan afuera las
+   * que no tienen ninguna red que esta billetera pueda firmar.
+   */
+  const sendableAssets: readonly typeof depositInfo.assets[number][] = depositInfo.assets.filter((asset) =>
+    asset.networks.some((network) => sendChainByKey(network.chain) !== null),
+  );
+
+  /** La lista de un camino: los dólares o las cripto, del mismo catálogo. */
+  const sendableAssetsOfKind = (kind: 'crypto' | 'dollar'): readonly typeof depositInfo.assets[number][] =>
+    sendableAssets.filter((asset) => asset.kind === kind);
+
+  /**
+   * Arranca el envío: convierte el monto a la unidad mínima y se lo pasa al hook.
+   *
+   * La conversión es exacta y recorta en vez de redondear —`sendAmountToRaw`—: un
+   * redondeo acá mandaría una plata que la persona no escribió. Si no se puede
+   * convertir, no se llama al hook: la pantalla dice qué pasó y no sale nada.
+   *
+   * La escala es la del catálogo y no la del locale, porque a la escala
+   * equivocada `1500000` no es el envío que la persona escribió.
+   */
+  const startSend = (): void => {
+    if (sendChainResolved === null || sendAsset === null || sendSenderAddress === null) return;
+
+    let amountRaw: string;
+    try {
+      amountRaw = sendAmountToRaw(keypadAmount, sendAsset.decimals);
+    } catch {
+      setSendAmountError('El monto no es un número válido para este activo.');
+      return;
+    }
+
+    setSendAmountError(null);
+    setCurrentStep('send_result');
+    void sendFlow.send({
+      chain: sendChainResolved.chain,
+      symbol: sendAsset.symbol,
+      decimals: sendAsset.decimals,
+      recipient: destinationAddress.trim(),
+      amountRaw,
+      senderAddress: sendSenderAddress,
+    });
+  };
 
   /** Abrir la lista de redes de un activo, guardando de qué lista se viene. */
   const chooseCoin = (symbol: string, source: 'crypto' | 'dollars'): void => {
@@ -1195,15 +1375,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                 >
                   <Copy className="w-5 h-5 stroke-[2]" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setLemontagSearch('$lujyyctz')}
-                  aria-label="Escanear QR"
-                  title="Escanear QR"
-                  className="p-1 hover:opacity-70 active:scale-90 transition-transform cursor-pointer"
-                >
-                  <QrCode className="w-5 h-5 stroke-[2]" />
-                </button>
+                {/*
+                 * Este botón de "Escanear QR" escribía `$lujyyctz` en el campo: un
+                 * tag inventado, de la lista de contactos de mentira que hay dos
+                 * pantallas más abajo. Tampoco escaneaba, y el escaneo de verdad no
+                 * existe todavía en la app. Se saca.
+                 */}
               </div>
             </div>
 
@@ -1363,22 +1540,37 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             </div>
 
             {/* Botón de Enviar */}
-            <button
-              onClick={() => {
-                if (keypadAmount === '0' || keypadAmount === '0,') {
-                  return;
-                }
-                confetti({ particleCount: 50, spread: 60 });
-                setSendSuccess(true);
-                setTimeout(() => {
-                  onClose();
-                }, 1800);
-              }}
-              type="button"
-              className="w-full py-4 rounded-2xl bg-[#ccff00] hover:bg-[#b8e600] text-black font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer"
-            >
-              {sendSuccess ? '✓ ¡Transferencia enviada!' : `Enviar U$ ${keypadAmount}`}
-            </button>
+            {/*
+             * Este botón decía "✓ ¡Transferencia enviada!" con confetti después
+             * de no mover un peso: un $ReTag no es una dirección, no hay red de
+             * pagos interna —una app que se paga a sí misma es una app que puede
+             * perder plata— y este camino no tiene a qué dirección firmar.
+             *
+             * Un botón que anuncia un envío que no ocurrió es la misma mentira que
+             * announce el escaneo de QR, y en la pantalla donde se decide a quién
+             * se le manda la plata es la peor de las tres. Por eso no dice
+             * "enviado": dice que todavía no está disponible y por dónde sí.
+             */}
+            <div className="space-y-2">
+              <button
+                disabled
+                type="button"
+                className="w-full py-4 rounded-2xl bg-slate-200 text-slate-500 font-extrabold text-sm cursor-not-allowed"
+              >
+                Enviar a un $ReTag todavía no está disponible
+              </button>
+              <button
+                onClick={() => {
+                  sendFlow.reset();
+                  setSelectedRecipient(null);
+                  setCurrentStep('send_where');
+                }}
+                type="button"
+                className="w-full py-3 rounded-2xl bg-white text-black font-extrabold text-sm shadow-2xs active:scale-95 transition-all border border-slate-200 cursor-pointer"
+              >
+                Enviar a una wallet crypto
+              </button>
+            </div>
           </div>
           <div className="pb-4" />
         </div>
@@ -1410,28 +1602,46 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             </div>
 
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
-              {[
-                { symbol: 'USDC', bg: 'bg-[#2775CA]', icon: '$' },
-                { symbol: 'USDT', bg: 'bg-[#26A17B]', icon: '₮' },
-                { symbol: 'USDS', bg: 'bg-[#F5AC37]', icon: 'S' },
-              ].map((coin) => (
-                <div
-                  key={coin.symbol}
-                  onClick={() => {
-                    setSelectedCoin(coin.symbol);
-                    setCurrentStep('send_dest_input');
-                  }}
-                  className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
-                >
-                  <div className="flex items-center gap-3.5">
-                    <div className={`w-10 h-10 rounded-full ${coin.bg} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}>
-                      {coin.icon}
+              {/*
+               * La lista sale de `sendableAssetsOfKind('dollar')`, que viene del
+               * catálogo del servidor. Estaba escrita a mano —`USDC`, `USDT`,
+               * `USDS`— y dos de esos tres no existen en el backend: eran
+               * promesas de envío que el servidor rechaza con
+               * `ASSET_NOT_ON_CHAIN`.
+               */}
+              {sendableAssetsOfKind('dollar').map((coin) => {
+                const known = assetByTicker(coin.symbol);
+                return (
+                  <div
+                    key={coin.symbol}
+                    onClick={() => {
+                      setSelectedCoin(coin.symbol);
+                      setSendNetwork(null);
+                      setDestinationAddress('');
+                      setCurrentStep('send_dest_input');
+                    }}
+                    className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <div
+                        className={`w-10 h-10 rounded-full ${known?.iconBg ?? 'bg-slate-200'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
+                      >
+                        {known?.glyph ?? coin.symbol.slice(0, 1)}
+                      </div>
+                      <div>
+                        <span className="text-base font-bold text-black block">{coin.symbol}</span>
+                        <span className="text-xs text-slate-400 font-medium block">{coin.name}</span>
+                      </div>
                     </div>
-                    <span className="text-base font-bold text-black">{coin.symbol}</span>
+                    <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
                   </div>
-                  <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
-                </div>
-              ))}
+                );
+              })}
+              {sendableAssetsOfKind('dollar').length === 0 && (
+                <p className="p-4 text-sm font-medium text-slate-400">
+                  Todavía no hay dólares digitales que se puedan enviar.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -1457,12 +1667,63 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               <h1 className="text-2xl font-black font-display text-black tracking-tight leading-tight">
                 Ingresá una dirección de destino
               </h1>
+              {/*
+               * La frase que estaba acá anunciaba once redes escritas a mano
+               * —"Arbitrum, Base, Bnb Chain (BEP20), CELO, Ethereum (ERC20),
+               * Monad, Optimism, Polygon, Solana, Stellar o ZKsync Era"—, de las
+               * que el backend prepara dos. Prometía destinos donde la plata se
+               * pierde sin error. Ahora sale de `sendChainsForCoin`, que es el
+               * catálogo del servidor filtrado por las redes que esta billetera
+               * puede firmar: no hay ninguna red escrita en esta pantalla.
+               */}
               <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                Podés enviar a direcciones de billeteras que pertenezcan a la red Arbitrum, Base, Bnb Chain (BEP20), CELO, Ethereum (ERC20), Monad, Optimism, Polygon, Solana, Stellar o ZKsync Era.
+                {sendChainsForCoin.length === 0 ? (
+                  <>Todavía no podemos enviar {selectedCoin}.</>
+                ) : (
+                  <>
+                    Hoy el envío funciona en{' '}
+                    {joinNetworkLabels(sendChainsForCoin.map((chain) => chain.label))}. En otra red el
+                    backend no lo prepara y la plata se pierde.
+                  </>
+                )}
+              </p>
+              {/*
+               * Y por qué hay un campo de dirección, cuando ReWALLET no muestra
+               * direcciones. El envío llega por QR o por nombre y la app resuelve
+               * el destino sola; ésta es la excepción técnica inevitable del envío
+               * a una wallet externa, y la copia lo dice para que quede claro que
+               * no hay que aprenderse ni transcribir nada.
+               */}
+              <p className="text-xs text-slate-400 font-medium leading-relaxed pt-1">
+                ReWALLET no te muestra direcciones ni te pide que memorices ninguna. Pegá acá la que te
+                dio la otra wallet.
               </p>
             </div>
 
-            {/* Input dirección con Pegar y QR */}
+            {/* Red del envío: sale del catálogo, nunca de una lista escrita acá */}
+            {sendChainsForCoin.length > 1 && (
+              <div className="space-y-2">
+                <span className="text-xs font-bold text-black font-display block">En qué red</span>
+                <div className="bg-white rounded-3xl border border-slate-200/80 divide-y divide-slate-100 overflow-hidden">
+                  {sendChainsForCoin.map((chain) => (
+                    <div
+                      key={chain.chain}
+                      onClick={() => setSendNetwork(chain.chain)}
+                      className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
+                    >
+                      <span className="text-sm font-bold text-black">{chain.label}</span>
+                      {chain.chain === sendChain?.chain ? (
+                        <Check className="w-5 h-5 text-black stroke-[3]" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Input dirección, con Pegar. El escaneo de QR no está: ver abajo. */}
             <div className="p-4 bg-slate-100 rounded-3xl flex items-center justify-between gap-2 border border-slate-200">
               <input
                 type="text"
@@ -1477,66 +1738,277 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   onClick={async () => {
                     try {
                       const text = await navigator.clipboard?.readText();
-                      if (text) setDestinationAddress(text);
+                      if (text) setDestinationAddress(text.trim());
                     } catch {}
                   }}
                   title="Pegar del portapapeles"
+                  aria-label="Pegar del portapapeles"
                   className="p-1.5 rounded-lg text-slate-600 hover:text-black"
                 >
                   <Clipboard className="w-5 h-5" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setDestinationAddress('0xCcBe254009A4e82B96cD3105B89B2EA68f267a6')}
-                  title="Escanear QR"
-                  className="p-1.5 rounded-lg text-slate-600 hover:text-black"
-                >
-                  <QrCode className="w-5 h-5" />
-                </button>
+                {/*
+                 * El botón de escanear QR estaba acá y no escaneaba nada: escribía
+                 * una dirección fija, `0xCcBe254009A4e82B96cD3105B89B2EA68f267a6`,
+                 * que además no es la de ninguna wallet de ReWALLET. Un botón que
+                 * no hace lo que su nombre dice, en la pantalla donde se decide a
+                 * quién se le manda la plata, es peor que no tenerlo.
+                 *
+                 * Se saca en vez de implementarlo porque un escaneo de verdad
+                 * necesita decodificar el frames de la cámara y no hay ninguna
+                 * dependencia de eso en el proyecto: `QrScannerModal` abre la
+                 * cámara pero devuelve tags escritos a mano. Agregar el
+                 * decodificador es trabajo con nombre propio, no un detalle.
+                 */}
               </div>
             </div>
 
-            {/* Mi Agenda */}
-            <div className="space-y-2 pt-2">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-xs font-bold text-black font-display">Mi agenda</span>
-                <button
-                  type="button"
-                  className="px-3 py-1 rounded-full bg-slate-200 text-slate-700 text-xs font-bold"
-                >
-                  Agregar billetera
-                </button>
-              </div>
+            {sendRecipientError !== null && (
+              <p className="text-xs font-semibold text-red-600 leading-relaxed -mt-2">{sendRecipientError}</p>
+            )}
 
-              <div
-                onClick={() => setDestinationAddress('0xCcBe254009A4e82B96cD3105B89B2EA68f267a6')}
-                className="p-4 bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
-              >
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-sm">
-                    ◎
-                  </div>
-                  <div>
-                    <span className="text-sm font-bold text-black block leading-none">Prueba ReWALLET</span>
-                    <span className="text-xs font-mono text-slate-400 block mt-1">0xcCbe254...EA68f267a6</span>
-                  </div>
-                </div>
-                <span className="text-slate-400 font-bold">•••</span>
-              </div>
-            </div>
+            {/*
+             * "Mi agenda" mostraba un contacto —"Prueba ReWALLET", `0xcCbe…`— que
+             * tampoco existe en esta app, y tocarlo escribía la misma dirección
+             * falsa. No hay agenda: los contactos salen de los envíos, que es la
+             * tarea siguiente. La fila se va porque una agenda con un contacto
+             * falso es una agenda que manda plata a la nada.
+             */}
 
             <button
               onClick={() => {
-                confetti({ particleCount: 30, spread: 50 });
-                alert(`Envío programado de ${selectedCoin} a ${destinationAddress || '0xcCbe...7a6'}`);
-                onClose();
+                setKeypadAmount('0');
+                setCurrentStep('send_amount');
               }}
+              disabled={!sendRecipientValid || sendChainResolved === null}
               type="button"
-              className="w-full py-4 rounded-full bg-[#ccff00] text-black font-extrabold text-sm shadow-md active:scale-95 transition-transform mt-4"
+              className="w-full py-4 rounded-full bg-[#ccff00] text-black font-extrabold text-sm shadow-md active:scale-95 transition-transform mt-4 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Continuar al envío
             </button>
           </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          FLUJO ENVIAR: MONTO
+         =====================================================================
+         Este paso no existía: el flujo.crypto llegaba a un `alert()` sin monto
+         siquiera. Un envío sin monto no es un envío, así que el paso se agregó
+         con el mismo reparto visual que los otros —monto arriba, teclado abajo—,
+         sin tocar la navegación que ya estaba.
+         ===================================================================== */}
+      {currentStep === 'send_amount' && (
+        <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#f3f4f6] select-none">
+          <div className="p-4 pt-5 flex items-center justify-between shrink-0">
+            <button
+              onClick={() => setCurrentStep('send_dest_input')}
+              type="button"
+              aria-label="Volver"
+              className="w-11 h-11 rounded-full bg-white flex items-center justify-center text-black shadow-2xs cursor-pointer"
+            >
+              <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
+            </button>
+            <h2 className="text-sm font-extrabold font-display text-black">Enviar {selectedCoin}</h2>
+            <div className="w-9" />
+          </div>
+
+          <div className="flex-1 flex flex-col px-5 pb-6 space-y-4 max-w-sm mx-auto w-full">
+            {/* Destinatario: se muestra recortado y con el monto al lado, nunca
+                como algo que haya que leer, comparar ni reescribir. */}
+            <div className="bg-white rounded-2xl p-3 border border-slate-200/80 flex items-center justify-between gap-3 shadow-2xs">
+              <div className="min-w-0">
+                <span className="text-xs text-slate-400 font-medium block">Vas a enviar a</span>
+                <span className="text-sm font-mono font-bold text-black block truncate">
+                  {truncateAddress(destinationAddress.trim(), 8, 6)}
+                </span>
+              </div>
+              <span className="text-xs font-bold text-slate-500 shrink-0">{sendChainResolved?.label}</span>
+            </div>
+
+            <div className="bg-white rounded-3xl p-5 border border-slate-200/80 text-center shadow-xs space-y-1">
+              <span className="text-xs font-bold uppercase text-slate-400 font-display">Monto a enviar</span>
+              <div className="flex items-baseline justify-center font-display">
+                <span className="text-2xl font-bold text-slate-400 mr-1">U$</span>
+                <span className="text-5xl font-black text-black tracking-tight">{keypadAmount}</span>
+              </div>
+              <span className="text-[11px] text-slate-400 block pt-1 font-medium">
+                {sendAsset === null
+                  ? 'No pudimos leer este activo en la red elegida.'
+                  : `Tu saldo disponible se descuenta de ${sendChainResolved?.label}.`}
+              </span>
+            </div>
+
+            {sendAmountError !== null && (
+              <p className="text-xs font-semibold text-red-600 leading-relaxed">{sendAmountError}</p>
+            )}
+
+            <div className="grid grid-cols-3 gap-2 pt-2 flex-1 min-h-[232px] auto-rows-fr">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'backspace'].map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => handleKeypadPress(key)}
+                  className="h-full py-3.5 bg-white hover:bg-slate-100 rounded-2xl font-display font-extrabold text-lg text-black active:scale-95 transition-all shadow-2xs flex items-center justify-center cursor-pointer"
+                >
+                  {key === 'backspace' ? <ArrowLeft className="w-5 h-5 stroke-[2.5]" /> : key}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={startSend}
+              type="button"
+              className="w-full py-4 rounded-2xl bg-[#ccff00] hover:bg-[#b8e600] text-black font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer"
+            >
+              {`Enviar ${keypadAmount} ${selectedCoin}`}
+            </button>
+          </div>
+          <div className="pb-4" />
+        </div>
+      )}
+
+      {/* =====================================================================
+          FLUJO ENVIAR: RESULTADO — CADA PASO Y EL HASH
+         =====================================================================
+         La regla de la tarea: **un envío sin hash visible no es un envío, es una
+         promesa**. Por eso el resultado no muestra "listo": muestra los cuatro
+         pasos con su estado, el hash de la transacción y el motivo del corte
+         cuando lo hubo. Los saldos se releen al final; nada de esto se calcula
+         a partir del botón.
+         ===================================================================== */}
+      {currentStep === 'send_result' && (
+        <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#f3f4f6]">
+          <div className="p-4 pt-5 flex items-center justify-between shrink-0">
+            <button
+              onClick={() => {
+                if (sendFlow.phase === 'signing' || sendFlow.phase === 'preparing') return;
+                sendFlow.reset();
+                setCurrentStep('send_amount');
+              }}
+              type="button"
+              aria-label="Volver"
+              className="w-11 h-11 rounded-full bg-white flex items-center justify-center text-black shadow-2xs cursor-pointer disabled:opacity-40"
+            >
+              <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
+            </button>
+            <h2 className="text-sm font-extrabold font-display text-black">Envío</h2>
+            <div className="w-9" />
+          </div>
+
+          <div className="flex-1 flex flex-col px-5 pb-6 space-y-4 max-w-sm mx-auto w-full">
+            {/* Los pasos, uno por uno */}
+            <div className="bg-white rounded-3xl border border-slate-200/80 divide-y divide-slate-100 overflow-hidden">
+              {sendFlow.steps.map((entry) => (
+                <div key={entry.id} className="p-4 flex items-center gap-3">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0 bg-slate-300" aria-hidden />
+                  <span
+                    className={`text-sm font-semibold flex-1 ${
+                      entry.status === 'failed'
+                        ? 'text-red-600'
+                        : entry.status === 'signed'
+                          ? 'text-black'
+                          : 'text-slate-400'
+                    }`}
+                  >
+                    {entry.label}
+                  </span>
+                  <span className="text-xs font-bold text-slate-400">
+                    {entry.status === 'running'
+                      ? '…'
+                      : entry.status === 'signed'
+                        ? 'Listo'
+                        : entry.status === 'failed'
+                          ? 'Falló'
+                          : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* El hash. Sin hash no hay envío. */}
+            {sendFlow.transferHash !== null && (
+              <div className="bg-white rounded-3xl border border-slate-200/80 p-4 space-y-3 shadow-xs">
+                <span className="text-xs font-bold uppercase text-slate-400 font-display block">
+                  Comprobante de la transacción
+                </span>
+                <p className="text-[11px] leading-relaxed text-slate-500 font-medium">
+                  Tu envío está en la red. Todavía puede tardar unos segundos en confirmarse, pero desde
+                  este hash se puede seguir y verificar sin creernos.
+                </p>
+                <div className="bg-slate-100 rounded-2xl px-3 py-2.5 flex items-center gap-2">
+                  <code className="text-[11px] font-mono font-bold text-black break-all flex-1 min-w-0">
+                    {sendFlow.transferHash}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(sendFlow.transferHash ?? '')}
+                    aria-label="Copiar el hash"
+                    className="shrink-0 text-slate-500 hover:text-black active:scale-90"
+                  >
+                    <Copy className="w-4 h-4 stroke-[2]" />
+                  </button>
+                </div>
+                {sendExplorerUrl !== null && (
+                  <a
+                    href={sendExplorerUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block text-center text-xs font-bold text-slate-600 underline underline-offset-2"
+                  >
+                    Ver la transacción en la exploradora
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* El corte, si lo hubo. El texto sale de la tabla del hook. */}
+            {sendFlow.failureCode !== null && (
+              <div className="bg-white rounded-3xl border border-red-200 p-4 space-y-1 shadow-xs">
+                <span className="text-xs font-bold uppercase text-red-500 font-display block">
+                  No se completó
+                </span>
+                <p className="text-sm font-semibold text-black leading-relaxed">
+                  {SEND_FAILURE_TEXT[sendFlow.failureCode] ?? 'No pudimos completar el envío.'}
+                </p>
+              </div>
+            )}
+
+            <div className="flex-1" />
+
+            {sendFlow.phase === 'done' ? (
+              <button
+                onClick={onClose}
+                type="button"
+                className="w-full py-4 rounded-2xl bg-[#ccff00] text-black font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer"
+              >
+                Listo
+              </button>
+            ) : sendFlow.phase === 'failed' ? (
+              <button
+                onClick={() => {
+                  /*
+                   * Reintentar es una intención nueva con un `requestId` nuevo, y
+                   * sólo se ofrece cuando **nada** se firmó: si hay un hash, el
+                   * botón de arriba ya no aparece y el envío se dio por hecho.
+                   */
+                  if (sendFlow.transferHash !== null) return;
+                  sendFlow.reset();
+                  setCurrentStep('send_amount');
+                }}
+                disabled={sendFlow.transferHash !== null}
+                type="button"
+                className="w-full py-4 rounded-2xl bg-white text-black font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer border border-slate-200"
+              >
+                Reintentar
+              </button>
+            ) : (
+              <p className="text-center text-xs font-semibold text-slate-400 pb-2">
+                Confirmá en tu wallet. No cierres la app.
+              </p>
+            )}
+          </div>
+          <div className="pb-4" />
         </div>
       )}
 
@@ -1561,32 +2033,38 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             </h1>
 
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
-              {[
-                { symbol: 'BTC', name: 'Bitcoin', bg: 'bg-[#F7931A]', icon: '₿' },
-                { symbol: 'ETH', name: 'Ethereum', bg: 'bg-[#627EEA]', icon: 'Ξ' },
-                { symbol: 'SOL', name: 'Solana', bg: 'bg-black text-[#14F195]', icon: '◎' },
-                { symbol: 'USDT', name: 'Tether USD', bg: 'bg-[#26A17B]', icon: '₮' },
-              ].map((c) => (
-                <div
-                  key={c.symbol}
-                  onClick={() => {
-                    setSelectedCoin(c.symbol);
-                    setCurrentStep('send_dest_input');
-                  }}
-                  className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
-                >
-                  <div className="flex items-center gap-3.5">
-                    <div className={`w-10 h-10 rounded-full ${c.bg} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}>
-                      {c.icon}
+              {/* También del catálogo del servidor, no de una lista escrita a mano. */}
+              {sendableAssetsOfKind('crypto').map((c) => {
+                const known = assetByTicker(c.symbol);
+                return (
+                  <div
+                    key={c.symbol}
+                    onClick={() => {
+                      setSelectedCoin(c.symbol);
+                      setSendNetwork(null);
+                      setDestinationAddress('');
+                      setCurrentStep('send_dest_input');
+                    }}
+                    className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <div
+                        className={`w-10 h-10 rounded-full ${known?.iconBg ?? 'bg-slate-200'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
+                      >
+                        {known?.glyph ?? c.symbol.slice(0, 1)}
+                      </div>
+                      <div>
+                        <span className="text-sm font-extrabold text-black block leading-none">{c.symbol}</span>
+                        <span className="text-xs text-slate-400 font-medium block mt-0.5">{c.name}</span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-sm font-extrabold text-black block leading-none">{c.symbol}</span>
-                      <span className="text-xs text-slate-400 font-medium block mt-0.5">{c.name}</span>
-                    </div>
+                    <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
                   </div>
-                  <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
-                </div>
-              ))}
+                );
+              })}
+              {sendableAssetsOfKind('crypto').length === 0 && (
+                <p className="p-4 text-sm font-medium text-slate-400">Todavía no hay cripto que se pueda enviar.</p>
+              )}
             </div>
           </div>
         </div>

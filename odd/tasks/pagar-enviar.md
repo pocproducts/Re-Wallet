@@ -106,6 +106,33 @@ más corto para un pago entre personas.
 
 **Gate**: `tsc` limpio y build ok.
 
+> **T2 — hecho (2026-10-04).** `POST /api/send/prepare` alcanza, y la pantalla de
+> enviar **existe pero no está conectada**: los pasos `send_where`,
+> `send_lemon_account`, `send_lemon_amount`, `send_coin_select`, `send_crypto_list`
+> y `send_dest_input` ya están en `ActionFlowModal.tsx`, y `grep` de `api/send` en
+> `05. UI-UX/src` no devuelve **nada**. Falta el hook que firma.
+>
+> **La plantilla a copiar es `usePoolDeposit.ts`**, casi literal: mismos pasos
+> reportados uno por uno, mismo cambio de red antes de firmar, mismo refresh al
+> final. La diferencia es que el envío es **una sola** transacción
+> (`purpose: 'transfer'`), así que no hay approve que pueda quedar a medio hacer.
+>
+> **Dos mentiras que hay que sacar en el mismo trabajo**, porque T2 las pisa de paso:
+>
+> 1. La pantalla de destino anuncia *"red Arbitrum, Base, Bnb Chain (BEP20), CELO,
+>    Ethereum (ERC20), Monad, Optimism, Polygon, Solana, Stellar o ZKsync Era"*.
+>    Son **once redes escritas a mano**, y el backend solo soporta `monad` y
+>    `ethereum`. La frase promete redes donde la plata se pierde.
+> 2. El botón de escanear QR **no escanea nada**: pone una dirección fija,
+>    `0xCcBe254009A4e82B96cD3105B89B2EA68f267a6`, que además no es una dirección
+>    real de ReWALLET (no coincide con ninguna wallet de la app).
+>
+> **Decisión de diseño que hay que respetar:** la prohibición de la dirección es
+> **global** — el envío llega por QR o por nombre, y la app nunca muestra una
+> dirección. T2 es la excepción técnica inevitable (alguien tiene que escribir o
+> escanear el destino), y por eso la pantalla no debe presentar la dirección como
+> algo que la persona memoriza o transcribe a mano.
+
 ## Allowed edit surfaces
 
 - `07.PockBackend/src/**`
