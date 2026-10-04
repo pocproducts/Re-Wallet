@@ -37,6 +37,20 @@
  * donde elegir mal se paga, eso no es cosmético. Por eso el orden vive en este
  * array y hay un test que lo afirma por red.
  *
+ * ── Por qué cada activo declara `kind` y no un `isDollar` ────────────────────
+ *
+ * Porque la pantalla de depósito tiene **dos caminos**: "Cripto" y "Dólares
+ * digitales", y la pregunta "¿qué activo pertenece a cuál?" tiene que tener una
+ * sola respuesta. Si esa respuesta viviera en las pantallas, cada una tendría su
+ * lista y agregar un dólar sería editar dos pantallas —que es exactamente el
+ * trabajo que esta clasificación viene a eliminar—. Con `kind` en la fila, las
+ * dos pantallas **filtran** la misma respuesta y un USDT verifiable entra solo.
+ *
+ * Y el nombre es `kind` con dos valores, y no `isDollar`, porque `isDollar:
+ * false` se lee como "todo lo demás", y acá "todo lo demás" no es una categoría
+ * honesta: es lo que todavía nadie clasificó. Un `kind` obliga a clasificar cada
+ * fila, y una fila sin clasificar es un error de compilación.
+ *
  * ── Por qué cada token futuro entra con su contrato verificado ────────────────
  *
  * El campo `token` es el contrato **de esa red**, no el de otra: el USDC de
@@ -57,12 +71,36 @@ import type { PortfolioChain } from '../portfolio/networks';
  */
 export type DepositChain = PortfolioChain;
 
+/**
+ * Cómo se ofrece un activo en la pantalla de depósito.
+ *
+ * - `crypto`: las criptomonedas nativas —`MON`, `ETH`, `SOL`—. Es el camino
+ *   "Depositar → Cripto".
+ * - `dollar`: las stablecoins —hoy `USDC`—. Es el camino "Depositar → Dólares
+ *   digitales".
+ *
+ * Dos valores y ninguno más: un tercer valor sería una pantalla nueva, y eso se
+ * decide en el producto, no acá.
+ */
+export type DepositAssetKind = 'crypto' | 'dollar';
+
 /** Un activo que se puede recibir en una red. */
 export interface DepositAssetSpec {
   /** `MON`, `USDC`, `ETH`, `SOL`. Es la clave con la que se lo busca siempre. */
   readonly symbol: string;
   /** Lo que ve la persona: `Monad`, `Dólares digitales`. */
   readonly name: string;
+  /**
+   * En qué camino de la pantalla se ofrece este activo: `crypto` o `dollar`.
+   *
+   * Es el **único** lugar donde se decide qué activos son dólares. Los dos
+   * caminos de depósito filtran por este campo, así que un dólar nuevo aparece
+   * en la pantalla correcta sin tocar ninguna de las dos.
+   *
+   * Viaja tal cual en la respuesta de `/api/deposit-info`: es aditivo y no
+   * cambia ningún otro campo del activo.
+   */
+  readonly kind: DepositAssetKind;
   /**
    * Cuántos decimales tiene el token. La pantalla no lo adivina: un exponente
    * equivocado no es una cifra fea, es dinero mal mostrado.
@@ -112,10 +150,13 @@ export const DEPOSIT_NETWORKS: readonly DepositNetworkSpec[] = [
     label: 'Monad',
     evmNetwork: 'eip155:143',
     assets: [
-      { symbol: 'MON', name: 'Monad', decimals: 18, native: true, token: null, balanceReadable: true },
+      { symbol: 'MON', name: 'Monad', kind: 'crypto', decimals: 18, native: true, token: null, balanceReadable: true },
       {
         symbol: 'USDC',
         name: 'Dólares digitales',
+        // Un stablecoin es un dólar digital: va al camino de dólares, no al de
+        // cripto. El mismo `kind` en Ethereum, más abajo.
+        kind: 'dollar',
         decimals: 6,
         native: false,
         // Verificado en Monad mainnet: contrato con bytecode, `symbol()` = USDC
@@ -130,10 +171,11 @@ export const DEPOSIT_NETWORKS: readonly DepositNetworkSpec[] = [
     label: 'Ethereum',
     evmNetwork: 'eip155:1',
     assets: [
-      { symbol: 'ETH', name: 'Ethereum', decimals: 18, native: true, token: null, balanceReadable: true },
+      { symbol: 'ETH', name: 'Ethereum', kind: 'crypto', decimals: 18, native: true, token: null, balanceReadable: true },
       {
         symbol: 'USDC',
         name: 'Dólares digitales',
+        kind: 'dollar',
         decimals: 6,
         native: false,
         // **Otro** contrato. El USDC de Ethereum no es el de Monad: usar el de
@@ -147,6 +189,9 @@ export const DEPOSIT_NETWORKS: readonly DepositNetworkSpec[] = [
     chain: 'solana',
     label: 'Solana',
     evmNetwork: null,
-    assets: [{ symbol: 'SOL', name: 'Solana', decimals: 9, native: true, token: null, balanceReadable: true }],
+    // Solana todavía no tiene un dólar en el catálogo: **no** es un error de la
+    // pantalla de dólares, es un hecho del catálogo. Cuando entre un USDC acá,
+    // el camino de dólares lo muestra sin tocar ninguna pantalla.
+    assets: [{ symbol: 'SOL', name: 'Solana', kind: 'crypto', decimals: 9, native: true, token: null, balanceReadable: true }],
   },
 ];

@@ -610,27 +610,30 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
 
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
               {/*
-                Monedas que el camino de "dólares" ofrece. USDC está en el
-                catálogo; USDT y USDS todavía no, y no se los inventa: si se
-                elige una, la pantalla siguiente lo dice con las alternativas
-                reales en lugar de abrir una lista de redes que no existen.
+                Este camino lista **lo que el catálogo declara como dólar**, en
+                Monad y en Ethereum. No hay una lista propia acá: cuando USDT
+                entre al catálogo aparece solo, sin tocar esta pantalla.
               */}
-              {[
-                { symbol: 'USDC', name: 'USDC', bg: 'bg-[#2775CA]', icon: '$' },
-                { symbol: 'USDT', name: 'USDT', bg: 'bg-[#26A17B]', icon: '₮' },
-                { symbol: 'USDS', name: 'USDS', bg: 'bg-[#F5AC37]', icon: 'S' },
-              ].map((coin) => (
+              {depositInfo.dollarAssets.map((coin) => (
                 <div
                   key={coin.symbol}
                   onClick={() => chooseCoin(coin.symbol, 'dollars')}
                   className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
                 >
                   <div className="flex items-center gap-3.5">
-                    <div
-                      className={`w-10 h-10 rounded-full ${coin.bg} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                    >
-                      {coin.icon}
-                    </div>
+                    {(() => {
+                      // La identidad visual sale del catalogo de la app, no de
+                      // esta fila: el color y el glifo son presentacion, y esta
+                      // pantalla ya no lleva su propia lista de activos.
+                      const identity = identityOf(coin.symbol);
+                      return (
+                        <div
+                          className={`w-10 h-10 rounded-full ${identity?.iconBg ?? 'bg-slate-400'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
+                        >
+                          {identity?.glyph ?? coin.symbol.slice(0, 1)}
+                        </div>
+                      );
+                    })()}
                     <span className="text-base font-bold text-black">
                       {coin.name}
                     </span>
@@ -1013,7 +1016,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               </div>
             )}
 
-            {depositInfo.status === 'ready' && depositInfo.assets.length === 0 && (
+            {depositInfo.status === 'ready' && depositInfo.cryptoAssets.length === 0 && (
               <p className="text-sm text-slate-500 font-medium">
                 Todavía no hay ningún activo configurado para recibir.
               </p>
@@ -1024,7 +1027,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               Elegir un activo que vive en dos redes lleva a la pantalla de redes:
               la dirección depende de la red elegida.
             */}
-            {depositInfo.assets
+            {depositInfo.cryptoAssets
               .filter(
                 (asset) =>
                   cryptoSearch.trim().length === 0 ||

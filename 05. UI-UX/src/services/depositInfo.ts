@@ -29,6 +29,7 @@
 import { getJson } from './api';
 import type {
   DepositAsset,
+  DepositAssetKind,
   DepositChainId,
   DepositInfoResponse,
   DepositNetwork,
@@ -80,6 +81,8 @@ export interface DepositAssetView {
   readonly name: string;
   readonly decimals: number;
   readonly native: boolean;
+  /** Clasificación del catálogo: en qué camino de depósito se ofrece. */
+  readonly kind: DepositAssetKind;
   /** Las redes donde este activo se puede recibir, en el orden del catálogo. */
   readonly networks: readonly DepositNetworkView[];
   /** Cuántas de esas redes tienen una dirección real. */
@@ -106,7 +109,10 @@ export const normalizeDepositInfo = (body: unknown): DepositCatalog => {
             typeof asset.decimals === 'number' &&
             Number.isInteger(asset.decimals) &&
             asset.decimals >= 0 &&
-            typeof asset.balanceReadable === 'boolean',
+            typeof asset.balanceReadable === 'boolean' &&
+            // Un activo sin clasificacion no entra: decidir en que camino esta
+            // es del servidor, y un kind desconocido no se puede ubicar.
+            (asset.kind === 'crypto' || asset.kind === 'dollar'),
         )
       : [];
 
@@ -153,7 +159,10 @@ export const readDepositInfo = async (): Promise<DepositCatalog> =>
  * una dirección.
  */
 export const assetsBySymbol = (networks: readonly DepositNetworkView[]): readonly DepositAssetView[] => {
-  const bySymbol = new Map<string, { name: string; decimals: number; native: boolean; networks: DepositNetworkView[] }>();
+  const bySymbol = new Map<
+    string,
+    { name: string; decimals: number; native: boolean; kind: DepositAssetKind; networks: DepositNetworkView[] }
+  >();
 
   for (const network of networks) {
     for (const asset of network.assets) {
@@ -163,6 +172,7 @@ export const assetsBySymbol = (networks: readonly DepositNetworkView[]): readonl
           name: asset.name,
           decimals: asset.decimals,
           native: asset.native,
+          kind: asset.kind,
           networks: [network],
         });
         continue;
@@ -176,10 +186,26 @@ export const assetsBySymbol = (networks: readonly DepositNetworkView[]): readonl
     name: entry.name,
     decimals: entry.decimals,
     native: entry.native,
+    kind: entry.kind,
     networks: entry.networks,
     receivableNetworkCount: entry.networks.filter((network) => network.address !== null).length,
   }));
 };
+
+/**
+ * Qué camino ofrece un activo. **Un solo lugar decide esto**: el catálogo del
+ * servidor trae `kind` y esta función es el filtro. Dos listas escritas a mano —
+ * una de cripto y otra de dólares— son exactamente el bug que esta tarea
+ * elimina: al día siguiente que entre USDT hay que editar dos pantallas y
+ * olvidarse de una.
+ *
+ * Un símbolo cuyo `kind` no se conoce **no se ofrece en ningún camino**: ofrecer
+ * un activo sin clasificación es inventar en qué lista entra.
+ */
+export const assetsOfKind = (
+  networks: readonly DepositNetworkView[],
+  kind: DepositAssetKind,
+): readonly DepositAssetView[] => assetsBySymbol(networks).filter((asset) => asset.kind === kind);
 
 /** Las redes donde se puede recibir un activo con una dirección real. */
 export const receivableNetworksFor = (

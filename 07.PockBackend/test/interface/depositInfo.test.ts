@@ -106,6 +106,8 @@ interface DepositBody {
     readonly assets: {
       readonly symbol: string;
       readonly name: string;
+      /** Cómo se ofrece este activo: cripto o dólar. Lo decide el catálogo. */
+      readonly kind: string;
       readonly decimals: number;
       readonly native: boolean;
       readonly token: string | null;
@@ -182,10 +184,11 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
     const body = (await response.json()) as DepositBody;
 
     expect(at(body.networks, 0).assets).toEqual([
-      { symbol: 'MON', name: 'Monad', decimals: 18, native: true, token: null, balanceReadable: true },
+      { symbol: 'MON', name: 'Monad', kind: 'crypto', decimals: 18, native: true, token: null, balanceReadable: true },
       {
         symbol: 'USDC',
         name: 'Dólares digitales',
+        kind: 'dollar',
         decimals: 6,
         native: false,
         token: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603',
@@ -196,7 +199,7 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
     // El USDC de Ethereum NO es el de Monad: mismo símbolo, otro contrato.
     expect(at(at(body.networks, 1).assets, 1).token).toBe('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
     expect(at(body.networks, 2).assets).toEqual([
-      { symbol: 'SOL', name: 'Solana', decimals: 9, native: true, token: null, balanceReadable: true },
+      { symbol: 'SOL', name: 'Solana', kind: 'crypto', decimals: 9, native: true, token: null, balanceReadable: true },
     ]);
   });
 
@@ -216,6 +219,88 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
   });
 });
 
+describe('GET /api/deposit-info — la clasificación viaja con cada activo', () => {
+  it('cada activo de la respuesta lleva su kind, y con él se separan los dos caminos', async () => {
+    /*
+     * La pantalla tiene dos caminos de depósito: cripto y dólares. La pregunta
+     * "¿cuál es cuál?" la responde el catálogo, y por eso la respuesta tiene que
+     * traer el `kind` de cada activo: si no viaja, cada pantalla tendría que
+     * hardcodear su propia lista, que es exactamente la segunda lista que este
+     * cambio existe para quitar.
+     */
+    const response = await get(useCaseOf(twoWalletRows), '/api/deposit-info', SESSION_COOKIE);
+    const body = (await response.json()) as DepositBody;
+
+    const rows = body.networks.flatMap((network) =>
+      network.assets.map((asset) => ({ chain: network.chain, symbol: asset.symbol, kind: asset.kind })),
+    );
+
+    expect(rows).toEqual([
+      { chain: 'monad', symbol: 'MON', kind: 'crypto' },
+      { chain: 'monad', symbol: 'USDC', kind: 'dollar' },
+      { chain: 'ethereum', symbol: 'ETH', kind: 'crypto' },
+      { chain: 'ethereum', symbol: 'USDC', kind: 'dollar' },
+      { chain: 'solana', symbol: 'SOL', kind: 'crypto' },
+    ]);
+  });
+
+  it('es aditivo: la clasificación no cambia ningún otro campo del activo', async () => {
+    const response = await get(useCaseOf(twoWalletRows), '/api/deposit-info', SESSION_COOKIE);
+    const body = (await response.json()) as DepositBody;
+
+    const monad = at(body.networks, 0);
+    // El contrato de la fila es el mismo de antes, más `kind`.
+    expect(at(monad.assets, 0)).toEqual({
+      symbol: 'MON',
+      name: 'Monad',
+      kind: 'crypto',
+      decimals: 18,
+      native: true,
+      token: null,
+      balanceReadable: true,
+    });
+  });
+
+  it('un dólar nuevo en el catálogo aparece en la respuesta sin tocar la ruta', async () => {
+    /*
+     * La prueba de que agregar un dólar es UNA fila: un catálogo inyectado con un
+     * USDT verificado aparece en la respuesta, y las dos pantallas lo ven sin
+     * que exista una ruta nueva ni un parámetro nuevo.
+     */
+    const catalogWithUsdt: readonly DepositNetworkSpec[] = [
+      {
+        chain: 'ethereum',
+        label: 'Ethereum',
+        evmNetwork: 'eip155:1',
+        assets: [
+          {
+            symbol: 'USDT',
+            name: 'Dólares digitales',
+            kind: 'dollar',
+            decimals: 6,
+            native: false,
+            token: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+            balanceReadable: true,
+          },
+        ],
+      },
+    ];
+
+    const response = await get(useCaseOf(twoWalletRows, catalogWithUsdt), '/api/deposit-info', SESSION_COOKIE);
+    const body = (await response.json()) as DepositBody;
+
+    expect(at(at(body.networks, 0).assets, 0)).toEqual({
+      symbol: 'USDT',
+      name: 'Dólares digitales',
+      kind: 'dollar',
+      decimals: 6,
+      native: false,
+      token: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+      balanceReadable: true,
+    });
+  });
+});
+
 describe('GET /api/deposit-info — un activo que no se puede leer', () => {
   it('aparece igual, con su red y su dirección, y sólo sin cifra', async () => {
     /*
@@ -230,10 +315,11 @@ describe('GET /api/deposit-info — un activo que no se puede leer', () => {
         label: 'Monad',
         evmNetwork: 'eip155:143',
         assets: [
-          { symbol: 'MON', name: 'Monad', decimals: 18, native: true, token: null, balanceReadable: true },
+          { symbol: 'MON', name: 'Monad', kind: 'crypto', decimals: 18, native: true, token: null, balanceReadable: true },
           {
             symbol: 'WORM',
             name: 'Token sin lector verificado',
+            kind: 'crypto',
             decimals: 18,
             native: false,
             token: '0x00000000000000000000000000000000000000aa',
@@ -256,6 +342,7 @@ describe('GET /api/deposit-info — un activo que no se puede leer', () => {
     expect(at(monad.assets, 1)).toEqual({
       symbol: 'WORM',
       name: 'Token sin lector verificado',
+      kind: 'crypto',
       decimals: 18,
       native: false,
       token: '0x00000000000000000000000000000000000000aa',

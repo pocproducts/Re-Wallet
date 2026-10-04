@@ -21,10 +21,29 @@
  * un lector verificado en una y no en la otra. Y `false` **no** significa que no
  * se pueda recibir: significa que no sabemos la cifra. Por eso la pantalla lista
  * el activo igual, y lo que no hace es inventar un `0`.
+ * ── `kind`: el catálogo decide en qué camino se ofrece el activo ─────────────
+ *
+ * "Depositar → Cripto" y "Depositar → Dólares digitales" son dos caminos de la
+ * misma pantalla, y la separación entre ellos la declara el backend en el
+ * `kind` de cada activo. Por eso este tipo lo tiene: una pantalla que decidiera
+ * la clasificación por su cuenta estaría inventando una segunda lista, y es
+ * exactamente lo que esta clasificación vino a quitar.
+ *
+ * Dos valores, `'crypto'` y `'dollar'`. Un `kind` que la respuesta no trae, o
+ * que trae con otro valor, hace que el activo **no se muestre**: un activo sin
+ * clasificar no va en ninguna de las dos pantallas.
  */
 
 /** Las redes del catálogo de depósito. Las mismas que el backend reporta. */
 export type DepositChainId = 'monad' | 'ethereum' | 'solana';
+
+/**
+ * En qué camino de la pantalla se ofrece un activo.
+ *
+ * El backend la declara en `src/domain/deposit/catalog.ts` y es el **único**
+ * lugar donde se decide qué activos son dólares.
+ */
+export type DepositAssetKind = 'crypto' | 'dollar';
 
 /** Un activo que se puede recibir en una red. */
 export interface DepositAsset {
@@ -32,6 +51,13 @@ export interface DepositAsset {
   readonly symbol: string;
   /** Lo que ve la persona: `Monad`, `Dólares digitales`. */
   readonly name: string;
+  /**
+   * En qué camino se ofrece: `crypto` (cripto) o `dollar` (dólares digitales).
+   *
+   * Lo declara el catálogo del backend. Las dos pantallas de depósito filtran
+   * por acá, así que un dólar nuevo aparece solo.
+   */
+  readonly kind: DepositAssetKind;
   /** Cuántos decimales tiene. La pantalla no lo adivina. */
   readonly decimals: number;
   /** `true` para la moneda propia de la red. */

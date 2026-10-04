@@ -32,6 +32,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   assetsBySymbol,
+  assetsOfKind,
   readDepositInfo,
   type DepositAssetView,
   type DepositCatalog,
@@ -56,7 +57,15 @@ export interface DepositInfoView {
   /** Todas las redes del catálogo, en el orden del backend. */
   readonly networks: readonly DepositNetworkView[];
   /** El catálogo agrupado por activo: una entrada por símbolo, con sus redes. */
+  /** Todos los activos del catálogo, sin clasificar. */
   readonly assets: readonly DepositAssetView[];
+  /**
+   * Los dos caminos, filtrados **desde el mismo catálogo**. Que una pantalla
+   * decida con dos listas escritas a mano es lo que hace que agregar USDT sea
+   * editar dos archivos y olvidarse de uno.
+   */
+  readonly cryptoAssets: readonly DepositAssetView[];
+  readonly dollarAssets: readonly DepositAssetView[];
   /** El sello de tiempo de la respuesta, o `null`. */
   readonly generatedAt: string | null;
   /** Vuelve a leer. Lo decide la persona, nunca un render. */
@@ -128,6 +137,8 @@ export const useDepositInfo = (enabled: boolean): DepositInfoView => {
       failureCode,
       networks: catalog === null ? [] : catalog.networks,
       assets: catalog === null ? [] : assetsBySymbol(catalog.networks),
+      cryptoAssets: catalog === null ? [] : assetsOfKind(catalog.networks, 'crypto'),
+      dollarAssets: catalog === null ? [] : assetsOfKind(catalog.networks, 'dollar'),
       generatedAt: catalog === null ? null : catalog.generatedAt,
       reload: load,
     }),
