@@ -37,13 +37,22 @@ export interface EvmEndpoints {
 /**
  * The public endpoints this POC reads.
  *
- * Both were answered by hand before being written down — `eth_getBalance` and a
- * `balanceOf` `eth_call` on the USDC contract — because an endpoint that cannot
- * be reached is discovered by a screen showing zeros, not by a deploy.
+ * Each endpoint below was answered by hand — `eth_blockNumber`,
+ * `eth_getBalance` and a `balanceOf` `eth_call` on the USDC contract — from this
+ * project, and re-checked on 2026-10-04. That re-check mattered: the Ethereum
+ * endpoint used to be `cloudflare-eth.com`, which answered at the time and now
+ * returns `Internal error`, and the screen showed "we could not read your
+ * Ethereum balance" for an entire session before anyone compared the comment
+ * with reality. **A comment claiming an endpoint was verified is worth nothing
+ * on its own; a deploy that answers is.**
+ *
+ * Both are overridable per environment (`MONAD_RPC_URL`, `ETHEREUM_RPC_URL`),
+ * because public endpoints go down and rate-limit. When one does, the chain
+ * reports `error` and the screen says it could not be read — never zero.
  */
 export const DEFAULT_EVM_ENDPOINTS: EvmEndpoints = {
   monad: 'https://rpc.monad.xyz',
-  ethereum: 'https://cloudflare-eth.com',
+  ethereum: 'https://ethereum-rpc.publicnode.com',
 };
 
 /** `balanceOf(address)`, the first four bytes of the keccak of that signature. */

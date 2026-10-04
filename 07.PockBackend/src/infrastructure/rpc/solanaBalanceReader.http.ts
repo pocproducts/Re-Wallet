@@ -25,7 +25,7 @@
 import { BalanceReadError } from '../../domain/portfolio/errors';
 import type { SolanaBalanceReader } from '../../domain/ports/solana-balance-reader';
 
-export const DEFAULT_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
+export const DEFAULT_SOLANA_RPC_URL = 'https://solana-rpc.publicnode.com';
 
 /** `{"value": 123}` — digits only, so `BigInt` can take them verbatim. */
 const LAMPORTS_PATTERN = /"value"\s*:\s*(\d+)/;
