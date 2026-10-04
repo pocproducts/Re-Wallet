@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 import { formatApr } from '../../config/markets';
+import { splitUsdDisplay } from '../../services/portfolio';
+import { usePortfolio, type PortfolioView } from '../../hooks/usePortfolio';
 import {
   Bug,
   Bell,
@@ -15,6 +17,12 @@ import { UserProfileData } from '../../types';
 
 interface WalletViewProps {
   profile: UserProfileData | null;
+  /**
+   * Los saldos leídos de la cadena. Viene del hook del `App` para que la
+   * lectura sea **una por sesión**: si cada pantalla montara el suyo, abrir y
+   * cerrar la lista de cripto sería una lectura de blockchain por cada apertura.
+   */
+  portfolio?: PortfolioView;
   onOpenProfile?: () => void;
   onNavigateToInvestments?: () => void;
   onNavigateToActivity?: () => void;
@@ -28,6 +36,7 @@ interface WalletViewProps {
 
 export const WalletView: React.FC<WalletViewProps> = ({
   profile,
+  portfolio,
   onOpenProfile,
   onNavigateToInvestments,
   onOpenAction,
@@ -38,6 +47,24 @@ export const WalletView: React.FC<WalletViewProps> = ({
   onOpenAavePools,
 }) => {
   const [showBalance, setShowBalance] = useState<boolean>(true);
+
+  /*
+   * El saldo grande es el de los dólares digitales, leído de la cadena.
+   *
+   * Antes esta línea escribía `'$0'` y `',00'` en el JSX: un cero escrito a mano
+   * que se veía exactamente igual que un cero real. La diferencia entre "no
+   * tenés nada" y "no lo sabemos" es el `null`, y por eso el hook devuelve
+   * `null` cuando ninguna cadena se pudo leer.
+   *
+   * El cero de verdad se muestra: `"0,00"`. Es un saldo, no una ausencia.
+   */
+  const usd = useMemo(() => splitUsdDisplay(portfolio?.usdcTotal ?? null), [portfolio?.usdcTotal]);
+
+  /*
+   * La etiqueta de la moneda también viene del dato: dice "Dólares digitales"
+   * porque lo que se está mostrando son dólares digitales.
+   */
+  const balanceLabel = usd === null ? 'Sin lectura' : 'Dólares digitales';
 
   // Derivar el handle de usuario como $joadata o $nombre
   const userTag = profile?.nombre
@@ -119,7 +146,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
           <div className="space-y-4">
             {/* Selector de moneda y Ojo */}
             <div className="flex items-center gap-2 text-slate-800">
-              <span className="text-sm font-semibold">Pesos</span>
+              <span className="text-sm font-semibold">{balanceLabel}</span>
               <button
                 onClick={() => setShowBalance(!showBalance)}
                 type="button"
@@ -136,13 +163,31 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
             {/* Saldo Grande */}
             <div className="flex items-baseline font-display">
+              {/*
+               * Tres estados, y ninguno se disfraza de otro:
+               *   • sin lectura todavía o cadena caída → puntos, como el balance oculto
+               *   • saldo real, incluido cero → `u$0,00`
+               *   • oculto por el ojo → los mismos puntos de siempre
+               */}
               <span className="text-4xl font-extrabold text-black tracking-tight">
-                {showBalance ? '$0' : '••••'}
+                {!showBalance || usd === null ? '••••' : usd.whole}
               </span>
               <span className="text-2xl font-bold text-slate-300 ml-0.5">
-                {showBalance ? ',00' : ''}
+                {!showBalance || usd === null ? '' : usd.cents}
               </span>
             </div>
+
+            {/*
+             * Una cadena que no se pudo leer se dice, en castellano y sin
+             * jerga. `usd === null` es justamente ese caso, y también el de una
+             * sesión que todavía no terminó de leer: por eso la línea sólo
+             * aparece cuando hay una frase que decir.
+             */}
+            {usd === null && portfolio?.usdcNote !== null && portfolio?.usdcNote !== undefined && (
+              <p className="text-xs font-medium text-amber-600 leading-snug">
+                {showBalance ? portfolio.usdcNote : 'Saldo oculto'}
+              </p>
+            )}
 
             {/* Píldora de Rendimiento Anual Verde Lima Fluo -> Lleva a Pool USDC View */}
             <div>

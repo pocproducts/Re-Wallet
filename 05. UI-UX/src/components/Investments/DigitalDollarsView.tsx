@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 import { formatApr } from '../../config/markets';
+import { splitUsdDisplay } from '../../services/portfolio';
+import type { PortfolioView } from '../../hooks/usePortfolio';
 import {
   ArrowLeft,
   HelpCircle,
@@ -14,13 +16,28 @@ interface DigitalDollarsViewProps {
   onOpenAavePools?: () => void;
   onOpenDeposit?: () => void;
   onOpenSend?: () => void;
+  /** Saldos de la cadena, leídos una vez por sesión en el `App`. */
+  portfolio?: PortfolioView;
 }
 
 export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
   onBack,
   onOpenAavePools,
+  portfolio,
 }) => {
   const [showInfoModal, setShowInfoModal] = useState(false);
+
+  /*
+   * El saldo de dólares, de la cadena.
+   *
+   * Antes esta tarjeta escribía `U$0,82` en el JSX: una cantidad inventada con
+   * forma de saldo. Ahora sale de `portfolio.usdcTotal`, y cuando no se pudo leer
+   * no muestra un cero: dice que no se pudo leer.
+   */
+  const usd = useMemo(
+    () => splitUsdDisplay(portfolio?.usdcTotal ?? null, 'U$'),
+    [portfolio?.usdcTotal],
+  );
 
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans">
@@ -64,8 +81,17 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
               DÓLARES DIGITALES — USDC
             </span>
             <div className="text-4xl sm:text-5xl font-extrabold font-display text-black tracking-tight">
-              U$0,82
+              {usd === null ? '••••' : `${usd.whole}${usd.cents}`}
             </div>
+            {/*
+              Una cadena que no se pudo leer se dice. Un cero acá sería una billetera
+              vacía, y no es lo que pasó: no lo sabemos.
+            */}
+            {usd === null && portfolio?.usdcNote && (
+              <p className="text-xs font-medium text-amber-600 leading-snug pt-1">
+                {portfolio.usdcNote}
+              </p>
+            )}
           </div>
         </div>
 

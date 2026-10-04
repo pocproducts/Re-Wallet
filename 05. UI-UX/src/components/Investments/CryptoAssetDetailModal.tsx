@@ -21,23 +21,47 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { AssetTradeCard } from '../common';
-import { balanceLabel, priceUsd } from '../../config/markets';
-import { defaultDisplayCurrency, formatFiat } from '../../config/displayCurrency';
+import { defaultDisplayCurrency } from '../../config/displayCurrency';
 import { useAssetTrade } from '../../hooks/useAssetTrade';
 import { assetOrDefault } from '../../config/markets';
 
+/**
+ * Una dirección acortada para que entre en la fila: `"0x4613…9e50ba"`.
+ *
+ * No es un dato: es la misma dirección de `/api/portfolio`, recortada para que
+ * quepa. El texto completo va al portapapeles, y el botón de copiar copia la
+ * entera.
+ */
+const abbreviateAddress = (address: string): string => {
+  if (address.length <= 14) return address;
+  return `${address.slice(0, 6)}…${address.slice(-5)}`;
+};
+
+/**
+ * Lo que el detalle de un activo puede mostrar, y lo que no.
+ *
+ * Antes este tipo tenía `totalUsd: string` y `balanceNumber?: number`, y los dos
+ * los llenaba la lista con números escritos a mano. `totalUsd` **desapareció**:
+ * `/api/portfolio` no trae precios de mercado, así que un "equivalente en pesos"
+ * no se puede calcular sin inventar el precio primero. No hay campo vacío que
+ * rellenar con un número: no hay campo.
+ *
+ * Lo que queda es lo que sí existe: la cantidad y su unidad, y las redes donde
+ * vive ese saldo con su dirección.
+ */
 export interface CryptoAssetData {
   id: string;
   name: string;
   ticker: string;
   iconBg: string;
   iconText: string;
-  totalUsd: string;
+  /** La cantidad real y su unidad, tal como se pinta: `"123,456789 MON"`. */
   totalCrypto: string;
+  /** Varía según si hay una variación real; hoy no la hay, y va vacío. */
   change24h: string;
   isPositive: boolean;
-  priceUsd?: number;
-  balanceNumber?: number;
+  /** Redes donde hay saldo de este activo, con la dirección para depositar. */
+  networks?: readonly { readonly label: string; readonly address: string | null }[];
 }
 
 interface CryptoAssetDetailModalProps {
@@ -75,7 +99,6 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
   const [currencyMode, setCurrencyMode] = useState<'USD' | 'ARS'>(defaultDisplayCurrency);
   const [timeframe, setTimeframe] = useState<'24H' | '7D' | '1M' | '1A' | 'MAX'>('24H');
   const [isFavorite, setIsFavorite] = useState(false);
-  const [selectedNetwork, setSelectedNetwork] = useState('Solana');
   const [keypadAmount, setKeypadAmount] = useState('0');
   const [lemontagSearch, setLemontagSearch] = useState('');
   const [selectedRecipient, setSelectedRecipient] = useState<{
@@ -135,6 +158,15 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
     initialDestination: assetOrDefault('USDC'),
   });
 
+  /*
+   * La red de depósito elegida, por posición.
+   *
+   * El estado vive acá, antes del `if (!asset) return null` de más abajo, por la
+   * misma razón que los hooks de compraventa: un hook después de un return temprano
+   * es un hook condicional y React rompe el orden entre renders.
+   */
+  const [selectedNetworkIndex, setSelectedNetworkIndex] = useState(0);
+
   if (!asset) return null;
 
   // Manejo de copiado al portapapeles
@@ -163,43 +195,38 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
     }
   };
 
-  // Redes específicas para el asset
-  const networksForAsset =
-    asset.ticker === 'SOL'
-      ? [
-          { name: 'Bnb Chain (BEP20)', desc: 'Red nativa de Binance', icon: '❖', bg: 'bg-[#F3BA2F]' },
-          { name: 'Solana', desc: 'Red nativa de Solana', icon: '◎', bg: 'bg-gradient-to-tr from-[#9945FF] to-[#14F195]' },
-        ]
-      : asset.ticker === 'BTC'
-      ? [
-          { name: 'Bitcoin', desc: 'Red nativa de Bitcoin', icon: '₿', bg: 'bg-[#F7931A]' },
-          { name: 'Bnb Chain (BEP20)', desc: 'Red nativa de Binance', icon: '❖', bg: 'bg-[#F3BA2F]' },
-        ]
-      : asset.ticker === 'ETH'
-      ? [
-          { name: 'Ethereum (ERC20)', desc: 'Red nativa de Ethereum', icon: 'Ξ', bg: 'bg-[#627EEA]' },
-          { name: 'Arbitrum One', desc: 'Red capa 2 de Ethereum', icon: '◈', bg: 'bg-[#28A0F0]' },
-          { name: 'Optimism', desc: 'Red capa 2 de Ethereum', icon: '🔴', bg: 'bg-[#FF0420]' },
-        ]
-      : [
-          { name: 'Polygon', desc: 'Red Polygon PoS', icon: '⬡', bg: 'bg-[#8247E5]' },
-          { name: 'Bnb Chain (BEP20)', desc: 'Red nativa de Binance', icon: '❖', bg: 'bg-[#F3BA2F]' },
-        ];
+  /*
+   * Las redes de un activo son **las que la cadena reportó**, con la dirección de
+   * esta persona en cada una.
+   *
+   * Antes esta cadena de `?:` inventaba la red de cada ticker y terminaba en un
+   * `else` que ofrecía Polygon y BNB para cualquier activo que no estuviera en la
+   * lista: un activo de Monad aparecía con redes que no son suyas. Y el `else`
+   * también era la red que se usaba en la pantalla de depósito.
+   */
+  const networksForAsset = (asset.networks ?? []).map((network) => ({
+    name: network.label,
+    desc: 'Tu dirección en esta red',
+    icon: network.label.charAt(0),
+    bg: 'bg-slate-800',
+    address: network.address,
+  }));
 
   /*
-   * El precio sale de `config/markets`, no de una cadena de `?:` con números
-   * escritos acá. Antes esta línea tenía `118.27`, `95400.0` y `2650.0` sueltos,
-   * y el precio del Bitcoin no coincidía con el que usaba la lista de activos:
-   * dos pantallas del mismo producto cotizaban la misma moneda distinto.
-   */
-  const currentPriceUsd = asset.priceUsd || priceUsd(asset.ticker);
-  /*
-   * El precio se formatea por la misma costura que el resto de la app.
+   * La red elegida, con su dirección. Cuando la persona elige una red en la
+   * pantalla de depósito, la dirección que se muestra es la de ESA red: antes
+   * estaba escrita a mano (`0x4613c015949e50ba`) y era la misma para todas.
    *
-   * Antes la rama de dólares usaba `toFixed(2)`, que escribe el separador con
-   * punto —"95400.00"— mientras todo lo demás usa coma. Dos formatos para el
-   * mismo número en la misma pantalla.
+   * El índice se recorta al largo de la lista porque el activo puede cambiar con
+   * el modal abierto, y un índice de una red anterior no puede dejar la pantalla
+   * sin dirección.
    */
+  const selectedNetworkEntry =
+    networksForAsset.length === 0
+      ? null
+      : (networksForAsset[Math.min(selectedNetworkIndex, networksForAsset.length - 1)] ?? null);
+  const selectedNetwork = selectedNetworkEntry?.name ?? null;
+  const depositAddress = selectedNetworkEntry?.address ?? null;
 
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] text-black flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans w-full max-w-md mx-auto">
@@ -253,13 +280,21 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 </div>
                 <div className="flex items-baseline font-display">
                   <span className="text-3xl font-black text-black tracking-tight">
-                    {asset.totalCrypto || `${balanceLabel(asset.ticker)} ${asset.ticker}`}
+                    {/*
+                      La cantidad real, con su unidad. Antes caía en
+                      `balanceLabel(asset.ticker)`, que devuelve el saldo de la
+                      tabla de `config/markets` — un `0` para cualquier ticker que
+                      no esté en ella, o sea un cero inventado para MON.
+                    */}
+                    {asset.totalCrypto}
                   </span>
                 </div>
               </div>
-              <span className="text-xs font-semibold text-slate-400 font-mono tracking-tight block pl-9">
-                ≈ {formatFiat(parseFloat(asset.totalUsd.replace('U$', '').replace(',', '.')), 'ARS')}
-              </span>
+              {/*
+                El "≈ en pesos" desapareció y no se reemplaza por nada: convertirlos
+                exige el precio del activo, y `/api/portfolio` no trae precios.
+                Ponerlo era poner un precio de tabla y llamarlo equivalente.
+              */}
             </div>
 
             {/* 4 Botones de Acción Circulares (Negro con icono blanco) */}
@@ -352,23 +387,33 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </div>
             </div>
 
-            {/* Precio Actual y Porcentaje */}
+            {/*
+              Precio y variación.
+
+              Antes esta fila pintaba `formatFiat(currentPriceUsd, currencyMode)`
+              con el precio de la tabla de `config/markets` —y su
+              `'-1,15%'` de repuesto cuando no venía nada— así que un activo sin
+              precio de tabla se veía en cero, y la variación era un número fijo
+              para todos. `/api/portfolio` no trae precios ni variaciones, así que
+              acá se dice que no hay dato: el precio queda en blanco y la
+              variación **no se pinta**, en lugar de inventarla para llenar.
+            */}
             <div className="text-center space-y-0.5 pt-1">
               <div className="flex items-baseline justify-center gap-1.5 font-display">
-                <span className="text-2xl font-black text-black">
-                  {formatFiat(currentPriceUsd, currencyMode)}
-                </span>
+                <span className="text-2xl font-black text-slate-300">—</span>
                 <span className="text-xs font-bold text-slate-400">
                   {currencyMode}
                 </span>
               </div>
-              <span
-                className={`text-xs font-bold ${
-                  asset.isPositive ? 'text-emerald-500' : 'text-red-500'
-                }`}
-              >
-                {asset.change24h || '-1,15%'}
-              </span>
+              {asset.change24h.length > 0 && (
+                <span
+                  className={`text-xs font-bold ${
+                    asset.isPositive ? 'text-emerald-500' : 'text-red-500'
+                  }`}
+                >
+                  {asset.change24h}
+                </span>
+              )}
             </div>
 
             {/* Gráfico de Precio SVG Dinámico en Púrpura con Gradiente */}
@@ -523,20 +568,27 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               <ChevronRight className="w-4 h-4 text-slate-300 stroke-[2.5] shrink-0" />
             </div>
 
-            {/* Sección: Más usadas */}
+            {/* Sección: las redes donde hay saldo de este activo. Si la cadena no
+                reportó ninguna, se lo dice en vez de ofrecer redes que no son
+                del activo. */}
             <div className="space-y-2 pt-2">
               <span className="text-xs font-bold text-slate-400 font-display uppercase tracking-wider px-1">
-                Más usadas
+                Tus redes
               </span>
 
-              <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
-                {networksForAsset.map((net) => (
-                  <div
-                    key={net.name}
-                    onClick={() => {
-                      setSelectedNetwork(net.name);
-                      setCurrentView('deposit_qr');
-                    }}
+              {networksForAsset.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-slate-200/80 p-4 text-xs font-medium text-slate-500 leading-snug">
+                  Todavía no tenemos una dirección de depósito para {asset.ticker}.
+                </div>
+              ) : (
+                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
+                  {networksForAsset.map((net, index) => (
+                    <div
+                      key={net.name}
+                      onClick={() => {
+                        setSelectedNetworkIndex(index);
+                        setCurrentView('deposit_qr');
+                      }}
                     className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
                   >
                     <div className="flex items-center gap-3.5">
@@ -556,8 +608,9 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                     </div>
                     <ChevronRight className="w-4 h-4 text-slate-300 stroke-[2.5]" />
                   </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -678,7 +731,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                   </div>
                   <div>
                     <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Red</span>
-                    <span className="text-xs font-extrabold text-black">{selectedNetwork}</span>
+                    <span className="text-xs font-extrabold text-black">{selectedNetwork ?? '—'}</span>
                   </div>
                 </div>
               </div>
@@ -695,13 +748,21 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               <div className="text-left space-y-1">
                 <span className="text-xs text-slate-400 font-medium block">Dirección</span>
                 <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-2xl">
+                  {/*
+                    Antes esta dirección estaba escrita a mano
+                    (`0x4613c015949e50ba`) y era la misma para todas las redes y
+                    todos los activos: una dirección que no era de nadie, en una
+                    pantalla que sirve para mandar plata. Ahora es la de esta
+                    persona en la red elegida, y si no hay, se lo dice.
+                  */}
                   <span className="font-mono text-xs font-bold text-black truncate pr-2">
-                    0x4613...9e50ba
+                    {depositAddress === null ? 'Sin dirección disponible' : abbreviateAddress(depositAddress)}
                   </span>
                   <button
                     type="button"
-                    onClick={() => handleCopy('0x4613c015949e50ba')}
-                    className="p-1 text-black active:scale-90"
+                    disabled={depositAddress === null}
+                    onClick={() => depositAddress !== null && handleCopy(depositAddress)}
+                    className="p-1 text-black active:scale-90 disabled:opacity-30"
                   >
                     {copied ? <Check className="w-5 h-5 text-emerald-600" /> : <Copy className="w-5 h-5" />}
                   </button>
@@ -710,8 +771,9 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
 
               <button
                 type="button"
-                onClick={() => handleCopy('0x4613c015949e50ba')}
-                className="w-full py-4 rounded-2xl bg-black text-white font-bold text-sm cursor-pointer active:scale-98 transition-transform"
+                disabled={depositAddress === null}
+                onClick={() => depositAddress !== null && handleCopy(depositAddress)}
+                className="w-full py-4 rounded-2xl bg-black text-white font-bold text-sm cursor-pointer active:scale-98 transition-transform disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Compartir datos
               </button>
@@ -719,7 +781,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
 
             {/* Advertencia */}
             <p className="text-xs text-slate-500 text-center leading-relaxed px-2 font-medium">
-              Asegurate de depositar {asset.ticker} desde la red {selectedNetwork}. De lo contrario, podrías perder tus fondos.
+              Asegurate de depositar {asset.ticker} desde la red {selectedNetwork ?? 'elegida'}. De lo contrario, podrías perder tus fondos.
             </p>
 
             {/* Card Verde Lima: Información Importante */}
@@ -733,7 +795,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">Red</span>
-                <p className="text-base font-black text-black">{selectedNetwork}</p>
+                <p className="text-base font-black text-black">{selectedNetwork ?? '—'}</p>
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">Comisión</span>

@@ -112,6 +112,19 @@ export const ASSETS: readonly Asset[] = [
     iconBg: 'bg-[#26A17B]',
     decimals: 2,
   },
+  {
+    /*
+     * MON es el activo nativo de Monad (chain 143). Está en el catálogo porque
+     * el backend lo reporta como saldo real: sin esta entrada, los flujos de
+     * compra y cambio caían en un default que le prestaba la identidad del
+     * USDC, y Monad se veía con el nombre y el color de otra red.
+     */
+    ticker: 'MON',
+    name: 'Monad',
+    glyph: 'M',
+    iconBg: 'bg-[#7B3FE4]',
+    decimals: 18,
+  },
 ] as const;
 
 /** Los tickers que existen, derivados de la lista y no maintained aparte. */

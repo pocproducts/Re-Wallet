@@ -100,7 +100,9 @@ ni contra las RPC reales. Los adaptadores se ejercitan con un `fetch` inyectado.
 Falta una prueba manual autenticada que confirme que `rpc.monad.xyz` y
 `api.mainnet-beta.solana.com` responden lo que el adaptador espera con una
 dirección real, y que el despliegue con `DATABASE_URL` real resuelve la fila de
-wallet. La UI (T3) sigue pendiente: este endpoint todavía no lo consume nadie.
+wallet. La UI (T3) ya lo consume: `src/hooks/usePortfolio.ts`, una lectura por
+sesión, y las pantallas de billetera, inversiones, dólares digitales y
+*Bitcoin & Cripto*.
 
 ### T2 — La red Monad, configurada y registrada
 
@@ -145,6 +147,63 @@ red no soportada antes de firmar nada.
 
 **Gate**: `tsc` limpio, y los valores de pantalla coinciden con lo que devuelve
 `GET /api/portfolio`.
+
+**Estado: hecho en la lectura de saldos; el envío a Solana sigue pendiente.**
+
+La lectura existe de punta a punta y los saldos de pantalla salen de
+`GET /api/portfolio`, no de una tabla:
+
+- `src/types/portfolio.types.ts` — el contrato, con los tres estados de cadena
+  explícitos y no intercambiables (`ok` con `amount: "0"` es un cero real,
+  `error` es una cadena que no se pudo leer, `no_wallet` es que no hay billetera).
+- `src/services/portfolio.ts` — el `GET`, la normalización y la aritmética en
+  `bigint`. Los importes llegan sin redondear y con su `decimals`, así que la
+  suma de dólares entre cadenas es exacta y el redondeo a dos decimales ocurre
+  **después**, una sola vez, para pintar. Sin precio de mercado no hay total en
+  dólares: eso no se calcula.
+- `src/services/portfolioIdentity.ts` — identidad de pantalla de los tickers que
+  reporta la cadena. La primera fuente es el catálogo de producto; lo único que
+  se agrega es **MON**, que el backend ya devuelve y el catálogo todavía no
+  conhece. Un ticker sin identidad no se muestra.
+- `src/hooks/usePortfolio.ts` — **una lectura por sesión**, en un efecto y nunca
+  en el cuerpo de un render, con el mismo corte por identidad que
+  `useSessionGate` y `useUserWallets`. El `App` la corre una vez y le pasa el
+  resultado a las tres vistas: un hook por pantalla sería una lectura de
+  blockchain por navegación.
+- `WalletView`, `InvestmentsView`, `DigitalDollarsView`, `CryptoAssetsListView` y
+  `CryptoAssetDetailModal` — los saldos, las redes y la dirección de depósito
+  salen del portfolio. El detalle del activo muestra las redes donde ese símbolo
+  tiene saldo, con **la dirección de esta persona en cada una**; antes había una
+  red inventada por ticker y una dirección escrita a mano que era la misma para
+  todas.
+
+Lo que sehorecordó por ser lo más caro de dejar:
+
+- **Un cero y un fallo se ven distintos.** Una cadena `error` o `no_wallet`
+  escribe su frase en castellano —"No pudimos leer tu saldo en Monad", "No tenés
+  una billetera en Solana"— y el resto de la pantalla se dibuja igual. El enum
+  del backend va al log, nunca a la pantalla.
+- **Un cero real se muestra como cero.** `status: "ok"` con `amount: "0"` se
+  pinta `0` en la lista y `u$0,00` en la billetera.
+- **Las doce filas inventadas desaparecieron.** Bitcoin, Ethereum, Solana, Tron,
+  Dogecoin, Cardano, Avalanche, Polygon, Chainlink, Ripple, Polkadot y BNB con
+  `0,00156 ETH`, `7,1936 TRX`, `U$20,15`, `≈ $31.640,71 ARS` y `+4,28% hoy`: son
+  saldos que la persona nunca tuvo. Ahora se lista lo que la cadena reportó y
+  nada más.
+- **La dirección de depósito es real o no se muestra.** Antes era
+  `0x4613c015949e50ba`, escrita a mano, en una pantalla que sirve para mandar
+  plata.
+
+Lo que **no** quedó demostrado: nada se probó contra una sesión real autenticada.
+La normalización, la aritmética decimal y los tres estados de cadena se
+ejercitaron con respuestas escritas a mano —incluido el cero real, el cero con
+cadena caída al lado, las escalas mezcladas y los importes con más decimales de
+los declarados—, pero falta la lectura contra `rpc.monad.xyz` y
+`api.mainnet-beta.solana.com` con una sesión de verdad.
+
+Pendiente de esta tarea: **el envío a Solana con el saldo real de esa wallet**.
+Hoy el backend expone lectura de saldos; la firma y el envío por la wallet de
+Solana son otro circuito.
 
 ### T4 — Webhooks que llegan a la UI
 

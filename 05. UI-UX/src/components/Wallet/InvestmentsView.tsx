@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Search,
   Bell,
@@ -7,10 +7,14 @@ import {
   EyeOff,
   ChevronRight,
 } from 'lucide-react';
+import { splitUsdDisplay } from '../../services/portfolio';
+import type { PortfolioView } from '../../hooks/usePortfolio';
 import { UserProfileData } from '../../types';
 
 interface InvestmentsViewProps {
   profile: UserProfileData | null;
+  /** Saldos de la cadena, leídos una vez por sesión en el `App`. */
+  portfolio?: PortfolioView;
   onOpenProfile?: () => void;
   onNavigateToWallet?: () => void;
   onOpenSearch?: () => void;
@@ -22,6 +26,7 @@ interface InvestmentsViewProps {
 
 export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
   profile,
+  portfolio,
   onOpenProfile,
   onNavigateToWallet,
   onOpenSearch,
@@ -31,6 +36,22 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
   onOpenCryptoList,
 }) => {
   const [showBalance, setShowBalance] = useState<boolean>(true);
+
+  /*
+   * Los saldos de esta pantalla.
+   *
+   * Los dólares digitales son un saldo real y se muestran. El total de
+   * inversiones y el total de *Bitcoin & Crypto* **no**: `/api/portfolio` trae
+   * cantidades y no trae precios, así que un total en dólares exigiría un precio
+   * de mercado que esta tarea no tiene. Las dos cifras que estaban acá
+   * (`U$20,15` y su `≈ $31.640,71`) eran números escritos a mano, y una
+   * invertidora ve más que nada cuando ve un total: se quedan con ese número.
+   * Sin precio, se dice que no hay precio.
+   */
+  const usd = useMemo(
+    () => splitUsdDisplay(portfolio?.usdcTotal ?? null, 'U$'),
+    [portfolio?.usdcTotal],
+  );
 
   const userTag = profile?.nombre
     ? '$' + profile.nombre.toLowerCase().replace(/\s+/g, '').slice(0, 10)
@@ -128,16 +149,14 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
           {/* Importe U$20,15 */}
           <div className="flex items-baseline font-display">
             <span className="text-4xl font-extrabold text-black tracking-tight">
-              {showBalance ? 'U$20' : '••••'}
-            </span>
-            <span className="text-2xl font-bold text-slate-300 ml-0.5">
-              {showBalance ? ',15' : ''}
+              {showBalance ? '—' : '••••'}
             </span>
           </div>
 
-          {/* Equivalente en pesos ≈ $31.640,71 */}
+          {/* Sin precio de mercado no hay total en dólares. La frase va donde
+              estaba el equivalente en pesos, que tampoco se puede calcular. */}
           <p className="text-xs font-semibold text-slate-400 font-mono tracking-tight pt-1">
-            {showBalance ? '≈ $31.640,71' : '≈ ••••••••'}
+            {showBalance ? 'Sin precio de mercado, sin total' : '≈ ••••••••'}
           </p>
         </div>
       </div>
@@ -166,10 +185,7 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 block">Bitcoin & Crypto</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
-                {showBalance ? 'U$20' : '••'}
-              </span>
-              <span className="text-sm font-bold text-slate-300 ml-0.5">
-                {showBalance ? ',15' : ''}
+                {showBalance ? '—' : '••'}
               </span>
             </div>
           </div>
@@ -199,10 +215,10 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 block">Dólares digitales</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
-                {showBalance ? 'U$0' : '••'}
+                {!showBalance || usd === null ? '••' : usd.whole}
               </span>
               <span className="text-sm font-bold text-slate-300 ml-0.5">
-                {showBalance ? ',00002' : ''}
+                {!showBalance || usd === null ? '' : usd.cents}
               </span>
             </div>
           </div>

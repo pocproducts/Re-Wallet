@@ -17,6 +17,7 @@ import { DigitalDollarsView } from './components/Investments/DigitalDollarsView'
 import { CryptoAssetsListView } from './components/Investments/CryptoAssetsListView';
 import { LoginGate } from './components/Auth/LoginGate';
 import { useSessionGate } from './hooks/useSessionGate';
+import { usePortfolio } from './hooks/usePortfolio';
 import { useUserWallets } from './hooks/useUserWallets';
 import { ChargeQrModal } from './components/Charge/ChargeQrModal';
 import { NavTab, TransactionItem } from './types';
@@ -53,6 +54,18 @@ export default function App() {
    * que se muestra, no un muro. Lo único que cambia es el aviso de abajo.
    */
   const { status: walletsStatus } = useUserWallets(sessionStatus === 'authenticated');
+
+  /*
+   * Los saldos se leen UNA vez por sesión, acá y no en cada pantalla.
+   *
+   * `GET /api/portfolio` va a la blockchain por request —el backend no cachea a
+   * propósito—, así que un hook por pantalla sería una lectura por cada
+   * navegación. El `App` lee una vez y le pasa el resultado a las tres vistas.
+   *
+   * Corre únicamente con la sesión abierta: la cookie es lo que prueba que hay
+   * sesión, y antes de eso la lectura no sirve.
+   */
+  const portfolio = usePortfolio(sessionStatus === 'authenticated');
   const [walletsWarningDismissed, setWalletsWarningDismissed] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<NavTab>('wallet');
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
@@ -314,6 +327,7 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <WalletView
                         profile={profile}
+                        portfolio={portfolio}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToInvestments={() => setCurrentTab('investments')}
                         onNavigateToActivity={() => setCurrentTab('activity')}
@@ -332,6 +346,7 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <InvestmentsView
                         profile={profile}
+                        portfolio={portfolio}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToWallet={() => setCurrentTab('wallet')}
                         onOpenSearch={() => setIsSearchOpen(true)}
@@ -417,6 +432,7 @@ export default function App() {
         {isDigitalDollarsOpen && (
           <DigitalDollarsView
             onBack={() => setIsDigitalDollarsOpen(false)}
+            portfolio={portfolio}
             onOpenAavePools={() => {
               setIsDigitalDollarsOpen(false);
               setIsAavePoolsOpen(true);
@@ -429,6 +445,7 @@ export default function App() {
           <CryptoAssetsListView
             onBack={() => setIsCryptoListOpen(false)}
             userTag={userTag}
+            portfolio={portfolio}
           />
         )}
 
