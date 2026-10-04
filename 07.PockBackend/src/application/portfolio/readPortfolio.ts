@@ -100,6 +100,15 @@ export class WalletsUnavailable extends Error {
  * A read that failed for a reason this code cannot classify is `RPC_UNAVAILABLE`,
  * never a silent zero. When in doubt the honest answer is "we could not read it".
  */
+/**
+ * El mensaje del error, recortado y reducido a caracteres que pueden romper una
+ * linea de log. Es lo unico que dice que endpoint fallo y que respondio.
+ */
+const messageOf = (error: unknown): string => {
+  const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return raw.replace(/[^a-zA-Z0-9_:.,/()\- ]/g, '').slice(0, 200);
+};
+
 const reasonOf = (error: unknown): PortfolioFailureReason =>
   error instanceof BalanceReadError ? error.reason : 'RPC_UNAVAILABLE';
 
@@ -169,8 +178,21 @@ export const readPortfolio = (deps: ReadPortfolioDeps): ReadPortfolio => {
       try {
         chains.push(await readChain(chain, address));
       } catch (error) {
-        // The provider's own words go to the log. The response carries the code.
-        log.error(`portfolio.chain_failed:${chain}`, { userId, chain, error });
+        /*
+         * The provider's own words go to the log. The response carries the code.
+         *
+         * `error` alone prints `{ reason, name }` and **not** the message, which is
+         * where the endpoint and what it answered live. A log that omits the
+         * message is a log that cannot tell anyone why a chain is unreadable: two
+         * rounds of diagnosis were spent on that.
+         */
+        log.error(`portfolio.chain_failed:${chain}`, {
+          userId,
+          chain,
+          error,
+          reason: reasonOf(error),
+          detail: messageOf(error),
+        });
         chains.push({ chain, status: 'error', error: { code: 'CHAIN_READ_FAILED', reason: reasonOf(error) } });
       }
     }
