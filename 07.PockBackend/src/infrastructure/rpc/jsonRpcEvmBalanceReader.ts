@@ -130,20 +130,30 @@ export const createJsonRpcEvmBalanceReader = (options: JsonRpcEvmBalanceReaderOp
   /** One JSON-RPC call. Throws `BalanceReadError`, never returns a wrong number. */
   const rpc = async (network: EvmNetwork, method: string, params: readonly unknown[]): Promise<bigint> => {
     const candidates = endpoints[network];
-    let lastFailure: BalanceReadError | undefined;
+    /*
+     * Cada candidato se reporta, no solo el ultimo. Con una lista de tres, decir
+     * "fallo el tercero" esconde que el primero y el segundo ya habian fallado
+     * por otra razon, y son justo esas razones las que dicen que endpoint usar.
+     * Un solo fallo publicado obligo a un ida y vuelta entero por cada intento.
+     */
+    const failures: string[] = [];
+    let firstReason: 'RPC_REJECTED' | 'RPC_UNAVAILABLE' | 'RPC_MALFORMED_RESPONSE' | undefined;
 
     for (const url of candidates) {
       try {
         return await callOnce(url, network, method, params, send);
       } catch (error) {
         // Un endpoint caido no es el final de la cadena: se prueba el siguiente.
-        lastFailure = error instanceof BalanceReadError ? error : lastFailure;
+        if (firstReason === undefined && error instanceof BalanceReadError) firstReason = error.reason;
+        failures.push(`${hostOf(url)}: ${error instanceof Error ? error.message : 'unknown failure'}`);
       }
     }
 
-    throw (
-      lastFailure ??
-      new BalanceReadError('RPC_UNAVAILABLE', `${network} ${method} has no configured endpoint`)
+    throw new BalanceReadError(
+      firstReason ?? 'RPC_UNAVAILABLE',
+      failures.length > 0
+        ? `${network} ${method} failed on all ${failures.length} endpoint(s): ${failures.join(' | ')}`
+        : `${network} ${method} has no configured endpoint`,
     );
   };
 
