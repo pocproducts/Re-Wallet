@@ -77,11 +77,17 @@ export type PrepareSendInput = Omit<SendPreparationBody, 'requestId'>;
  * Se lee defensivo, como `normalizePool`: una respuesta con una forma que no se
  * reconoce **no** se firma. Enviar algo que no se entendió sería mandar una
  * transacción que nadie revisó.
+ *
+ * Y `address` es parte de esa forma, no un extra: sin la dirección **que el
+ * backend validó** no hay con qué comparar la wallet conectada, y adivinar
+ * sería volver a firmar con la idea que tiene el cliente en vez de con la que
+ * el servidor comprobó. Una respuesta sin `address` no es una preparación.
  */
 const isPreparation = (body: unknown): body is SendPreparationResponse => {
   const response = body as SendPreparationResponse | null;
   if (response === null || typeof response !== 'object') return false;
   if (typeof response.network !== 'string' || response.network.length === 0) return false;
+  if (typeof response.address !== 'string' || response.address.length === 0) return false;
   if (!Number.isInteger(response.chainId)) return false;
   if (!Array.isArray(response.transactions) || response.transactions.length === 0) return false;
 
@@ -102,6 +108,9 @@ const isPreparation = (body: unknown): body is SendPreparationResponse => {
  * existe para evitar, así que si la red falla, la red falla: lo reintenta la
  * persona, con un intento nuevo.
  *
+ * @returns La preparación, o `null` si la respuesta no tiene la forma de una —
+ *          en particular, si no trae `address`. `null` **no** es una preparación
+ *          sin firmar: es una respuesta que no se entendió, y no se firma.
  * @throws `ApiError` con el código del backend. El texto lo pone quien lo
  *         muestra; acá no se traduce ni un error.
  */

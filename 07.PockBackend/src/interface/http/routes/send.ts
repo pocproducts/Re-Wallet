@@ -11,11 +11,21 @@
  *   "recipient": "0x…",
  *   "amountRaw": "1500000" }
  *
- * 200 { "requestId": "…", "chain": "monad", "chainId": 143, "network": "eip155:143",
+ * 200 { "requestId": "…", "chain": "monad", "address": "0x…", "chainId": 143,
+ *       "network": "eip155:143",
  *       "transactions": [ { "purpose": "transfer", "to": "0x…", "data": "0x…",
  *                           "value": "0", "chainId": 143 } ],
  *       "movement": { "id": "…", "status": "pending" } }
  * ```
+ *
+ * ── Why the answer carries `address` ──────────────────────────────────────────
+ *
+ * `address` is the wallet the balance was read for and the transfer moves from,
+ * named as `POST /api/pool/deposit` names it. The browser has to sign for
+ * **that** wallet; it cannot infer it from its own idea of the person's wallets,
+ * and a mismatch between the two is a transfer out of an address nobody checked.
+ * The browser must fail closed if this field is missing rather than fall back to
+ * a client-side guess.
  *
  * ── Why the status codes are the ones the rest of the app uses ───────────────
  *

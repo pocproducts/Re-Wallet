@@ -49,6 +49,26 @@
  * The address is `rewallet.wallets` for the user the cookie proved. A body that
  * carries an `address` or an `onBehalfOf` is not looked at, so there is no code
  * path that sends from somebody else's account.
+ *
+ * ── Why the answer carries the address it validated ───────────────────────────
+ *
+ * Because **the browser has to sign for the wallet the server checked**, and it
+ * cannot know which wallet that was.
+ *
+ * The balance in step 9 was read for `senderAddress`, and the transaction in step
+ * 11 moves from it. Before this field existed, the only address the browser had
+ * was its own idea of the person's wallet — a row from `GET /api/deposit-info`,
+ * fetched earlier, possibly stale, possibly from a different moment in the
+ * session. So the server validated one wallet's balance and the person signed
+ * with another: a transfer out of an address whose balance was never checked, and
+ * nothing anywhere reported it.
+ *
+ * The value here is the **same** `senderAddress` variable the reads above used.
+ * It is not recomputed and not taken from the request, so the answer cannot
+ * describe a different wallet from the one the balance was read for. It is named
+ * `address`, exactly as `POST /api/pool/deposit` names it: the two routes that
+ * move money and sign in the browser answer with the same field, for the same
+ * reason, and a screen that learns one has learned both.
  */
 import type { EvmBalanceReader } from '../../domain/ports/evm-balance-reader';
 import type { SolanaBalanceReader } from '../../domain/ports/solana-balance-reader';
@@ -87,6 +107,14 @@ export interface SendPreparationBody {
 export interface SendPreparation {
   readonly requestId: string;
   readonly chain: DepositChain;
+  /**
+   * The wallet the balance was read for and the transfer moves from — the one
+   * thing the browser must sign with. From `rewallet.wallets`, never the request.
+   *
+   * Named as `/api/pool/deposit` names it, and the same `string` shape: the two
+   * routes that move money answer with the address they validated.
+   */
+  readonly address: string;
   /** EIP-155 chain id, so the wallet signs on the right network. `0` on Solana. */
   readonly chainId: number;
   /** CAIP-2: `eip155:143`, `eip155:1`, `solana:…`. */
@@ -422,6 +450,9 @@ export const prepareSend = (deps: PrepareSendDeps): PrepareSend => {
       const preparation: SendPreparation = {
         requestId,
         chain,
+        // The very address steps 9 and 10 read the balance for. Recomputing it
+        // here would be a second chance for the two to disagree.
+        address: senderAddress,
         chainId,
         network,
         transactions: [transaction],
@@ -434,6 +465,7 @@ export const prepareSend = (deps: PrepareSendDeps): PrepareSend => {
       log.log('send.prepared', {
         userId,
         chain,
+        address: senderAddress,
         symbol: asset.symbol,
         amount: amount.toString(),
         requestId,

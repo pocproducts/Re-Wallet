@@ -15,6 +15,18 @@
  * mueve la moneda nativa. **Un envío nativo sí la mueve**, así que acá `value` es
  * un decimal arbitrario y el tipo no lo acota a `'0'`: un tipo que dijera `'0'`
  * haría que una conversión futura leyera un envío de MON como si no pagara nada.
+ *
+ * ── Por qué `address` es el campo que decide quién firma ─────────────────────
+ *
+ * `address` es la wallet **que el backend usó**: la de la fila de
+ * `rewallet.wallets` de esta persona, la misma contra la que leyó el saldo y
+ * armó la transacción. Viene en la respuesta porque el navegador tiene que firmar
+ * por esa billetera y no puede deducirla: su propio `GET /api/deposit-info` es
+ * una lectura de otro momento, y si las dos no coinciden el backend validó un
+ * saldo y la persona firmó por otra billetera.
+ *
+ * Por eso el mismo nombre que en `pool.types.ts`: las dos rutas que mueven plata
+ * contestan con el mismo campo, por la misma razón.
  */
 
 /** La clave de red del catálogo, la misma que usa depósito. */
@@ -73,6 +85,14 @@ export interface PendingSendMovement {
 export interface SendPreparationResponse {
   readonly requestId: string;
   readonly chain: SendChainKey;
+  /**
+   * La wallet **del backend**: la fila de `rewallet.wallets` contra la que leyó
+   * el saldo y armó la transacción. Nunca viene del pedido.
+   *
+   * Es la única dirección en la que se puede firmar: si no está, la preparación
+   * no se entiende y no se firma. Mismo nombre que `POST /api/pool/deposit`.
+   */
+  readonly address: string;
   /** El id de cadena donde hay que firmar. `0` en una red sin id EIP-155. */
   readonly chainId: number;
   /** CAIP-2, que es como la wallet nombra la red. */

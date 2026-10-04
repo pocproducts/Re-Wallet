@@ -839,6 +839,7 @@ movement that was written.
 {
   "requestId": "3b6f1f2e-6a6d-4a2f-9a44-9f2b1c9d0e11",
   "chain": "monad",
+  "address": "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
   "chainId": 143,
   "network": "eip155:143",
   "transactions": [
@@ -851,6 +852,13 @@ movement that was written.
 
 **Nothing here signs.** The browser signs the returned transaction with the
 person's Privy wallet, exactly as it signs the Aave deposit.
+
+**`address` is the wallet the balance was read for**, straight from
+`rewallet.wallets` — the same field name `/api/pool/deposit` answers with. The
+browser signs for that wallet, and it must fail closed when the field is missing
+instead of falling back to its own idea of which wallet the person has: the server
+validated one address's balance, and a signature from another one is a transfer
+out of an address nobody checked.
 
 ### The order of the checks, and which error wins
 

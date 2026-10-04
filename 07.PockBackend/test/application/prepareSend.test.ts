@@ -214,6 +214,47 @@ describe('a valid ERC-20 send', () => {
   });
 });
 
+describe('the address the answer carries', () => {
+  it('is the very address the balance was read for', async () => {
+    const { prepare, asked } = harness();
+
+    // The browser signs for this one, so it has to be the one that was checked.
+    const prepared = await prepare(USER_ID, send());
+
+    expect(prepared.address).toBe(EVM_SENDER);
+    expect(asked.some((line) => line.endsWith(`:${prepared.address}`))).toBe(true);
+  });
+
+  it('is the database address even when the body carries another one', async () => {
+    const { prepare } = harness();
+
+    // `address` is not a request field. Nobody can talk this route into moving
+    // money from an address of their choosing, and the answer says which one.
+    const prepared = await prepare(USER_ID, send({ address: '0x000000000000000000000000000000000000dEaD' } as never));
+
+    expect(prepared.address).toBe(EVM_SENDER);
+    expect(prepared.address).not.toContain('dEaD');
+  });
+
+  it('is the Solana row on a Solana send, not the EVM one', async () => {
+    const { prepare } = harness({ lamports: 4_000_000_000n });
+
+    const prepared = await prepare(
+      USER_ID,
+      send({
+        chain: 'solana',
+        asset: { symbol: 'SOL', decimals: 9 },
+        recipient: SOLANA_RECIPIENT,
+        amountRaw: '1500000000',
+      }),
+    );
+
+    // One field, one meaning: the wallet the balance was read for, on this chain.
+    expect(prepared.address).toBe(SOLANA_ADDRESS);
+    expect(prepared.address).not.toBe(EVM_SENDER);
+  });
+});
+
 describe('a valid native send', () => {
   it('sends the value to the recipient with no calldata', async () => {
     const { prepare } = harness({ native: 3_000_000_000_000_000_000n });

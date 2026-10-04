@@ -20,14 +20,27 @@
  * pueda quedar a medio hacer— y que el `value` puede no ser cero, porque un envío
  * de la moneda nativa manda la moneda.
  *
- * ── Por qué la firma va con la wallet de la persona y no con la conectada ────
+ * ── De dónde sale la dirección que firma ─────────────────────────────────────
  *
- * La fila de la base es la que dice de quién es el envío. Si se firmara con
- * cualquier wallet conectada, el envío saldría de otra billetera y el saldo de la
- * fila no cambiaría nunca: la pantalla diría "enviado" sobre plata que no se movió.
- * Es el mismo control que hace el depósito, con los mismos dos rechazos —
- * `WALLET_NOT_FOUND` cuando no hay ninguna wallet EVM, `WRONG_WALLET` cuando la
- * conectada no es la de la fila—.
+ * Del backend. `POST /api/send/prepare` responde con `address`: la fila de
+ * `rewallet.wallets` **contra la que leyó el saldo y armó la transacción**. Es el
+ * mismo campo que devuelve `/api/pool/deposit`, por la misma razón.
+ *
+ * Antes, el hook compaba contra la dirección que pasaba la pantalla, que venía de
+ * `GET /api/deposit-info`: la idea del cliente de cuál es la billetera de esta
+ * persona, leída en otro momento. Con las dos cosas presentes —el backend
+ * validando un saldo y el navegador firmando por otra billetera— el saldo que se
+ * comprobó no era el saldo de la billetera de la que salía la plata, y nada lo decía. Ahora el
+ * servidor dice para quién preparó y el hook firma para ese o no firma.
+ *
+ * Cuando el backend no manda `address`, `isPreparation` devuelve `null`, el hook
+ * corta con `PREPARATION_FAILED` y **no** cae a la fila de la pantalla: adivinar
+ * sería exactamente volver al error que esto arregla.
+ *
+ * `WRONG_WALLET` y `WALLET_NOT_FOUND` siguen, y por otra razón: ya no comparan la
+ * fila del cliente con la wallet conectada, sino **la del backend** con la wallet
+ * conectada. La segunda puerta es "esta sesión tiene la billetera que el servidor
+ * validó", que es una pregunta distinta de "el servidor validó a alguien".
  *
  * ── Por qué el cliente valida la dirección y no se confiar ──────────────────
  *
@@ -94,13 +107,15 @@ export interface SendRequest {
   /** El monto en la unidad mínima, como texto decimal. */
   readonly amountRaw: string;
   /**
-   * La dirección de esta persona en esa red, leída del catálogo del servidor.
+   * La dirección que esta persona tiene en la red, tal como la ve el catálogo.
    *
-   * La exige porque `POST /api/send/prepare` **no** devuelve el emisor —a
-   * diferencia de `/api/pool/deposit`, que sí lo manda—. Sin esta fila el hook
-   * no tiene contra qué comparar la wallet conectada y firmaría con la que
-   * estuviera conectada. Viene de `GET /api/deposit-info`, la misma fila de
-   * `rewallet.wallets` que usa el depósito.
+   * **No es la que firma.** La que firma es la que vuelve del backend
+   * (`SendPreparationResponse.address`), y este campo ya no participa del
+   * control: se conserva porque las pantallas lo tienen y lo pasan, y porque
+   * `senderAddress` sigue siendo un dato que la pantalla puede querer mostrar.
+   *
+   * Antes de que el backend mandara la suya, esta era la única que había, y el
+   * hook firmaba contra ella. Ya no.
    */
   readonly senderAddress: string;
 }
@@ -293,16 +308,18 @@ export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
         patch('prepare', 'signed');
 
         /*
-         * 4. La wallet de esta persona, contra la fila de la base.
+         * 4. La wallet de esta persona, contra la del backend.
          *
-         * Es el mismo control del depósito. Firmar con la wallet que estuviera
-         * conectada mandaría la plata desde otra billetera y el saldo de la fila
-         * no cambiaría nunca.
+         * La comparación es contra `prepared.address`: la dirección para la que
+         * el servidor leyó el saldo. Si la wallet conectada es otra, el envío
+         * saldría de una billetera cuyo saldo nadie comprobó, así que no se firma.
+         *
+         * `request.senderAddress` no participa: es la lectura de la pantalla, y
+         * esta pregunta ya no se le hace.
          */
         const wallet = wallets.find(
           (candidate) =>
-            candidate.type === 'ethereum' &&
-            candidate.address.toLowerCase() === request.senderAddress.toLowerCase(),
+            candidate.type === 'ethereum' && candidate.address.toLowerCase() === prepared.address.toLowerCase(),
         );
         if (wallet === undefined) {
           fail(

@@ -157,6 +157,54 @@ describe('POST /api/send/prepare', () => {
     expect(body.movement).toEqual({ id: 'movement-1', status: 'pending' });
   });
 
+  it('answers with the address the balance was read for, and nothing else for the browser to guess', async () => {
+    const { app } = harness();
+
+    const response = await post(app, validBody);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    // The row's address — not the recipient, and not one from the body.
+    expect(body.address).toBe(EVM_SENDER);
+    expect(body.address).not.toBe(RECIPIENT);
+    // Same name the deposit answers with, so one screen learns both routes.
+    expect(Object.keys(body).sort()).toEqual([
+      'address',
+      'chain',
+      'chainId',
+      'movement',
+      'network',
+      'requestId',
+      'transactions',
+    ]);
+  });
+
+  it('keeps the address out of the answer when the send is refused', async () => {
+    const { app } = harness();
+
+    const response = await post(app, { ...validBody, amountRaw: '10000001' });
+
+    // A refusal says what was wrong and nothing else: no address, no transaction.
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: { code: 'AMOUNT_EXCEEDS_BALANCE' } });
+  });
+
+  it('carries the address in the stored answer a replay hands back', async () => {
+    const { app, rows } = harness();
+
+    const first = await post(app, validBody);
+    expect((await first.json()) as { address: string }).toMatchObject({ address: EVM_SENDER });
+
+    // The replay travels from the stored response, so the browser gets the same
+    // trusted address on the second tap as on the first.
+    const stored = [...rows.values()].find((row) => row.complete);
+    expect(stored?.response).toMatchObject({ address: EVM_SENDER });
+
+    const replay = await post(app, validBody);
+    expect(replay.status).toBe(409);
+    const body = (await replay.json()) as { replay: { address: string } };
+    expect(body.replay.address).toBe(EVM_SENDER);
+  });
+
   it('refuses each broken rule with its own code and a 400', async () => {
     const { app } = harness();
 
@@ -299,19 +347,24 @@ describe('POST /api/send/prepare', () => {
     expect((await response.json()) as { error: { code: string } }).toEqual({ error: { code: 'REQUEST_ID_INVALID' } });
   });
 
-  it('never leaks the sender balance or the internal reason of a refusal', async () => {
+  it('never leaks a balance, and never the internal reason of a refusal', async () => {
     const { app } = harness();
 
+    // The answer carries `address` — the requester's **own** wallet, returned to
+    // the session that owns it, because the browser has to sign for it. What it
+    // must never carry is how much money that wallet has.
     const ok = await (await post(app, validBody)).text();
-    expect(ok).not.toContain(EVM_SENDER);
+    expect(ok).toContain(EVM_SENDER);
     expect(ok).not.toContain('10000000');
+    expect(ok).not.toContain('5000000000000000000');
 
     const refused = await (
       await post(app, { ...validBody, requestId: 'another-request', recipient: '0x123' })
     ).text();
     expect(refused).toContain('INVALID_RECIPIENT');
-    // The reason the address was refused is the server's business, not the browser's.
+    // A refusal names a code and nothing else: not the address, not the reason.
     expect(refused).not.toContain('40 hex');
+    expect(refused).not.toContain(EVM_SENDER);
   });
 });
 
