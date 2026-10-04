@@ -113,6 +113,35 @@
  * Nunca en un render, nunca en un bucle. Un `ref` con el id del usuario es lo que
  * corta la repetición, igual que en `useSessionGate`: sin él, un fallo del backend
  * reintentaría solo y para siempre.
+ *
+ * ── Por qué el efecto NO depende de las wallets ───────────────────────────────
+ *
+ * El log de producción decía, en las dos cadenas:
+ *
+ * ```
+ * DIAGNOSTIC {"etapa":"wallets_crear_ethereum","detalle":"walletidmissing_ethereum_attempts_0_listed_no"}
+ * DIAGNOSTIC {"etapa":"wallets_crear_solana",  "detalle":"walletidmissing_solana_attempts_0_listed_no"}
+ * ```
+ *
+ * `attempts_0` es la prueba. En `resolveEmbeddedWallet` el contador sube **después**
+ * del chequeo de vigencia, así que `0` significa que el chequeo ya era falso en la
+ * primera vuelta: el `cleanup` del efecto ya había corrido mientras el trabajo
+ * async seguía esperando la wallet que él mismo acababa de crear.
+ *
+ * Y lo causaba el propio array de dependencias: `ethereumWallet` y `solanaWallet`
+ * eran `useCallback` con `ethWallets` y `solWallets` dentro. Crear una wallet
+ * cambia esas listas, cambia las identidades de los callbacks, vuelve a correr el
+ * efecto, y su `cleanup` pone `vigente = false`. Peor todavía: para la segunda
+ * vuelta `startedFor.current === id` ya era cierto, así que el efecto volvía
+ * temprano y el trabajo en vuelo se perdía sin más.
+ *
+ * El arreglo es la misma idea que el `ref` del `user`, aplicada a todo lo demás:
+ * **la identidad del efecto es la persona**, no el inventario de wallets. Las
+ * listas, los `createWallet` y el `getAccessToken` viven en un `ref` que se
+ * refresca en cada render y se leen desde adentro; el efecto depende sólo de
+ * `enabled`, `ready`, `authenticated`, `ethReady` y `user?.id`. Crear una wallet ya
+ * no puede volver a correr el efecto, así que no puede cancelar la búsqueda de esa
+ * misma wallet.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePrivy, useWallets, useCreateWallet } from '@privy-io/react-auth';
@@ -193,6 +222,24 @@ const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+
+/**
+ * Lo que el circuito necesita de los hooks de Privy, leído siempre de acá.
+ *
+ * Son valores que cambian por trabajo propio del SDK —listas de wallets, getters y
+ * el `user`— y ninguno de esos cambios es una razón para volver a arrancar el
+ * circuito: arrancarlo de nuevo aborta el trabajo en vuelo. Se guardan en un `ref`
+ * refrescado en cada render y se leen desde adentro, así que el efecto puede
+ * depender sólo de la identidad de la persona.
+ */
+type PrivyRuntime = {
+  readonly user: PrivyUser | null;
+  readonly ethWallets: ReturnType<typeof useWallets>['wallets'];
+  readonly solWallets: ReturnType<typeof useSolanaWallets>['wallets'];
+  readonly createEvmWallet: ReturnType<typeof useCreateWallet>['createWallet'];
+  readonly createSolana: ReturnType<typeof useCreateSolanaWallet>['createWallet'];
+  readonly getAccessToken: ReturnType<typeof usePrivy>['getAccessToken'];
+};
 
 /** Una entrada de `user.linkedAccounts` que es una wallet (`type: 'wallet'`). */
 type PrivyWalletAccount = Extract<PrivyUser['linkedAccounts'][number], { type: 'wallet' }>;
@@ -337,23 +384,46 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
   const startedFor = useRef<string | null>(null);
 
   /*
-   * El `user` de **este** render, siempre. El ciclo corre en un `async` que
-   * sobrevive varias lecturas: la variable `user` del closure queda vieja apenas
-   * el SDK refresca el usuario tras crear una wallet, que es justo cuando hace
-   * falta el nuevo. Un `ref` es lo que convierte "el usuario que tengo" en "el
-   * usuario de ahora" sin volver a disparar el efecto.
+   * La pasada vigente. No es "esta instancia del efecto existe": es "esta pasada
+   * es la última para esta persona". Cuando corre otra pasada —o se desmonta el
+   * hook— el token deja de ser el de `activeRun` y la pasada anterior se da por
+   * superada sin poder escribir ni reclamar para la persona equivocada. Un
+   * `cleanup` por otra dependencia ya no puede cancelar trabajo en vuelo, porque
+   * el efecto no depende de nada que cambie al crear una wallet.
    */
-  const currentUser = useRef<PrivyUser | null>(user);
-  useEffect(() => {
-    currentUser.current = user;
-  }, [user]);
+  const activeRun = useRef<symbol | null>(null);
 
-  const getUser = useCallback((): PrivyUser | null => currentUser.current, []);
+  /*
+   * El estado vivo de los hooks de Privy, siempre el último. El ciclo corre en un
+   * `async` que sobrevive varias lecturas y a varios renders: las variables del
+   * closure quedan viejas justo cuando hace falta el dato nuevo —el `user`
+   * refrescado por el SDK después de crear una wallet, o la lista que ya la
+   * incluye—. Se escribe acá, en cada render, y no en un efecto: un efecto por
+   * render sería una carrera más que puede dejar el `ref` viejo justo el día que
+   * el circuito lo necesita.
+   */
+  const runtime = useRef<PrivyRuntime>({
+    user,
+    ethWallets,
+    solWallets,
+    createEvmWallet,
+    createSolana,
+    getAccessToken,
+  });
+  runtime.current = { user, ethWallets, solWallets, createEvmWallet, createSolana, getAccessToken };
+
+  const getUser = useCallback((): PrivyUser | null => runtime.current.user, []);
 
   /*
    * Ethereum primero, SIEMPRE. El orden no es decorativo: es el orden en que el
    * producto usa las wallets (EVM es la primera etapa) y el orden en que el
    * backend las escribe.
+   */
+  /*
+   * Dependencias vacías a propósito: las dos leen sólo `runtime.current` y
+   * `getUser`, que ya son "el último valor". Si dependieran de las listas o de los
+   * `createWallet`, volverían a cambiar de identidad al crear una wallet y a
+   * arrastrar al efecto con ellas — que es el bug que se está corrigiendo.
    */
   const ethereumWallet = useCallback(
     async (sigueVigente: () => boolean): Promise<WalletLookup> => {
@@ -364,17 +434,18 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
        * exactamente el problema que este hook está corrigiendo.
        */
       const yaExiste =
-        embeddedAccounts(getUser(), 'ethereum').length > 0 || ethWallets.length > 0;
+        embeddedAccounts(getUser(), 'ethereum').length > 0 ||
+        runtime.current.ethWallets.length > 0;
 
       if (!yaExiste) {
         // El valor de retorno se ignora a propósito: su `id` es opcional y
         // anulable por tipo. Crear sí; sacar el id de ahí, no.
-        await createEvmWallet();
+        await runtime.current.createEvmWallet();
       }
 
       return resolveEmbeddedWallet('ethereum', getUser, sigueVigente);
     },
-    [ethWallets, createEvmWallet, getUser],
+    [getUser],
   );
 
   const solanaWallet = useCallback(
@@ -385,15 +456,16 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
        * segunda, nunca para reclamar.
        */
       const yaExiste =
-        embeddedAccounts(getUser(), 'solana').length > 0 || solWallets.length > 0;
+        embeddedAccounts(getUser(), 'solana').length > 0 ||
+        runtime.current.solWallets.length > 0;
 
       if (!yaExiste) {
-        await createSolana();
+        await runtime.current.createSolana();
       }
 
       return resolveEmbeddedWallet('solana', getUser, sigueVigente);
     },
-    [solWallets, createSolana, getUser],
+    [getUser],
   );
 
   useEffect(() => {
@@ -410,7 +482,17 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
     if (startedFor.current === id) return;
     startedFor.current = id;
 
-    let vigente = true;
+    /*
+     * El token de esta pasada. `vigente` no pregunta si el efecto sigue montado
+     * en el árbol: pregunta si **esta** pasada es todavía la que corresponde a
+     * **esta** persona. Un render que no cambia la identidad ni la reinicia, así
+     * que ni la creación de una wallet ni la llegada de la lista que la contiene
+     * pueden cancelar el trabajo en vuelo.
+     */
+    const run = Symbol('useUserWallets:pasada');
+    activeRun.current = run;
+    const vigente = (): boolean => activeRun.current === run && startedFor.current === id;
+
     setStatus('preparing');
 
     void (async () => {
@@ -426,8 +508,8 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
         try {
           const lookup =
             chain === 'ethereum'
-              ? await ethereumWallet(() => vigente)
-              : await solanaWallet(() => vigente);
+              ? await ethereumWallet(vigente)
+              : await solanaWallet(vigente);
 
           if (lookup.wallet === null) {
             /*
@@ -452,7 +534,7 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
         }
       }
 
-      if (!vigente) return;
+      if (!vigente()) return;
 
       if (claimed.length === 0) {
         setFailureCode('unknown_error');
@@ -464,17 +546,17 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
       }
 
       try {
-        const accessToken = await getAccessToken();
+        const accessToken = await runtime.current.getAccessToken();
         if (!accessToken) throw new Error('must_be_authenticated');
 
         // El backend verifica cada id contra el registro de Privy de esta persona.
         await claimRewalletWallets({ accessToken, wallets: claimed });
 
-        if (!vigente) return;
+        if (!vigente()) return;
         setFailureCode(null);
         setStatus('claimed');
       } catch (error) {
-        if (!vigente) return;
+        if (!vigente()) return;
         // Falla el reclamo: la persona entra igual y se le muestra el aviso.
         setFailureCode(diagnosticCodeFor(error) ?? 'unknown_error');
         setStatus('failed');
@@ -489,9 +571,23 @@ export const useUserWallets = (enabled: boolean): UserWallets => {
     })();
 
     return () => {
-      vigente = false;
+      /*
+       * Sólo se invalida la pasada si todavía es la vigente: si otra pasada ya
+       * arrancó —porque cambió la identidad—, ésta ya quedó superada y no tiene
+       * que pisarle el token. Y como el efecto ya no depende de las wallets, este
+       * `cleanup` sólo corre por un cambio real de identidad o por el desmontaje,
+       * que son las dos cosas donde cancelar en vuelo es lo correcto.
+       */
+      if (activeRun.current === run) activeRun.current = null;
     };
-  }, [enabled, ready, authenticated, ethReady, user?.id, getAccessToken, ethereumWallet, solanaWallet]);
+    /*
+     * La identidad de la persona, y nada más. Las wallets, los `createWallet` y el
+     * `getAccessToken` se leen de `runtime`, que se refresca en cada render: si
+     * estuvieran acá, crear una wallet volvería a correr este efecto, su
+     * `cleanup` abortaría la búsqueda de esa misma wallet en el intento cero, y
+     * `startedFor` haría que el trabajo se perdiera en silencio.
+     */
+  }, [enabled, ready, authenticated, ethReady, user?.id]);
 
   return { status, failureCode };
 };

@@ -476,6 +476,58 @@ reclamar y sólo cambia el diagnóstico. También queda sin probar por qué fall
 creación de Solana: ahora el `detalle` va a decir el `code`, el `name` y el `type`,
 pero hay que verlos en un log real.
 
+## Corrección 2026-10-03 — el efecto se cancelaba a sí mismo (`attempts_0`)
+
+### El fallo de producción que lo motivó
+
+```
+DIAGNOSTIC {"etapa":"wallets_crear_ethereum","detalle":"walletidmissing_ethereum_attempts_0_listed_no"}
+DIAGNOSTIC {"etapa":"wallets_crear_solana",  "detalle":"walletidmissing_solana_attempts_0_listed_no"}
+```
+
+`attempts_0` es toda la prueba. En `resolveEmbeddedWallet` el contador sube
+**después** del chequeo de vigencia, así que `0` significa que el chequeo ya era
+falso en la primera vuelta: el `cleanup` del efecto ya había corrido mientras el
+trabajo async seguía esperando la wallet que él mismo acababa de crear.
+
+Y lo provocaba el propio array de dependencias: `ethereumWallet` y `solanaWallet`
+eran `useCallback` con `ethWallets` y `solWallets` adentro. Crear una wallet cambia
+esas listas, cambia la identidad de los callbacks, vuelve a correr el efecto, y su
+`cleanup` pone `vigente = false`. Encima, en la segunda vuelta
+`startedFor.current === id` ya era cierto, así que el efecto volvía temprano y el
+trabajo en vuelo se perdía en silencio.
+
+### La regla
+
+**La identidad del efecto es la persona, no el inventario de wallets.**
+
+1. `useUserWallets.ts`: `ethWallets`, `solWallets`, `createEvmWallet`,
+   `createSolana`, `getAccessToken` y `user` viven en un `ref` (`runtime`) que se
+   **escribe en cada render** —no en un efecto, que sería otra carrera— y se leen
+   desde adentro. Los dos `useCallback` de cadena quedan con dependencias vacías,
+   porque ya leen "el último valor". El efecto depende sólo de `[enabled, ready,
+   authenticated, ethReady, user?.id]`.
+2. `vigente` dejó de ser "esta instancia del efecto existe": ahora es un token de
+   pasada, `activeRun.current === run && startedFor.current === id`. El `cleanup`
+   sólo invalida si la pasada **sigue siendo la vigente**, así que una pasada
+   anterior no le pisa el token a la nueva. Un render que no cambia la identidad
+   no vuelve a correr el efecto y por lo tanto no puede cancelar nada en vuelo.
+   Cerrar sesión, cambiar de persona o desmontar el hook sí la cancelan, que es
+   lo que corresponde.
+3. `getAccessToken` también sale del array: su identidad tampoco era la persona.
+
+Se mantiene todo lo demás: una pasada por persona autenticada, nada en un render,
+nada en un bucle sin techo, ningún id inventado, no se crea una segunda wallet si
+`user` o `useWallets` ya listan una, y una cadena que falla no aborta la otra.
+
+**Gates**: `05. UI-UX` → `npm run lint` limpio y `npm run build` ok. Sin test
+runner en `05. UI-UX`: los gates de esa app son `tsc` y el build.
+
+**Lo que sigue sin probarse**: todo lo que exige un ingreso real — que el `user`
+liste la wallet recién creada con `id` en los cinco intentos, y que el reclamo
+llegue al backend. Este arreglo evita la cancelación; no demuestra que el `id`
+llegue.
+
 ## Allowed edit surfaces
 
 Los de T7, además de los de abajo: `07.PockBackend/src/**`,
