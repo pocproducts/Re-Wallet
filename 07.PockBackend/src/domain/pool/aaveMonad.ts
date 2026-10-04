@@ -55,8 +55,20 @@ export const USDC_DECIMALS = 6;
 /** `getReserveData(address)`. **V3**. */
 export const GET_RESERVE_DATA_SELECTOR = '0x35ea6a75';
 
-/** `getReserveConfigurationData(address)`. */
-export const GET_RESERVE_CONFIGURATION_SELECTOR = '0x028a2c12';
+/**
+ * `getReserveConfigurationData(address)`.
+ *
+ * El selector va **calculado**, no recordado: `keccak256("getReserveConfigurationData(address)")`
+ * primeras 4 bytes = `0x3e150141`. Este archivo tenía `0x028a2c12`, que no es
+ * esta función, así que la llamada revierte y el `reserveFactor` — con el que se
+ * concilia la tasa — nunca llegaba. La reserva en sí se leía bien: la tasa
+ * estaba en la cadena y la app decía que no la podia leer.
+ *
+ * El bug es de la misma familia que `getReserveData`: un selector que no
+ * corresponde a la funcion produce un `revert` que se lee como "el contrato no
+ * responde".
+ */
+export const GET_RESERVE_CONFIGURATION_SELECTOR = '0x3e150141';
 
 /** `balanceOf(address)`. */
 export const BALANCE_OF_SELECTOR = '0x70a08231';

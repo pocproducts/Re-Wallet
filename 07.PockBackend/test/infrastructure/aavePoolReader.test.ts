@@ -17,6 +17,10 @@ import { describe, expect, it } from 'vitest';
 
 import { ReserveDecodeError } from '../../src/domain/pool/reserveData';
 import { createJsonRpcAavePoolReader } from '../../src/infrastructure/rpc/jsonRpcAavePoolReader';
+import { keccak256, toBytes } from 'viem';
+
+/** Los primeros 4 bytes del keccak de una firma, que es como se calcula un selector. */
+const selectorOf = (signature: string): string => keccak256(toBytes(signature)).slice(0, 10);
 import { BalanceReadError } from '../../src/domain/portfolio/errors';
 
 /** The transcript of `getReserveData(USDC)` on Monad mainnet, 2026-10-04. */
@@ -93,7 +97,14 @@ describe('the pool adapter', () => {
     expect(read.reserveFactorBps).toBe(1000n);
     expect(read.isActive).toBe(true);
     expect(read.isFrozen).toBe(false);
-    expect(requests[0]?.data?.startsWith('0x028a2c12')).toBe(true);
+    /*
+     * El selector se **deriva** del nombre de la funcion, no se escribe a mano.
+     * Escribiendolo a mano se colaron dos equivocados en este proyecto:
+     * `0x026b1d5f` (que es el de Aave V2) y despues `0x028a2c12` (que no es
+     * esta funcion). Los dos revierten, y un revert se lee como "el contrato no
+     * responde" cuando el contrato esta perfectamente bien.
+     */
+    expect(requests[0]?.data?.startsWith(selectorOf('getReserveConfigurationData(address)'))).toBe(true);
   });
 
   it('reads a balance and an allowance as bigints, and a real zero as zero', async () => {
