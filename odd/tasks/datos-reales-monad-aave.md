@@ -303,6 +303,36 @@ comentario y hay que agregarle el quinto; queda pendiente porque esa superficie 
 era editable en esta tarea. La UI (consumo de `GET /api/notifications`) no se tocó:
 su superficie no estaba autorizada acá.
 
+#### T4b — La UI del feed (`05. UI-UX`), consumo posterior
+
+- `services/notifications.ts` lee `GET /api/notifications` y normaliza **a
+  propósito**: una fila sin `id`/`message` legibles no se muestra, pero una
+  categoría desconocida se lee como `other` — se pierde peor un evento real que
+  no tenga ícono. El tipo de respuesta **no tiene `payload`**: no es una decisión
+  de estilo, es que no hay nada que pedir ni mostrar.
+- `hooks/useNotifications.ts` replica el patrón de `usePortfolio`: una lectura por
+  sesión, corte en `useEffect`, liberada al cerrar sesión, `reload()` explícito.
+  Los estados son `idle | loading | empty | ready | unavailable`: `empty` (no hay
+  eventos) y `unavailable` (no se pudieron leer) son hechos distintos, igual que
+  `usdcNote` distingue la cadena caída de la billetera vacía. Un `502` nunca se
+  pinta como lista vacía.
+- Un `401` (`UNAUTHENTICATED`) no abre modal: es la misma cookie del resto, así
+  que la persona ya no tiene sesión y la salida es el cierre de sesión que ya
+  usaba la app.
+- El punto de "nuevo" de la campana se deriva del `id` del evento más reciente
+  contra el `id` más reciente guardado en `localStorage`
+  (`rewallet_notifications_seen`, `{ newestId, seenAt }`). Sólo ids y una hora:
+  **ni un payload, ni un token, ni un mensaje**. Se marca visto al abrir el modal.
+- No hay push: el feed se lee al cargar la app y con el botón de recargar del
+  modal. La pantalla no promete nada en vivo.
+
+Lo que **no** quedó demostrado: sin runner de tests en el front (y está prohibido
+agregarlo), así que lo verificado fue `npm run lint` (`tsc --noEmit`) limpio y
+`npm run build` exitoso. **Ninguna** fila se vio contra el backend desplegado:
+la tabla sigue con 0 filas, así que `ready`, `empty` y `unavailable` no se
+ejercitaron contra datos reales; hace falta una entrega real de webhook con una
+sesión real para probar el feed de punta a punta.
+
 ### T5 — Aave en Monad, con dirección verificada
 
 - **Primer paso, bloqueante: derivar el pool desde la fuente oficial de Aave para
@@ -330,6 +360,7 @@ línea de código que la use.
 - `05. UI-UX/src/services/**`
 - `05. UI-UX/src/hooks/**`
 - `05. UI-UX/src/types/**`
+- `05. UI-UX/src/components/Activity/**` (punto de "nuevo" en la campana, T4b)
 - `odd/tasks/datos-reales-monad-aave.md`
 
 ## Fuera de alcance

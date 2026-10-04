@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BottomNavbar } from './components/Navigation/BottomNavbar';
 import { WalletView } from './components/Wallet/WalletView';
 import { InvestmentsView } from './components/Wallet/InvestmentsView';
@@ -17,18 +17,38 @@ import { DigitalDollarsView } from './components/Investments/DigitalDollarsView'
 import { CryptoAssetsListView } from './components/Investments/CryptoAssetsListView';
 import { LoginGate } from './components/Auth/LoginGate';
 import { useSessionGate } from './hooks/useSessionGate';
+import { useNotifications } from './hooks/useNotifications';
 import { usePortfolio } from './hooks/usePortfolio';
 import { useUserWallets } from './hooks/useUserWallets';
 import { ChargeQrModal, type ChargeReceiveAddress } from './components/Charge/ChargeQrModal';
 import { NavTab, TransactionItem } from './types';
+import { relativeTimeLabel, treatmentFor, NOTIFICATIONS_UNAVAILABLE_CODE } from './services/notifications';
 import {
   X,
   Search,
   Bell,
   Loader2,
+  RefreshCw,
+  User,
+  ShieldCheck,
+  Wallet,
+  Link2,
 } from 'lucide-react';
 
 const TRANSACTIONS_STORAGE_KEY = 'rewallet_transactions_data';
+
+/*
+ * El ícono de cada categoría. Es el **único** mapa de categoría→pintura que
+ * existe: si mañana el backend emite otra, cae en `other` (`Bell`) y se muestra
+ * igual, con su frase, en vez de romper la fila.
+ */
+const CATEGORY_ICONS = {
+  user: User,
+  shield: ShieldCheck,
+  wallet: Wallet,
+  link: Link2,
+  bell: Bell,
+} as const;
 
 export default function App() {
   /*
@@ -66,6 +86,14 @@ export default function App() {
    * sesión, y antes de eso la lectura no sirve.
    */
   const portfolio = usePortfolio(sessionStatus === 'authenticated');
+
+  /*
+   * Los avisos de la cuenta también se leen UNA vez por sesión, con el mismo
+   * corte que `usePortfolio`: `GET /api/notifications` es un `GET` con cookie, no
+   * hay push ni canal en vivo, así que se lee al cargar y cuando la persona
+   * recarga a mano.
+   */
+  const notifications = useNotifications(sessionStatus === 'authenticated');
   const [walletsWarningDismissed, setWalletsWarningDismissed] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<NavTab>('wallet');
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
@@ -155,6 +183,48 @@ export default function App() {
       setCurrentTab('wallet');
     });
   };
+
+  /*
+   * Un 401 en el feed de avisos significa que esta persona **ya no tiene
+   * sesión** —la cookie era la que autorizaba la lectura—, no que los avisos
+   * estuvieran rotos. La salida es la misma de siempre: cerrar sesión. Abrir un
+   * modal para alguien que ya está afuera sería mostrarle avisos de una cuenta a
+   * la que no tiene acceso.
+   */
+  const signedOutHandled = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (!notifications.signedOut) {
+      signedOutHandled.current = false;
+      return;
+    }
+
+    // Una sola vez por episode: si no, el efecto vuelve a cerrar sesión cada
+    // render mientras el 401 siga en pantalla.
+    if (signedOutHandled.current) return;
+    signedOutHandled.current = true;
+
+    void signOut();
+  }, [notifications.signedOut, signOut]);
+
+  /*
+   * Abrir el modal ES la visita: desde acá en adelante lo más reciente se
+   * cuenta como visto. Sin esto el punto de la campana no se apagaría nunca.
+   *
+   * las dependencias son las dos cosas que realmente cambian —que el modal esté
+   * abierto y la identidad de `markSeen`, que sólo cambia cuando llegó un feed
+   * nuevo—. Depender del objeto entero de avisos volvería a disparar el efecto
+   * cada vez que el marcador local cambia, o sea siempre.
+   */
+  const notificationsStatus = notifications.status;
+  const markNotificationsSeen = notifications.markSeen;
+
+  useEffect(() => {
+    if (!isNotificationsOpen) return;
+    if (notificationsStatus !== 'ready') return;
+
+    markNotificationsSeen();
+  }, [isNotificationsOpen, notificationsStatus, markNotificationsSeen]);
 
   // Handle visual del usuario ($joaquin / $joadata)
   const userTag = profile?.nombre
@@ -305,6 +375,7 @@ export default function App() {
                         onOpenScanner={() => setIsScannerOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
+                        hasUnreadNotifications={notifications.hasUnread}
                         onOpenAavePools={() => setIsAavePoolsOpen(true)}
                       />
                     </div>
@@ -321,6 +392,7 @@ export default function App() {
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
+                        hasUnreadNotifications={notifications.hasUnread}
                         onOpenDigitalDollars={() => setIsDigitalDollarsOpen(true)}
                         onOpenCryptoList={() => setIsCryptoListOpen(true)}
                       />
@@ -337,6 +409,7 @@ export default function App() {
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
+                        hasUnreadNotifications={notifications.hasUnread}
                       />
                     </div>
                   )}
@@ -495,8 +568,20 @@ export default function App() {
           </div>
         )}
 
-        {/* Modal de Notificaciones */}
-        {isNotificationsOpen && (
+        {/*
+         * MODAL DE NOTIFICACIONES — lo que pasó en esta cuenta, y nada más.
+         *
+         * Cada fila dice **exactamente** lo que dice el backend: `message`
+         * verbatim, la hora derivada de `createdAt` y el ícono de la categoría.
+         * No hay texto de esta pantalla que se parezca a un aviso, porque un
+         * aviso escrito a mano es un hecho que no pasó.
+         *
+         * Y los cuatro estados se distinguen como en los saldos: no hay nada
+         * (`empty`), no se pudo leer (`unavailable`), todavía se lee
+         * (`idle`/`loading`) y hay (`ready`). "No hay noticias" y "no pudimos
+         * leer las noticias" son hechos distintos y se ven distintos.
+         */}
+        {isNotificationsOpen && !notifications.signedOut && (
           <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center px-4 pb-4 safe-top-12 animate-in fade-in duration-200">
             <div className="w-full max-w-sm bg-white rounded-[32px] p-5 shadow-2xl relative space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -508,41 +593,128 @@ export default function App() {
                     Notificaciones
                   </h3>
                 </div>
-                <button
-                  onClick={() => setIsNotificationsOpen(false)}
-                  type="button"
-                  className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-black hover:bg-slate-200 transition-colors"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-1">
+                  {/*
+                   * Recargar a mano. No hay push: el feed se lee al abrir la app
+                   * y cuando la persona lo pide. Sin este botón, un aviso nuevo
+                   * sólo aparecería recargando la página entera.
+                   */}
+                  <button
+                    onClick={notifications.reload}
+                    type="button"
+                    aria-label="Volver a leer tus notificaciones"
+                    title="Actualizar"
+                    disabled={notifications.status === 'loading'}
+                    className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-black hover:bg-slate-200 transition-colors disabled:opacity-60 cursor-pointer"
+                  >
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 ${
+                        notifications.status === 'loading' ? 'animate-spin' : ''
+                      }`}
+                    />
+                  </button>
+                  <button
+                    onClick={() => setIsNotificationsOpen(false)}
+                    type="button"
+                    aria-label="Cerrar notificaciones"
+                    className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-black hover:bg-slate-200 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
+              {/* Leyendo: el mismo tratamiento neutro de la puerta de ingreso. */}
+              {(notifications.status === 'idle' || notifications.status === 'loading') && (
+                <div className="flex flex-col items-center justify-center gap-3 py-6 font-sans">
+                  <Loader2 className="w-5 h-5 text-black animate-spin" />
+                  <p className="text-xs font-medium text-slate-500">Cargando…</p>
+                </div>
+              )}
+
               {/*
-               * La notificación de rendimiento se fue.
-               *
-               * Decía “Rendimiento Activo (20.77%) — Tus fondos en pesos están
-               * generando rendimiento anual diario”, con un punto verde. No
-               * había conexión con ningún pool, y el 20,77% era un número
-               * escrito a mano: leía como plata generando renta que no existía.
-               *
-               * No se reemplaza por otro texto: se deja de avisar. Cuando haya
-               * un depósito real y su tasa real, la notificación sale de esos
-               * datos —derivados, no escritos— y no antes.
+               * NO SE PUDO LEER. Deliberadamente **no** es la lista vacía: acá
+               * puede haber eventos que no llegamos a leer, y mostrar "no tenés
+               * nada" sería afirmar lo contrario. Es el mismo ámbar de la nota de
+               * saldo ilegible (`usdcNote`): una convención, no dos.
                */}
-              <div className="space-y-2.5 text-xs">
-                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-2.5">
-                  <div className="w-4 h-4 rounded-full bg-slate-200 text-slate-500 font-bold flex items-center justify-center text-[11px] shrink-0 mt-0.5">
-                    $
+              {notifications.status === 'unavailable' && (
+                <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-start gap-2.5">
+                  <div className="w-5 h-5 shrink-0 mt-0.5 text-amber-600 font-black flex items-center justify-center text-[13px]">
+                    !
                   </div>
                   <div>
-                    <span className="font-bold text-slate-600 block">Nada nuevo</span>
-                    <span className="text-slate-400 text-[11px]">
-                      Cuando tengas movimientos o un rendimiento acreditado, te
-                      avisamos acá.
+                    <span className="font-bold text-amber-900 block">
+                      No pudimos leer tus avisos
+                    </span>
+                    <span className="text-amber-700 text-[11px] leading-snug block mt-0.5">
+                      {notifications.failureCode === NOTIFICATIONS_UNAVAILABLE_CODE
+                        ? 'Los eventos de tu cuenta no se pudieron leer. No es que no haya pasado nada: probá de nuevo en un rato.'
+                        : 'No pudimos conectarnos para leer los eventos de tu cuenta. Probá de nuevo en un rato.'}
                     </span>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {/* No hay eventos. Un hecho, dicho como un hecho. */}
+              {notifications.status === 'empty' && (
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-2.5">
+                  <div className="w-5 h-5 shrink-0 mt-0.5 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center">
+                    <Bell className="w-3 h-3 stroke-[2.2]" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-700 block">Nada nuevo</span>
+                    <span className="text-slate-400 text-[11px] leading-snug block mt-0.5">
+                      Cuando algo pase en tu cuenta —que entres, que se cree una
+                      billetera, que conectes un método de acceso— te avisamos acá.
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* El feed, tal cual. */}
+              {notifications.status === 'ready' && (
+                <div className="space-y-2.5 text-xs max-h-[60vh] overflow-y-auto">
+                  {notifications.notifications.map((item) => {
+                    const treatment = treatmentFor(item.category);
+                    const Icon = CATEGORY_ICONS[treatment.icon];
+                    const when = relativeTimeLabel(item.createdAt);
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-2.5"
+                      >
+                        <div
+                          className={`w-5 h-5 shrink-0 mt-0.5 rounded-full flex items-center justify-center ${treatment.badgeBg} ${treatment.badgeText}`}
+                        >
+                          <Icon className="w-3 h-3 stroke-[2.2]" />
+                        </div>
+                        <div className="min-w-0">
+                          {/*
+                           * `message` va **verbatim**. No se reescribe, no se
+                           * resume, no se le agrega el `eventType`: la frase es del
+                           * backend y acá sólo se la muestra.
+                           */}
+                          <span className="font-bold text-slate-700 block leading-snug">
+                            {item.message}
+                          </span>
+                          <span className="text-slate-400 text-[11px] flex items-center gap-1.5 mt-0.5">
+                            <span>{treatment.label}</span>
+                            {/* Sin `createdAt` legible no hay hora: no se inventa. */}
+                            {when !== null && (
+                              <>
+                                <span aria-hidden="true">&middot;</span>
+                                <span>{when}</span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}

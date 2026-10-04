@@ -30,6 +30,13 @@ interface WalletViewProps {
   onOpenScanner?: () => void;
   onOpenBugModal?: () => void;
   onOpenNotifications?: () => void;
+  /**
+   * Hay avisos que esta persona todavía no vio en su última visita.
+   *
+   * Sólo un booleano: el feed vive en `App` y el texto sale del backend. Sin
+   * la prop, no hay punto — un punto falso es peor que ningún punto.
+   */
+  hasUnreadNotifications?: boolean;
   onOpenAavePools?: () => void;
 }
 
@@ -43,6 +50,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
   onOpenScanner,
   onOpenBugModal,
   onOpenNotifications,
+  hasUnreadNotifications,
   onOpenAavePools,
 }) => {
   const [showBalance, setShowBalance] = useState<boolean>(true);
@@ -109,11 +117,26 @@ export const WalletView: React.FC<WalletViewProps> = ({
           <button
             onClick={onOpenNotifications}
             type="button"
-            aria-label="Notificaciones"
-            title="Notificaciones"
+            aria-label={hasUnreadNotifications ? 'Notificaciones: hay avisos nuevos' : 'Notificaciones'}
+            title={hasUnreadNotifications ? 'Notificaciones: hay avisos nuevos' : 'Notificaciones'}
             className="w-11 h-11 flex items-center justify-center text-black hover:opacity-75 active:scale-90 transition-all cursor-pointer relative"
           >
             <Bell className="w-5 h-5 stroke-[2.2]" />
+            {/*
+             * El punto de "hay algo nuevo" va **superpuesto**: `absolute` sobre
+             * un botón que ya es `relative`, así que no empuja la campana ni
+             * cambia el alto de la fila. Es el único modo de poner una señal acá
+             * sin desarmar la composición del header.
+             *
+             * Lo decide un `id` guardado localmente contra el `id` más nuevo del
+             * feed, no un contador inventado — ver `useNotifications`.
+             */}
+            {hasUnreadNotifications === true && (
+              <span
+                aria-hidden="true"
+                className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#ccff00] border border-black"
+              />
+            )}
           </button>
         </div>
       </div>
