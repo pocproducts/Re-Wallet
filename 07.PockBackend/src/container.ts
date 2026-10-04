@@ -24,6 +24,7 @@
 import { PrivyClient } from '@privy-io/node';
 
 import { mintSession } from './application/session/mintSession';
+import { readPortfolio } from './application/portfolio/readPortfolio';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
 import { createDatabase, readEnv } from './infrastructure/db/client';
 import { createPostgresUserStore } from './infrastructure/db/userStore.pg';
@@ -31,6 +32,11 @@ import { createPostgresWalletStore } from './infrastructure/db/walletStore.pg';
 import { createPrivyTokenVerifier } from './infrastructure/privy/privyTokenVerifier';
 import { createPrivyUserDirectory } from './infrastructure/privy/privyUserDirectory';
 import { createPrivyWalletOwnershipVerifier } from './infrastructure/privy/privyWalletOwnershipVerifier';
+import { createJsonRpcEvmBalanceReader, DEFAULT_EVM_ENDPOINTS } from './infrastructure/rpc/jsonRpcEvmBalanceReader';
+import {
+  createHttpSolanaBalanceReader,
+  DEFAULT_SOLANA_RPC_URL,
+} from './infrastructure/rpc/solanaBalanceReader.http';
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
 import { createApp } from './interface/http/app';
 import type { Logger } from './domain/ports/logger';
@@ -40,25 +46,40 @@ export interface Config {
   readonly privyAppSecret: string;
   readonly databaseUrl: string;
   readonly sessionSecret: string;
+  /**
+   * Optional: the endpoints the balance reads use. They have defaults that were
+   * verified by hand, so a missing variable is **not** a startup failure here —
+   * unlike a missing Privy app id or database URL. A public endpoint is a
+   * deployment detail, not an identity, and failing closed on it would make the
+   * whole Worker refuse to boot for a route that has a working default.
+   */
+  readonly monadRpcUrl: string;
+  readonly ethereumRpcUrl: string;
+  readonly solanaRpcUrl: string;
 }
 
 /** The one place that knows which environment variables exist. */
 export const readConfig = (env: Record<string, unknown> = process.env as Record<string, unknown>): Config => {
-  const config: Config = {
+  const required = {
     privyAppId: readEnv(env, 'PRIVY_APP_ID'),
     privyAppSecret: readEnv(env, 'PRIVY_APP_SECRET'),
     databaseUrl: readEnv(env, 'DATABASE_URL'),
     sessionSecret: readEnv(env, 'SESSION_SECRET'),
   };
 
-  const missing = Object.entries(config)
+  const missing = Object.entries(required)
     .filter(([, value]) => value.length === 0)
     .map(([key]) => key);
   if (missing.length > 0) {
     throw new Error(`Missing configuration: ${missing.join(', ')}.`);
   }
 
-  return config;
+  return {
+    ...required,
+    monadRpcUrl: readEnv(env, 'MONAD_RPC_URL') || DEFAULT_EVM_ENDPOINTS.monad,
+    ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || DEFAULT_EVM_ENDPOINTS.ethereum,
+    solanaRpcUrl: readEnv(env, 'SOLANA_RPC_URL') || DEFAULT_SOLANA_RPC_URL,
+  };
 };
 
 export const buildApp = (config: Config, log: Logger) => {
@@ -73,6 +94,16 @@ export const buildApp = (config: Config, log: Logger) => {
   const ownership = createPrivyWalletOwnershipVerifier(privy);
   const walletStore = createPostgresWalletStore(db);
   const sessions = createJwtSessionCodec({ secret: config.sessionSecret });
+
+  /*
+   * The balance readers. Both URLs are overridable so the deployment can point at
+   * a provider of its own — a public RPC rate-limits, and a rate limit must show
+   * up as a per-chain error rather than as a Worker that cannot boot.
+   */
+  const evm = createJsonRpcEvmBalanceReader({
+    endpoints: { monad: config.monadRpcUrl, ethereum: config.ethereumRpcUrl },
+  });
+  const solana = createHttpSolanaBalanceReader({ url: config.solanaRpcUrl });
 
   return createApp({
     mint: mintSession({
@@ -91,6 +122,8 @@ export const buildApp = (config: Config, log: Logger) => {
       log,
     }),
     sessions,
+    // The same wallet store the claim writes through, read through.
+    readPortfolio: readPortfolio({ wallets: walletStore, evm, solana, log }),
     log,
   });
 };

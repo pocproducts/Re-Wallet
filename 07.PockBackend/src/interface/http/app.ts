@@ -16,6 +16,7 @@
 import { Hono } from 'hono';
 
 import type { MintSession } from '../../application/session/mintSession';
+import type { ReadPortfolio } from '../../application/portfolio/readPortfolio';
 import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
@@ -24,6 +25,7 @@ import type { TokenVerifier } from '../../domain/ports/token-verifier';
 import { SESSION_COOKIE_NAME } from './cookie';
 import { createAuthRoutes } from './routes/auth';
 import { createDiagnosticsRoutes } from './routes/diagnostics';
+import { createPortfolioRoutes } from './routes/portfolio';
 import { createWalletsRoutes } from './routes/wallets';
 
 export interface AppDeps {
@@ -32,6 +34,8 @@ export interface AppDeps {
   /** Present in production; the wallets route needs the same verifier. */
   readonly verify?: TokenVerifier;
   readonly claim?: ClaimWalletsFor;
+  /** Absent when no chain readers are wired: the route is then not there. */
+  readonly readPortfolio?: ReadPortfolio;
   readonly cookieName?: string;
   readonly now?: () => Date;
   readonly log?: Logger;
@@ -71,6 +75,25 @@ export const createApp = (deps: AppDeps) => {
    */
   if (deps.verify && deps.claim) {
     app.route('/api/wallets', createWalletsRoutes({ verify: deps.verify, claim: deps.claim, log }));
+  }
+
+  /*
+   * `/api/portfolio` is mounted when the chain readers are wired. Same reasoning
+   * as the claim route: a portfolio route that answered "balances are not
+   * configured" would be indistinguishable, from a screen, from a portfolio of
+   * zeroes. The honest answer is that the route does not exist.
+   */
+  if (deps.readPortfolio) {
+    app.route(
+      '/api/portfolio',
+      createPortfolioRoutes({
+        sessions: deps.sessions,
+        readPortfolio: deps.readPortfolio,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
   }
 
   // TEMPORARY. Removed together with the browser-side Privy problem it explains.

@@ -298,13 +298,118 @@ IDENTITY_UNAVAILABLE` when the provider cannot answer, and `409 IDENTITY_CONFLIC
 [One email, one account](#one-email-one-account)). A provider outage is never
 dressed up as a refusal: telling somebody to try again would fail identically.
 
+## `GET /api/portfolio` — what the person actually holds
+
+**Balances are read from the chain, in the request. There is no cache, and none is
+planned for this stage.**
+
+```json
+{
+  "generatedAt": "2025-01-01T00:00:00.000Z",
+  "chains": [
+    { "chain": "monad", "status": "ok", "address": "0x…",
+      "assets": [
+        { "symbol": "MON",  "unit": "MON",  "decimals": 18, "raw": "123456789012345678901", "amount": "123.456789012345678901" },
+        { "symbol": "USDC", "unit": "USDC", "decimals": 6,  "raw": "1500000",               "amount": "1.5" }
+      ] },
+    { "chain": "ethereum", "status": "ok", "address": "0x…", "assets": [ … ] },
+    { "chain": "solana",   "status": "error",
+      "error": { "code": "CHAIN_READ_FAILED", "reason": "RPC_UNAVAILABLE" } }
+  ]
+}
+```
+
+Authentication is the session cookie, read exactly as `GET /api/auth/session` reads
+it: `401 UNAUTHENTICATED` with no cookie or an unverifiable one, and nothing is read
+in either case.
+
+### Five decisions that are deliberate
+
+1. **Amounts are unrounded strings, with `decimals` and `unit` stated next to them.**
+   `raw` is the exact integer the chain reported, in the smallest unit; `amount` is
+   the same value in its unit, as a decimal string, produced by string surgery on
+   a `bigint` (`formatUnits`, `src/domain/portfolio/assets.ts`) — never by division,
+   which loses digits past the 17th significant figure. The screen decides how to
+   round; the app needs the whole value to build a transaction, and a rounded one
+   cannot be un-rounded. `decimals` is stated so the screen never has to remember
+   it: a wrong exponent is not a wrong picture, it is wrong money.
+
+2. **A chain that fails does not empty the portfolio, and is never a zero.**
+   Each chain carries its own `status`, inside a `200`:
+
+   | `status` | Meaning |
+   |---|---|
+   | `ok` | Read. `assets[].amount` may legitimately be `"0"` — an empty wallet. |
+   | `error` | Could not be read. `error.reason` is one of `RPC_UNAVAILABLE`, `RPC_REJECTED`, `RPC_MALFORMED_RESPONSE`. |
+   | `no_wallet` | This person has no wallet row for this chain. |
+
+   `reason` is an enum, never the provider's words: a public endpoint's error message
+   is a sentence, sometimes an HTML page from a proxy, and a screen can only render
+   "we could not read this chain". The provider's text goes to the log. A zero for a
+   failed read is the worst possible outcome, because it renders as an empty wallet.
+
+3. **The address comes from `rewallet.wallets`, always.** The route takes no
+   address, no chain list, no body and no query parameter — there is no parameter
+   through which a foreign address could arrive. The only input is the `userId` the
+   cookie proved.
+
+4. **One EVM address, two EVM networks.** `monad` and `ethereum` both resolve to the
+   single `ethereum` wallet row (`WALLET_CHAIN_FOR` in
+   `src/domain/portfolio/networks.ts`). Privy's embedded wallets are chain-agnostic
+   EVM accounts, so there is no second EVM wallet to create, and adding one would
+   collide with `address UNIQUE` on `rewallet.wallets`. Monad is deliberately **not**
+   in `WALLET_CHAIN_ORDER`: it is a read network, not a wallet chain.
+
+5. **No caching.** Correctness first. Every read goes out per request. If a cache is
+   ever added it must be per-request and stated here.
+
+### How each chain is read
+
+| Chain | Native | Token | Port |
+|---|---|---|---|
+| Monad (`https://rpc.monad.xyz`) | `eth_getBalance` → wei, 18 decimals | `USDC` at `0x754704Bc059F8C67012fEd69BC8A327a5aafb603` via `balanceOf(address)` `eth_call`, 6 decimals | `EvmBalanceReader` |
+| Ethereum (chain id 1) | `eth_getBalance` → wei, 18 decimals | same contract, same call | `EvmBalanceReader` |
+| Solana (`https://api.mainnet-beta.solana.com`) | `getBalance` → **lamports**, 9 decimals | — | `SolanaBalanceReader` |
+
+USDC has the same address on Monad and on Ethereum mainnet, and it was verified by
+hand on both chains before being written down. The same USDC contract is never asked
+about a chain it does not answer on.
+
+Two precision notes that are not optional details:
+
+- **`eth_getBalance` answers in hex** and is parsed by `BigInt`. `Number` is already
+  wrong past 53 bits, and an 18-decimal balance goes past it.
+- **`getBalance` answers in a JSON number**, and Solana's supply is past
+  `Number.MAX_SAFE_INTEGER`. The adapter therefore reads the raw response text and
+  hands `"value": <digits>` to `BigInt`, because `JSON.parse` would silently round a
+  large lamport count.
+
+Both adapters keep three failures apart — `RPC_UNAVAILABLE` (no answer, including
+429 and 5xx), `RPC_REJECTED` (the endpoint answered with an error object) and
+`RPC_MALFORMED_RESPONSE` (it answered with something that is not a number). The
+third must never be mistaken for a zero, which is why it has its own name.
+
+### Optional variables
+
+Unlike the four above, these have working defaults and are **not** required to boot:
+`MONAD_RPC_URL`, `ETHEREUM_RPC_URL`, `SOLANA_RPC_URL`. They exist so a deployment
+can point at a provider of its own — a public RPC rate-limits, and a rate limit
+should show up as a per-chain error, not as a Worker that cannot boot.
+
+### The one 502
+
+`502 WALLETS_UNAVAILABLE`: the wallet rows could not be read, so no address could be
+resolved for **any** chain and there is no per-chain truth to report. Answering `200`
+would mean reporting all three chains as `no_wallet`, which is a lie about somebody's
+account. Every other failure is a per-chain `status`, not an HTTP status.
+
 ## Layout
 
 ```
 src/
   domain/ports/        the interfaces: what the application needs, in our words
-  application/         the use cases: session minting, wallet claiming
-  infrastructure/      the adapters: Privy, Postgres, JWT
+  application/         the use cases: session minting, wallet claiming, portfolio reads
+  infrastructure/      the adapters: Privy, Postgres, JWT, JSON-RPC balance reads
   interface/http/      Hono: routes, cookies, the error boundary
   container.ts         reads config, builds adapters, wires the app
   index.ts             the Worker's `fetch`
