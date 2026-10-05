@@ -27,7 +27,7 @@ import type { EvmBalanceReader } from '../../src/domain/ports/evm-balance-reader
 import type { SolanaBalanceReader } from '../../src/domain/ports/solana-balance-reader';
 import type { SolanaTransferPreparer } from '../../src/domain/ports/solana-transfer-preparer';
 import { SOLANA_MAINNET_NETWORK } from '../../src/domain/send/transfer';
-import type { WalletStore } from '../../src/domain/ports/wallet-store';
+import type { ReachableWalletStore } from '../../src/domain/ports/wallet-store';
 import type { MovementStore, PendingSendMovement } from '../../src/domain/ports/movement-store';
 import type { IdempotencyStore } from '../../src/domain/ports/idempotency-store';
 import { SESSION_COOKIE_NAME } from '../../src/interface/http/cookie';
@@ -62,7 +62,9 @@ const OWNER_ROW = {
   evmNetwork: 'eip155:1' as const,
 };
 
-const wallets: WalletStore = {
+const wallets: ReachableWalletStore = {
+  // A charge resolves its payee by id, never by tag: nothing here is reachable by one.
+  findByTag: async () => ({ kind: 'nobody' }),
   findByUserId: async (userId) => {
     if (userId === OWNER) return [OWNER_ROW];
     return [

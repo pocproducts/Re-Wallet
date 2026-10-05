@@ -19,7 +19,7 @@ import type { EvmBalanceReader } from '../../src/domain/ports/evm-balance-reader
 import type { SolanaBalanceReader } from '../../src/domain/ports/solana-balance-reader';
 import type { SolanaTransferPreparer } from '../../src/domain/ports/solana-transfer-preparer';
 import { SOLANA_MAINNET_NETWORK } from '../../src/domain/send/transfer';
-import type { WalletStore } from '../../src/domain/ports/wallet-store';
+import type { ReachableWalletStore } from '../../src/domain/ports/wallet-store';
 import type { MovementStore } from '../../src/domain/ports/movement-store';
 import { idempotencyKeyFor, type IdempotencyStore } from '../../src/domain/ports/idempotency-store';
 import { SESSION_COOKIE_NAME } from '../../src/interface/http/cookie';
@@ -34,7 +34,30 @@ const SOLANA_SENDER = '5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9';
 const RECIPIENT = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed';
 const SOLANA_RECIPIENT = SOLANA_SENDER;
 
-const wallets: WalletStore = {
+/** The handle the payee fixture is filed under. */
+const TAG = 'cortezjoaquin205.2d14';
+
+const wallets: ReachableWalletStore = {
+  /*
+   * One person, one handle, one wallet row per chain — which is the whole shape
+   * of the feature: a tag does not name a chain, the send does.
+   */
+  findByTag: async (tag, chain) => {
+    if (tag !== TAG) return { kind: 'nobody' };
+    // Filed for EVM only, so the "no wallet on this chain" refusal is reachable
+    // from a route test as well as from the use case test.
+    if (chain !== 'ethereum') return { kind: 'person', tag, wallet: null };
+    return {
+      kind: 'person',
+      tag,
+      wallet: {
+        address: RECIPIENT,
+        providerWalletId: 'wallet-payee-1',
+        chain,
+        evmNetwork: 'eip155:1' as const,
+      },
+    };
+  },
   findByUserId: async () => [
     { address: EVM_SENDER, providerWalletId: 'wallet-evm-1', chain: 'ethereum', evmNetwork: 'eip155:1' },
     { address: SOLANA_SENDER, providerWalletId: 'wallet-sol-1', chain: 'solana', evmNetwork: null },
@@ -356,6 +379,7 @@ describe('POST /api/send/prepare', () => {
       },
       prepareSend: prepareSend({
         wallets: {
+          findByTag: async () => ({ kind: 'nobody' }),
           findByUserId: async () => {
             throw new Error('connection reset');
           },
@@ -413,6 +437,52 @@ describe('POST /api/send/prepare', () => {
     // A refusal names a code and nothing else: not the address, not the reason.
     expect(refused).not.toContain('40 hex');
     expect(refused).not.toContain(EVM_SENDER);
+  });
+});
+
+describe('POST /api/send/prepare with a ReWALLET tag', () => {
+  const tagged = { ...validBody, recipient: undefined, recipientTag: `@${TAG}` };
+
+  it('prepares the transfer and answers with the handle, not the address', async () => {
+    const { app } = harness();
+
+    const response = await post(app, tagged);
+    const text = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(text).recipientIdentity).toEqual({ tag: TAG });
+    // The payee's address reached the transaction and stopped there.
+    expect(text).not.toContain(RECIPIENT);
+    // The address that IS in the answer is the requester's own, to sign for.
+    expect(text).toContain(EVM_SENDER);
+  });
+
+  it('refuses an unknown tag with a bounded code and nothing else', async () => {
+    const { app, movements } = harness();
+
+    const response = await post(app, { ...tagged, recipientTag: '@nadie.tiene.este' });
+    const body = (await response.json()) as { error: { code: string } };
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('RECIPIENT_NOT_FOUND');
+    expect(movements).toEqual([]);
+  });
+
+  it('refuses when the person has no wallet on the chain in play', async () => {
+    const { app, movements } = harness();
+
+    // Solved for EVM only in this fixture, so a Solana send by tag has nowhere
+    // to land — and it says so with a code, not a 500.
+    const response = await post(app, {
+      ...tagged,
+      chain: 'solana',
+      asset: { symbol: 'USDC', decimals: 6 },
+    });
+    const body = (await response.json()) as { error: { code: string } };
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('RECIPIENT_NO_WALLET_ON_CHAIN');
+    expect(movements).toEqual([]);
   });
 });
 

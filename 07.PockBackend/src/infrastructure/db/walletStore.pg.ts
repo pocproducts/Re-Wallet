@@ -29,7 +29,7 @@
 import { WALLET_CHAIN_ORDER } from '../../domain/wallet/chains';
 import type { WalletChain } from '../../domain/wallet/chains';
 import { DEFAULT_EVM_NETWORK, toEvmNetworkId } from '../../domain/wallet/evmNetwork';
-import type { KnownWallet, WalletStore } from '../../domain/ports/wallet-store';
+import type { KnownWallet, ReachableByTag, TaggedPerson, WalletStore } from '../../domain/ports/wallet-store';
 import type { Database } from './client';
 
 interface WalletRow {
@@ -37,6 +37,16 @@ interface WalletRow {
   readonly provider_wallet_id: string | null;
   readonly chain_type: string;
   readonly evm_network: string;
+}
+
+/** The tag-resolution row: the person's own handle next to an optional wallet. */
+interface TagRow {
+  readonly tag: string;
+  /** `null` when this person has no wallet row on the chain that was asked for. */
+  readonly address: string | null;
+  readonly provider_wallet_id: string | null;
+  readonly chain_type: string | null;
+  readonly evm_network: string | null;
 }
 
 /**
@@ -49,7 +59,7 @@ interface WalletRow {
 const toWalletChain = (value: string): WalletChain | null =>
   (WALLET_CHAIN_ORDER as readonly string[]).includes(value) ? (value as WalletChain) : null;
 
-export const createPostgresWalletStore = (db: Database): WalletStore => ({
+export const createPostgresWalletStore = (db: Database): WalletStore & ReachableByTag => ({
   async findByUserId(userId: string): Promise<readonly KnownWallet[]> {
     const rows = (await db`
       SELECT address, provider_wallet_id, chain_type, evm_network
@@ -79,6 +89,75 @@ export const createPostgresWalletStore = (db: Database): WalletStore => ({
         evmNetwork,
       }];
     });
+  },
+
+  /*
+   * ── `findByTag`: the tag is resolved, and the address stops here ────────────
+   *
+   * One statement, and the join is the whole design:
+   *
+   *   FROM rewallet.users u
+   *   LEFT JOIN rewallet.wallets w ON w.user_id = u.id AND w.chain_type = $2
+   *    WHERE u.tag_normalized = $1
+   *
+   * The `WHERE` is on `tag_normalized` — `citext`, `UNIQUE`, and already indexed
+   * as the schema ships it — so this is one index lookup and not a scan. The
+   * `@` is **not** stripped here: the caller normalizes and validates the handle
+   * against the schema's own pattern before it can reach this method, and an
+   * adapter that did it again would be a second, quieter answer to "what is a
+   * tag".
+   *
+   * The join is a `LEFT` join on purpose, and it is what keeps the two refusals
+   * apart: a person with no wallet on this chain still **produces a row**, with
+   * `address = NULL`. An inner join would fold that person into `nobody` and the
+   * use case would tell somebody they do not exist when they do.
+   *
+   * The chain is part of the join condition and not of the projection, so
+   * `monad` and `ethereum` reach the one EVM row each person has, and a Solana
+   * send can never pick up an EVM address — the same `WALLET_CHAIN_FOR` mapping
+   * the sender uses, applied on the other side of the same table.
+   *
+   * Nothing here creates, adopts or renames a person: `SELECT` is the only
+   * keyword in this statement, so a tag that belongs to nobody stays a tag that
+   * belongs to nobody, and there is no row a caller could guess into existence.
+   */
+  async findByTag(tag: string, chain: WalletChain): Promise<TaggedPerson> {
+    const rows = (await db`
+      SELECT u.tag, w.address, w.provider_wallet_id, w.chain_type, w.evm_network
+        FROM rewallet.users u
+        LEFT JOIN rewallet.wallets w
+          ON w.user_id = u.id
+         AND w.chain_type = ${chain}
+       WHERE u.tag_normalized = ${tag}
+       LIMIT 1
+    `) as unknown as TagRow[];
+
+    const row = rows[0];
+    if (row === undefined) return { kind: 'nobody' };
+
+    /*
+     * A row can come back with a chain the schema allows and the product does
+     * not, so the value is filtered rather than cast, exactly as `findByUserId`
+     * does. It reads as "this person has no wallet we can pay here", which is the
+     * honest reading of an address we are not willing to use.
+     */
+    const rowChain = row.chain_type === null ? null : toWalletChain(row.chain_type);
+
+    if (row.address === null || row.address === undefined || rowChain === null) {
+      return { kind: 'person', tag: row.tag, wallet: null };
+    }
+
+    return {
+      kind: 'person',
+      tag: row.tag,
+      wallet: {
+        address: row.address,
+        providerWalletId: row.provider_wallet_id,
+        chain: rowChain,
+        // Only an EVM row names a network, for the same reason as in `findByUserId`.
+        evmNetwork: rowChain === 'ethereum' ? toEvmNetworkId(row.evm_network) : null,
+      },
+    };
   },
 
   async save(userId: string, wallet: KnownWallet): Promise<void> {

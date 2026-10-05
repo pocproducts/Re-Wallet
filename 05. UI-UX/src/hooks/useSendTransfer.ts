@@ -60,6 +60,7 @@ import { isSolanaSendTransaction, type SendPreparationResponse } from '../types/
 import { ApiError } from '../services/api';
 import {
   isValidRecipientForChain,
+  classifyRecipient,
   sendChainByNetwork,
   toBase58,
   type SendChainId,
@@ -98,6 +99,9 @@ export const SEND_FAILURE_TEXT: Readonly<Record<string, string>> = {
   SEND_FAILED: 'La transacción no pudo enviarse. El envío no se completó.',
   PREPARATION_FAILED: 'No pudimos preparar el envío. Probá de nuevo en un momento.',
   CHAIN_MISMATCH: 'La red que nos mandaron a firmar no es una red que tenemos configurada.',
+  RECIPIENT_NOT_FOUND: 'Ese identificador no existe. Revisá cómo está escrito.',
+  RECIPIENT_NO_WALLET_ON_CHAIN:
+    'Esa persona existe, pero no tiene una billetera en la red de este envío.',
   ALREADY_SIGNED: 'Este envío ya tiene una transacción firmada.',
 };
 
@@ -117,6 +121,16 @@ export interface SendRequest {
    * por dentro. Ver la nota del archivo.
    */
   readonly recipient: string | null;
+  /**
+   * El identificador de ReWALLET de quien recibe, cuando la persona escribió un
+   * tag en vez de una dirección.
+   *
+   * Viaja como `recipientTag` y **el backend resuelve la dirección por dentro**:
+   * esta es la mitad de "nadie escribe una dirección ni la ve". Las dos puertas
+   * son excluyentes —un cuerpo con las dos se rechaza— y por eso no replaces
+   * `recipient`: la escribe el escáner, no la persona.
+   */
+  readonly recipientTag?: string;
   /**
    * El monto en la unidad mínima, como texto decimal, o `null` si el importe lo
    * tiene el servidor (el pago de un cobro).
@@ -358,9 +372,12 @@ export const useSendTransfer = (
          * para "tener algo": mandarle un `'0'` sería mandarle un destino falso.
          */
         patch('prepare', 'running');
-        if (request.recipient !== null && !isValidRecipientForChain(request.chain, request.recipient)) {
-          fail('INVALID_RECIPIENT', 'prepare');
-          return;
+        if (request.recipientTag === undefined && request.recipient !== null) {
+          const kind = classifyRecipient(request.chain, request.recipient);
+          if (kind !== 'address') {
+            fail('INVALID_RECIPIENT', 'prepare');
+            return;
+          }
         }
         if (
           request.amountRaw !== null &&
@@ -391,7 +408,9 @@ export const useSendTransfer = (
                   asset: { symbol: request.symbol, decimals: request.decimals },
                   // Los dos son `string` en este camino: la validación de arriba
                   // ya rechazó el caso `null` cuando la pantalla los tiene que mandar.
-                  recipient: request.recipient as string,
+                  ...(request.recipientTag === undefined
+                    ? { recipient: request.recipient as string }
+                    : { recipientTag: request.recipientTag }),
                   amountRaw: request.amountRaw as string,
                 })
               : await prepareSource({

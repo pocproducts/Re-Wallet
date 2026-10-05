@@ -63,7 +63,27 @@ export interface SendPreparationBody {
   readonly requestId: string;
   readonly chain: SendChainKey;
   readonly asset: SendAssetRequest;
-  readonly recipient: string;
+  /**
+   * El destino escrito como **dirección**.
+   *
+   * Sigue siendo una puerta válida y el backend la sigue validando como
+   * dirección. No es la puerta que el contrato quiere para una persona —
+   * `contrato-dinero.md:26` dice que nadie escribe una dirección — pero el
+   * escáner de QR entrega una y por eso no se toca.
+   *
+   * **Nunca viaja con `recipientTag`:** un cuerpo con los dos se rechaza como
+   * `INVALID_RECIPIENT`. Dos destinos es no haber dicho cuánto.
+   */
+  readonly recipient?: string;
+  /**
+   * El destino escrito como **identidad ReWALLET**: `@tag` o `tag`.
+   *
+   * Lo resuelve el backend, en la red en la que va el envío, y **la
+   * dirección que ese tag representa no vuelve en la respuesta** — no como
+   * un campo, ni abreviada en un título, ni dentro de otro valor. Acá se
+   * usa cuando la persona buscó a otra persona por su nombre.
+   */
+  readonly recipientTag?: string;
   /** El monto en la unidad mínima, como texto decimal. */
   readonly amountRaw: string;
 }
@@ -126,6 +146,16 @@ export interface SendPreparationResponse {
   /** Siempre uno: un envío es una transferencia. Una forma u otra, nunca dos. */
   readonly transactions: readonly SendTransaction[];
   readonly movement: PendingSendMovement;
+  /**
+   * Quién es el destinatario, cuando se lo nombró como identidad ReWALLET.
+   *
+   * Es el **tag canónico** de la fila, no el texto que se escribió: el mismo
+   * que se lee en voz alta y se contrasta con quien está pidiendo la plata.
+   *
+   * Aquí no hay dirección, ni `userId`, ni fila de cartera. La pantalla
+   * confirma **quién** recibe; no llega a saber **dónde**.
+   */
+  readonly recipientIdentity?: { readonly tag: string };
 }
 
 /**
@@ -175,6 +205,20 @@ export type SendRejectionCode =
   | 'CHAIN_UNKNOWN'
   | 'ASSET_NOT_ON_CHAIN'
   | 'INVALID_RECIPIENT'
+  /**
+   * Nadie en ReWALLET responde a ese identificador — o el texto no era un
+   * identificador. Las dos cosas contestan igual a propósito: si se
+   * distinguieran, el endpoint serviría para medir qué nombres existen.
+   */
+  | 'RECIPIENT_NOT_FOUND'
+  /**
+   * La persona existe y **no tiene billetera en la red de este envío**.
+   *
+   * Otra frase y otra acción: primero tiene que abrir esa red. El backend no
+   * manda el texto — llega el código, y la pantalla pone la frase con la red
+   * que ya está mostrando.
+   */
+  | 'RECIPIENT_NO_WALLET_ON_CHAIN'
   | 'INVALID_AMOUNT'
   | 'AMOUNT_EXCEEDS_BALANCE'
   | 'NO_GAS'

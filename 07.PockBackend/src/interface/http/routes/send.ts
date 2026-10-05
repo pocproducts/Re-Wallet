@@ -27,6 +27,21 @@
  * The browser must fail closed if this field is missing rather than fall back to
  * a client-side guess.
  *
+ * ── Two doors to the same destination ────────────────────────────────────────
+ *
+ * `contrato-dinero.md:26` — *"Se llega por QR o por nombre o @tag, y ReWALLET
+ * resuelve la dirección por detrás."* So the body may carry **`recipientTag`**
+ * as well as `recipient`, and this route forwards whichever the person typed
+ * without looking at either one: normalizing a handle, refusing one, and
+ * resolving it are all `prepareSend`'s job, and a route that resolved the tag
+ * would have to hold the address it resolved to.
+ *
+ * That is the whole point. **This route never holds the payee's address**, so
+ * there is no field, no branch and no typo that could put it in a response. The
+ * two refusals the tag door adds — `RECIPIENT_NOT_FOUND` and
+ * `RECIPIENT_NO_WALLET_ON_CHAIN` — travel out of `SendRejected` on the same 400
+ * as every other refusal, carrying the code and nothing else.
+ *
  * ── Why the status codes are the ones the rest of the app uses ───────────────
  *
  * 401: no cookie, or a cookie that does not verify. Nothing was read.

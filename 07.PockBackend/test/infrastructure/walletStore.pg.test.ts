@@ -141,3 +141,81 @@ describe('the EVM network column on rewallet.wallets', () => {
     expect(recorded[0]?.values).not.toContain('eip155:1');
   });
 });
+/**
+ * `findByTag`: resolving a ReWALLET identity into a destination.
+ *
+ * ── What is under test ───────────────────────────────────────────────────────
+ *
+ * The statement, because two things about it are the feature:
+ *
+ *   1. **It is a `LEFT` join.** A person with no wallet on the chain that was
+ *      asked for still produces a row, with a null address. An inner join would
+ *      fold them into `nobody`, and the use case would tell somebody they do not
+ *      exist when they do — a different sentence, and a wrong one.
+ *   2. **It selects nothing to write.** The only keyword in it is `SELECT`, so a
+ *      handle nobody owns cannot be turned into somebody who can be paid. That
+ *      is asserted against the statement text, because it is a property of the
+ *      SQL and not of the test's fake rows.
+ *
+ * No database is involved: the fake transport returns the rows a `LEFT` join
+ * would, which is the whole thing the adapter has to get right.
+ */
+describe('findByTag on rewallet.users and rewallet.wallets', () => {
+  const PERSON = { tag: 'cortezjoaquin205.2d14' };
+
+  it('answers the person and their wallet on the chain that was asked for', async () => {
+    const { db, recorded } = fakeDb([{ ...PERSON, ...EVM_ROW }]);
+
+    const found = await createPostgresWalletStore(db).findByTag(PERSON.tag, 'ethereum');
+
+    expect(found).toEqual({
+      kind: 'person',
+      tag: PERSON.tag,
+      wallet: {
+        address: EVM_ROW.address,
+        providerWalletId: EVM_ROW.provider_wallet_id,
+        chain: 'ethereum',
+        evmNetwork: MONAD_MAINNET_NETWORK_ID,
+      },
+    });
+    // The comparison is on the normalized column, which the schema indexes, and
+    // the chain is part of the join rather than a filter afterwards.
+    expect(recorded[0]?.sql).toContain('tag_normalized = ?');
+    expect(recorded[0]?.sql).toContain('LEFT JOIN rewallet.wallets');
+    expect(recorded[0]?.sql).toContain('w.chain_type = ?');
+    // Bound in the order the statement interpolates them: the chain, in the join
+    // clause, before the tag in the `WHERE`.
+    expect(recorded[0]?.values).toEqual(['ethereum', PERSON.tag]);
+  });
+
+  it('answers a person with no wallet on this chain as a person, not as nobody', async () => {
+    // The row a `LEFT` join produces when the wallet side is empty.
+    const { db } = fakeDb([{ ...PERSON, address: null, provider_wallet_id: null, chain_type: null, evm_network: null }]);
+
+    const found = await createPostgresWalletStore(db).findByTag(PERSON.tag, 'solana');
+
+    expect(found).toEqual({ kind: 'person', tag: PERSON.tag, wallet: null });
+  });
+
+  it('answers nobody when no row comes back, and writes nothing', async () => {
+    const { db, recorded } = fakeDb([]);
+
+    const found = await createPostgresWalletStore(db).findByTag('nadie.tiene.este', 'ethereum');
+
+    expect(found).toEqual({ kind: 'nobody' });
+    const sql = recorded[0]?.sql ?? '';
+    expect(sql).toContain('FROM rewallet.users');
+    // No `INSERT`, no `UPDATE`, no `SELECT INTO`: an unknown handle is a read.
+    for (const keyword of ['INSERT', 'UPDATE', 'DELETE', 'RETURNING']) {
+      expect(sql).not.toContain(keyword);
+    }
+  });
+
+  it('treats a chain the product does not support as no wallet, rather than casting it', async () => {
+    const { db } = fakeDb([{ ...PERSON, ...SOLANA_ROW, chain_type: 'bitcoin' }]);
+
+    const found = await createPostgresWalletStore(db).findByTag(PERSON.tag, 'ethereum');
+
+    expect(found).toEqual({ kind: 'person', tag: PERSON.tag, wallet: null });
+  });
+});

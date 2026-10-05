@@ -268,3 +268,72 @@ export const isValidRecipientForChain = (chain: SendChainId, value: string): boo
   if (chain === 'solana') return isSolanaAddress(value);
   return isEvmAddress(value);
 };
+
+/**
+ * El identificador de una persona en ReWALLET: `@tag` o `tag`.
+ *
+ * ── Por qué vive acá y no en un componente ───────────────────────────────────
+ *
+ * Porque la pregunta "¿esto es una dirección o es una persona?" tiene que tener
+ * **una sola** respuesta en la app, y la que vale es la del backend: `recipient`
+ * se valida como dirección y `recipientTag` se resuelve como tag, y un cuerpo
+ * que trae los dos se rechaza. Si cada pantalla decidiera por su cuenta, dos
+ * pantallas distintas mandarían el mismo texto por dos puertas.
+ *
+ * ── Por qué el mismo alfabeto que el de las columnas ────────────────────────
+ *
+ * Es el `CHECK` vivo de `rewallet.users.tag`: `[a-z0-9_.-]{3,60}`. Escribir el
+ * patrón acá otra vez sería una segunda opinión sobre qué es un tag, y lo que
+ * el servidor no puede resolver no debería parecer un candidato válido en el
+ * cliente.
+ */
+const TAG_BODY = /^[a-z0-9_.-]{3,60}$/;
+
+/**
+ * ¿El texto es un `@tag`? Acepta el identificador con o sin arroba y en cualquier
+ * capitalización, porque así se escribe y así se dicta.
+ *
+ * Ojo con el falso positivo obvio: una dirección EVM en minúsculas **también**
+ * cumple este patrón. Por eso esta función **no decide** — sólo dice "esto tiene
+ * forma de tag". Quien decide es `classifyRecipient`, que primero pregunta por
+ * la dirección.
+ */
+export const looksLikeRewalletTag = (value: string): boolean => {
+  const bare = value.trim().replace(/^@/, '').toLowerCase();
+  return TAG_BODY.test(bare);
+};
+
+/** Lo que la persona escribió, y por qué puerta tiene que salir. */
+export type RecipientKind =
+  /** Una dirección válida **para esta red**: sale por `recipient`. */
+  | 'address'
+  /** Un identificador de ReWALLET: sale por `recipientTag`, y el backend lo resuelve. */
+  | 'rewallet'
+  /** Ninguna de las dos. */
+  | 'unusable';
+
+/**
+ * Decide la puerta, y en un solo lugar.
+ *
+ * ── Por qué la dirección va primero ──────────────────────────────────────────
+ *
+ * Porque una dirección EVM en minúsculas cumple el patrón del tag, y mandarla
+ * por la puerta del tag sería convertir un envío perfectamente válido en un
+ * "no encontramos a nadie". La dirección es la que se reconoce por su forma
+ * propia; el tag es lo que queda después.
+ *
+ * Y una dirección de **otra** red tampoco es un tag: una dirección EVM pegada
+ * en un envío a Solana sigue siendo una dirección, y el mensaje tiene que decir
+ * que no sirve **en esta red** en vez de "no encontramos a esa persona".
+ *
+ * ── Qué no hace ─────────────────────────────────────────────────────────────
+ *
+ * No sabe si el tag existe, ni de qué billetera es la persona, ni por qué red le
+ * llega. Eso lo contesta el backend, con un código acotado, y esta función jamás
+ * adivina un `@tag` para probar si anda.
+ */
+export const classifyRecipient = (chain: SendChainId, value: string): RecipientKind => {
+  if (isValidRecipientForChain(chain, value)) return 'address';
+  if (hasEvmShape(value.trim()) || isSolanaAddress(value.trim())) return 'unusable';
+  return looksLikeRewalletTag(value) ? 'rewallet' : 'unusable';
+};

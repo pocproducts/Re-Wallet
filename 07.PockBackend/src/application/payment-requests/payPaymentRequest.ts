@@ -182,7 +182,19 @@ export type PayPaymentRequestCode =
    * same fact (a destination that is not valid on this chain) and a screen that
    * already handles it handles this.
    */
-  | 'INVALID_RECIPIENT';
+  | 'INVALID_RECIPIENT'
+  /**
+   * The send's own reachability refusals, unreachable from here.
+   *
+   * This path resolves the payee's address itself, in step 7, and hands
+   * `prepareSend` an address — never a handle. So the two codes the send adds
+   * for a destination named as a `@tag` cannot come back through here, and this
+   * list still carries them: a list that only holds the codes that happen to be
+   * reachable is a list that is wrong the day one of them is not, and the
+   * `PaymentRefused(error.code)` above is a compile-time check that it stays true.
+   */
+  | 'RECIPIENT_NOT_FOUND'
+  | 'RECIPIENT_NO_WALLET_ON_CHAIN';
 
 export class PaymentRefused extends Error {
   readonly code: PayPaymentRequestCode;

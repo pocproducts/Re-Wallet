@@ -31,6 +31,9 @@ import { SEND_FAILURE_TEXT, useSendTransfer, type SendTransfer } from '../../hoo
 import { sendAmountToRaw } from '../../services/send';
 import {
   isValidRecipientForChain,
+  classifyRecipient,
+  looksLikeRewalletTag,
+  type RecipientKind,
   sendChainByKey,
   type SendChainId,
   type SendChainView,
@@ -325,15 +328,27 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
    * una ida y vuelta. **No es una garantía**: el servidor vuelve a validarla y es
    * la que decide. Ver `config/send.ts`.
    */
-  const sendRecipientValid: boolean =
-    sendChainResolved !== null && isValidRecipientForChain(sendChainResolved.chain, destinationAddress.trim());
+  /*
+   * La caja acepta **dos** cosas y el mismo predicado decide cuál es cuál: una
+   * dirección válida para la red de este envío, o un identificador de ReWALLET
+   * que el backend resuelve por dentro. Que acepte las dos no es ampliar el
+   * alcance: la dirección casi nunca la escribe nadie, la deja el escáner.
+   */
+  const sendRecipientKind: RecipientKind =
+    sendChainResolved === null
+      ? 'unusable'
+      : classifyRecipient(sendChainResolved.chain, destinationAddress.trim());
 
-  /** Lo que la pantalla dice cuando la dirección no sirve, o `null`. */
+  const sendRecipientValid: boolean = sendRecipientKind !== 'unusable';
+
+  /** Lo que la pantalla dice cuando lo escrito no sirve, o `null`. */
   const sendRecipientError: string | null =
     destinationAddress.trim().length === 0 || sendChainResolved === null
       ? null
       : sendRecipientValid
         ? null
+      : looksLikeRewalletTag(destinationAddress.trim())
+        ? 'Ese identificador no existe en ReWALLET.'
         : `Esa dirección no es válida en ${sendChainResolved.label}. Revisala y pegala de nuevo.`;
 
   /**
@@ -389,13 +404,38 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       return;
     }
 
+    /*
+     * Lo que la persona escribió decide por qué puerta sale, y esa decisión vive
+     * en `classifyRecipient`, no acá.
+     *
+     * Un identificador sale por `recipientTag` y **el backend resuelve la
+     * dirección por dentro**: es la mitad de "nadie escribe una dirección ni la
+     * ve". Una dirección sale pegada, y esa no la escribió casi nadie: la dejó
+     * el escáner.
+     *
+     * Ninguna de las dos se muestra ni se transforma acá. El texto sale como se
+     * escribió, en la caja, y no se le pone mayúscula ni se le recorta.
+     */
+    const destino = destinationAddress.trim();
+    const kind = classifyRecipient(sendChainResolved.chain, destino);
+    if (kind === 'unusable') {
+      setSendAmountError(
+        looksLikeRewalletTag(destino)
+          ? 'Ese identificador no existe.'
+          : 'Esa dirección no es válida en la red de este envío.',
+      );
+      return;
+    }
+
     setSendAmountError(null);
     setCurrentStep('send_result');
     void sendFlow.send({
       chain: sendChainResolved.chain,
       symbol: sendAsset.symbol,
       decimals: sendAsset.decimals,
-      recipient: destinationAddress.trim(),
+      ...(kind === 'rewallet'
+        ? { recipient: null, recipientTag: destino.replace(/^@/, '') }
+        : { recipient: destino }),
       amountRaw,
       senderAddress: sendSenderAddress,
     });
@@ -1678,7 +1718,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
           <div className="px-5 pb-6 space-y-5 max-w-md mx-auto w-full">
             <div className="space-y-1.5">
               <h1 className="text-2xl font-black font-display text-black tracking-tight leading-tight">
-                Ingresá una dirección de destino
+                A quién le querés enviar
               </h1>
               {/*
                * La frase que estaba acá anunciaba once redes escritas a mano
@@ -1742,7 +1782,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                 type="text"
                 value={destinationAddress}
                 onChange={(e) => setDestinationAddress(e.target.value)}
-                placeholder="Dirección de destino"
+                placeholder="Escaneá el QR, o escribí @identificador"
                 className="bg-transparent text-base text-black placeholder-slate-400 focus:outline-none w-full font-mono font-medium"
               />
               <div className="flex items-center gap-2 shrink-0">

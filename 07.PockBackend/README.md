@@ -819,7 +819,7 @@ an estimate that guesses wrong costs the person the deposit.
 
 ## `POST /api/send/prepare` — the first route that moves money
 
-Request: the chain, the asset **with its decimals**, the recipient and the amount
+Request: the chain, the asset **with its decimals**, the destination and the amount
 in the **smallest unit**, plus a `requestId` the client generates.
 
 ```json
@@ -831,6 +831,17 @@ in the **smallest unit**, plus a `requestId` the client generates.
   "amountRaw": "1500000"
 }
 ```
+
+Or the destination named as a **ReWALLET identity**, instead of as an address:
+
+```json
+{ "requestId": "…", "chain": "monad", "asset": { "symbol": "USDC", "decimals": 6 },
+  "recipientTag": "@cortezjoaquin205.2d14", "amountRaw": "1500000" }
+```
+
+Both fields together is `INVALID_RECIPIENT`: a request that offers two
+destinations has not said which one it meant, and choosing between them would be
+a guess about where money goes.
 
 Response: the chain to sign on, **one** unsigned transaction, and the pending
 movement that was written.
@@ -868,7 +879,9 @@ out of an address nobody checked.
    `409` with the stored response **before** validating, before any RPC and
    before any write.
 3. `CHAIN_UNKNOWN` → 4. `ASSET_NOT_ON_CHAIN` → 5. `INVALID_AMOUNT` →
-   6. `INVALID_RECIPIENT` → 7. `WALLETS_UNAVAILABLE` (502) →
+   6. `INVALID_RECIPIENT`, then `RECIPIENT_NOT_FOUND` /
+   `RECIPIENT_NO_WALLET_ON_CHAIN` when the destination is a tag →
+   7. `WALLETS_UNAVAILABLE` (502) →
    8. `BALANCE_UNREADABLE`, then `AMOUNT_EXCEEDS_BALANCE` →
    9. `BALANCE_UNREADABLE`, then `NO_GAS`.
 
@@ -897,6 +910,40 @@ refused as `INVALID_AMOUNT` rather than sent at a scale nobody chose.
 - **Solana**: base58 that decodes to exactly 32 bytes.
 - **One chain's address in the other's send is refused, not interpreted.** The
   alphabets do not overlap and neither do the decoded lengths.
+
+### Sending to a `@tag`, and the address it never shows
+
+`docs/contrato-dinero.md:26` — *"Se llega por QR o por **nombre o @tag**, y
+ReWALLET resuelve la dirección por detrás: **nadie escribe una dirección ni
+la ve**."* A body may therefore carry `recipientTag` instead of `recipient`, and:
+
+- **A tag resolves on the chain the send is already on.** One person with an EVM
+  wallet and a Solana wallet is **one** tag, and the tag does not name a chain: a
+  handle that asked "which of your networks?" would be asking the question it
+  exists to remove. `WALLET_CHAIN_FOR[chain]` is the same mapping the sender
+  uses, so `monad` and `ethereum` reach the one EVM row each person has.
+- **The resolved address does not come back.** It goes from `rewallet.wallets`
+  into the transaction's `to` or calldata and stops. The answer carries the
+  **sender's** `address` — the one the person signs for — plus
+  `recipientIdentity: { "tag": "…" }`, the handle they typed. No payee address,
+  no `userId`, no wallet row in any field. `test/application/sendByTag.test.ts`
+  walks **every string in the answer** rather than trusting a field list.
+- **Nobody has to opt in.** The contract does not say they do, and `rewallet.users`
+  has no column that could say it. Sending to a handle reaches any account that
+  has one. Flagged as a **decision**, not a requirement — see the task report.
+- **The movement is filed against the handle**: `title` reads
+  `Send 1.5 USDC to @cortezjoaquin205.2d14`, not six characters of an address.
+
+| Code | When |
+|---|---|
+| `RECIPIENT_NOT_FOUND` | nothing in ReWALLET answers to that handle, **or** the string is not a handle at all |
+| `RECIPIENT_NO_WALLET_ON_CHAIN` | the person exists and has no wallet on the chain in play |
+
+The two are told apart on purpose — they are different facts and only one of them
+has something the person can do about it — but a malformed handle and an absent
+one are **not**: answering them identically is what keeps the lookup from being an
+oracle for measuring which handles exist. Both run before the claim is taken, so
+a refused tag never burns the `requestId`.
 
 The checksum is computed by `src/domain/send/keccak256.ts`, a dependency-free
 keccak-256 (the only hashing library here is `viem`, and it is a **dev**
@@ -941,8 +988,8 @@ to read before anything is signed:
 | `type` | `send` | what `movements_type_valid` allows for this |
 | `status` | `pending` | the transaction exists and **nobody signed it yet** |
 | `amount` | the readable amount at `numeric(20,6)` scale | six places is the column's; SOL has nine, so the exact integer travels in `meta.amountRaw` |
-| `title` | `Send 1.5 USDC to 0x5aAe…eAed` | one line a list can show, truncated so it cannot be copied |
-| `meta` | `chain`, `network`, `symbol`, `decimals`, `token`, `recipient`, `amountRaw`, `requestId` | everything a confirmation needs, and the key the send can be found by |
+| `title` | `Send 1.5 USDC to 0x5aAe…eAed`, or `… to @cortezjoaquin205.2d14` when the destination was named by handle | one line a list can show, truncated so it cannot be copied |
+| `meta` | `chain`, `network`, `symbol`, `decimals`, `token`, `recipient`, `amountRaw`, `requestId`, plus `recipientTag` when the destination was named by handle | everything a confirmation needs, and the key the send can be found by |
 
 Moving it to `completed` with the hash belongs to the task that signs.
 

@@ -36,7 +36,7 @@ import {
   type SendTransaction,
   type UnsignedTransfer,
 } from '../../src/domain/send/transfer';
-import type { WalletStore } from '../../src/domain/ports/wallet-store';
+import type { ReachableWalletStore } from '../../src/domain/ports/wallet-store';
 import type { MovementStore, PendingSendMovement } from '../../src/domain/ports/movement-store';
 import { idempotencyKeyFor, type IdempotencyStore } from '../../src/domain/ports/idempotency-store';
 import { DEPOSIT_NETWORKS } from '../../src/domain/deposit/catalog';
@@ -54,7 +54,11 @@ const REQUEST_ID = '9f1c0d5a-6b2e-4f3a-9c1d-2b7e5a4c8f10';
 const MONAD_USDC = DEPOSIT_NETWORKS.find((network) => network.chain === 'monad')
   ?.assets.find((asset) => asset.symbol === 'USDC')?.token as string;
 
-const wallets: WalletStore = {
+const wallets: ReachableWalletStore = {
+  // These tests are about sending to an address; sending to a tag has its own
+  // file, `sendByTag.test.ts`, so that the shape of the store is stated once
+  // per concern instead of once per suite.
+  findByTag: async () => ({ kind: 'nobody' }),
   findByUserId: async (userId) =>
     userId === USER_ID
       ? [
@@ -792,6 +796,8 @@ describe('the codes', () => {
       'ASSET_NOT_ON_CHAIN',
       'INVALID_AMOUNT',
       'INVALID_RECIPIENT',
+      'RECIPIENT_NOT_FOUND',
+      'RECIPIENT_NO_WALLET_ON_CHAIN',
       'AMOUNT_EXCEEDS_BALANCE',
       'BALANCE_UNREADABLE',
       'NO_GAS',
