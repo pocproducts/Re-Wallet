@@ -15,6 +15,19 @@ type Copy = {
   stats: { label: string; value: string }[]
   manifest: { title: string; subtitle: string; first: string; second: string; paymaster: string; gas: string }
   roadmapItems: string[][]
+  /* L3 showcase: one real capture, the rest named as pending. Words only —
+     the file list of what has to be shot lives in public/product/README.md */
+  showcase: {
+    label: string
+    badge: string
+    title: string
+    description: string
+    realAlt: string
+    realCaption: string
+    pendingTag: string
+    note: string
+    screens: { name: string; description: string; pending: string }[]
+  }
 }
 
 const copy: Record<Language, Copy> = {
@@ -44,6 +57,12 @@ const copy: Record<Language, Copy> = {
     ],
     manifest: { title: "Cómo está hecho", subtitle: "por si te interesa", first: "No tenés ni clave ni contraseña que custodiar: tu cuenta se crea sola cuando te registrás con tu email y la huella de tu celular. Por debajo, cada envío coordina varios pasos y los resuelve el backend. Para vos es un botón; la complejidad vive atrás.", second: "Tus dólares se guardan en un TEE, un tipo de servidor aislado donde nadie —ni siquiera nosotros— puede leer tu clave. Nunca la ves ni la tocás. Y el paymaster es el componente que paga por vos las comisiones de la red: vos no configurás comisiones ni las pagás. Si usarla te alcanza, ya la estás usando.", paymaster: "PAYMASTER (PAGA LAS COMISIONES POR VOS):", gas: "COMISIONES QUE NO PAGAS" },
     roadmapItems: [["01", "ETAPA 1 — YA ESTÁ", "Registro con passkey. Un solo saldo sobre Ethereum, Monad y Solana. Envío por @nombre o por QR. Links de cobro. Historial de movimientos."], ["02", "ETAPA 2 — MULTICHAIN, SWAPS Y BRIDGES", "Intercambiar dentro de ReWALLET (USDC ↔ USDT0 en Monad) y mover el saldo entre redes. El contrato ya está definido; falta activar el adaptador."], ["03", "ETAPA 3 — RETIRO A MONEDA LOCAL", "Sacar los dólares a dinero local. Necesita licencias y un proveedor de entrada y salida. Hoy no existe."], ["•", "RENDIMIENTO — EN PRUEBAS", "El depósito que rinde se activa solo y se suma al saldo, y se puede sacar en cualquier momento. Nunca lo corrimos con plata real: por eso no publicamos ninguna cifra."]] ,
+    showcase: { label: "// SECCION: LA APP DE VERDAD", badge: "CAPTURA REAL", title: "MOSTRAMOS LO QUE HAY, NO LO QUE PROMETEMOS", description: "La captura de abajo es real: la app, sin retoques. Las otras pantallas todavía no las sacamos, y preferimos dejar el hueco marcado antes que poner un dibujo donde debería estar la app.", realAlt: "Captura real de la pantalla de entrada de ReWALLET en un celular: pide el correo electrónico y avisa que manda un código de un solo uso, y que la cuenta se crea sola la primera vez.", realCaption: "Entrada: escribís tu correo, te mandamos un código y entrás. Si es la primera vez, la cuenta se crea sola.", pendingTag: "PENDIENTE", note: "* Cuando la app esté terminada, cada hueco va a tener su captura. No ilustramos lo que todavía no se puede ver.", screens: [
+      { name: "SALDO", description: "La pantalla de inicio: tu saldo y los botones para enviar, recibir y generar un link de cobro.", pending: "Falta la captura de esta pantalla." },
+      { name: "ENVIAR POR @NOMBRE", description: "Escribir el identificador de la otra persona, revisar el envío y confirmarlo.", pending: "Falta la captura de esta pantalla." },
+      { name: "LINK DE COBRO", description: "El link que compartís como un mensaje y con el que te pagan desde la cuenta de quien paga.", pending: "Falta la captura de esta pantalla." },
+      { name: "ACTIVIDAD", description: "Todos tus movimientos juntos, agrupados por fecha, con las entradas y las salidas.", pending: "Falta la captura de esta pantalla." },
+    ] },
   },
   en: {
     nav: { proposal: "Proposal", how: "Architecture", features: "Features", roadmap: "Roadmap", cta: "Try now" },
@@ -71,6 +90,12 @@ const copy: Record<Language, Copy> = {
     ],
     manifest: { title: "How it is built", subtitle: "if you care", first: "There is no key and no password for you to keep: your account is created when you sign up with your email and your phone fingerprint. Underneath, every send coordinates several steps and the backend resolves them. For you it is one button; the complexity lives behind it.", second: "Your dollars sit in a TEE, an isolated kind of server where nobody — not even us — can read your key. You never see or touch it. And the paymaster is the component that pays the network fees on your behalf: you set no fees and pay none. If using it is enough for you, you are already using it.", paymaster: "PAYMASTER (PAYS NETWORK FEES FOR YOU):", gas: "FEES YOU DO NOT PAY" },
     roadmapItems: [["01", "STAGE 1 — SHIPPED", "Passkey sign-up. One balance across Ethereum, Monad and Solana. Send by @name or by QR. Payment links. Movement history."], ["02", "STAGE 2 — MULTI-CHAIN, SWAPS AND BRIDGES", "Swap inside ReWALLET (USDC ↔ USDT0 on Monad) and move the balance across networks. The contract is already defined; the adapter still has to be switched on."], ["03", "STAGE 3 — LOCAL CURRENCY WITHDRAWAL", "Cash your dollars out into local money. It needs licences and an on/off-ramp provider. It does not exist today."], ["•", "YIELD — IN TESTING", "The deposit that earns starts on its own and lands in your balance, and you can take it out at any time. We have never run it with real money: that is why we publish no figure."]] ,
+    showcase: { label: "// SECTION: THE REAL APP", badge: "REAL CAPTURE", title: "WE SHOW WHAT EXISTS, NOT WHAT WE PROMISE", description: "The capture below is real: the app, untouched. The other screens we have not taken yet, and we would rather leave the gap marked than put a drawing where the app should be.", realAlt: "Real capture of the ReWALLET sign-in screen on a phone: it asks for the email address and says it sends a one-time code, and that the account is created on the first time.", realCaption: "Sign in: type your email, we send you a code and you are in. On your first time, the account is created for you.", pendingTag: "PENDING", note: "* When the app is finished, every gap gets its own capture. We do not illustrate what cannot be seen yet.", screens: [
+      { name: "BALANCE", description: "The home screen: your balance and the buttons to send, receive and create a payment link.", pending: "This screen has no capture yet." },
+      { name: "SEND BY @NAME", description: "Type the other person's handle, review the send and confirm it.", pending: "This screen has no capture yet." },
+      { name: "PAYMENT LINK", description: "The link you share like a message, and that pays you from the account of whoever pays.", pending: "This screen has no capture yet." },
+      { name: "ACTIVITY", description: "All your movements together, grouped by date, incoming and outgoing.", pending: "This screen has no capture yet." },
+    ] },
   },
   pt: {
     nav: { proposal: "Proposta", how: "Arquitetura", features: "Funcionalidades", roadmap: "Roteiro", cta: "Experimentar agora" },
@@ -98,6 +123,12 @@ const copy: Record<Language, Copy> = {
     ],
     manifest: { title: "Como foi feito", subtitle: "se você se importa", first: "Você não tem chave nem senha para guardar: sua conta nasce quando você se cadastra com o e-mail e a digital do celular. Por baixo, cada envio coordena vários passos e o backend resolve. Para você é um botão; a complexidade fica atrás.", second: "Seus dólares ficam em uma TEE, um tipo de servidor isolado onde ninguém — nem nós — consegue ler sua chave. Você nunca a vê nem encosta nela. E o paymaster é o componente que paga as taxas da rede por você: você não configura taxa nenhuma. Se usar já basta, você já está usando.", paymaster: "PAYMASTER (PAGA AS TAXAS POR VOCÊ):", gas: "TAXAS QUE VOCÊ NÃO PAGA" },
     roadmapItems: [["01", "ETAPA 1 — JÁ ESTÁ", "Cadastro com passkey. Um único saldo sobre Ethereum, Monad e Solana. Envio por @nome ou por QR. Links de cobrança. Histórico de movimentos."], ["02", "ETAPA 2 — MULTICHAIN, SWAPS E BRIDGES", "Trocar dentro da ReWALLET (USDC ↔ USDT0 em Monad) e mover o saldo entre redes. O contrato já está definido; falta ativar o adaptador."], ["03", "ETAPA 3 — SAQUE PARA MOEDA LOCAL", "Sacar os dólares para dinheiro local. Precisa de licenças e de um provedor de entrada e saída. Hoje não existe."], ["•", "RENDIMENTO — EM TESTES", "O depósito que rende começa sozinho e entra no saldo, e pode ser sacado a qualquer momento. Nunca rodamos com dinheiro real: por isso não publicamos nenhuma cifra."]] ,
+    showcase: { label: "// SEÇÃO: O APP DE VERDADE", badge: "CAPTURA REAL", title: "MOSTRAMOS O QUE EXISTE, NÃO O QUE PROMETEMOS", description: "A captura abaixo é real: o app, sem retoques. As outras telas ainda não foram tiradas, e preferimos deixar o espaço marcado a colocar um desenho onde deveria estar o app.", realAlt: "Captura real da tela de entrada da ReWALLET em um celular: pede o e-mail e avisa que manda um código de uso único, e que a conta é criada na primeira vez.", realCaption: "Entrada: você escreve seu e-mail, a gente manda um código e você entra. Na primeira vez, a conta é criada sozinha.", pendingTag: "PENDENTE", note: "* Quando o app estiver pronto, cada espaço vai ter a sua captura. Não ilustramos o que ainda não dá para ver.", screens: [
+      { name: "SALDO", description: "A tela inicial: seu saldo e os botões para enviar, receber e gerar um link de cobrança.", pending: "Falta a captura desta tela." },
+      { name: "ENVIAR POR @NOME", description: "Escrever o identificador da outra pessoa, revisar o envio e confirmar.", pending: "Falta a captura desta tela." },
+      { name: "LINK DE COBRANÇA", description: "O link que você compartilha como mensagem e com que recebem da conta de quem paga.", pending: "Falta a captura desta tela." },
+      { name: "ATIVIDADE", description: "Todos os seus movimentos juntos, agrupados por data, com entradas e saídas.", pending: "Falta a captura desta tela." },
+    ] },
   },
 }
 

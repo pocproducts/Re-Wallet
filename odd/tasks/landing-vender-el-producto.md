@@ -159,6 +159,15 @@ lector usa para decidir qué creer.
   y `betaDescription` pide el email para avisar cuándo se abre el acceso. El formulario se queda —es el
   único punto de conversión de la página— pero ya no le habla a un inversor.
 
+### L3 — Showcase: una captura real y los huecos nombrados (hecho)
+
+- Decisión 4 aplicada al revés de lo habitual: **no hay video y no hay mockups**. Entra `components/showcase-section.tsx`, entre `FeatureGrid` y `PricingSection`. El CTA "Probar ahora" sigue en el hero, primer bloque del scroll.
+- **Una sola captura real**: `public/product/01-entrar.png` (390x844), servida con `next/image` como el resto de las imágenes de `public/` (`about-section.tsx`), con `alt` en los tres idiomas.
+- **Los otros cuatro slots se renderizan como huecos explícitos**: cada fila nombra la pantalla, dice qué muestra y dice que la captura está pendiente. No hay dibujo de pantalla en ningún slot.
+- El encabezado no promete nada que la imagen no pruebe: `MOSTRAMOS LO QUE HAY, NO LO QUE PROMETEMOS` (`WE SHOW WHAT EXISTS, NOT WHAT WE PROMISE` / `MOSTRAMOS O QUE EXISTE, NÃO O QUE PROMETEMOS`). La etiqueta de la sección dice `CAPTURA REAL` en el lugar donde las otras secciones ponen su número de orden, para no inventar una ordinal que ya está repetida en `pricing-section.tsx` (005 y 006 aparecen dos veces).
+- **Cero números** en toda la sección, verificado sobre el HTML exportado.
+- `public/product/README.md`: tabla con lo que falta capturar, a 390 px, sin datos reales, y el procedimiento para reemplazar un hueco por su captura en los tres idiomas.
+
 ### Fuera de alcance (sigue)
 
 - `topology-graph.tsx` está **muerto**: no lo importa nadie. No se tocó.
