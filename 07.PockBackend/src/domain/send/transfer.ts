@@ -26,14 +26,20 @@
  * Moving the chain's own coin is `to` and `value`. `data` is `'0x'`, an empty
  * byte string, which is what a wallet sends when a transfer carries no call.
  *
- * ── Why Solana's `chainId` is `0` ─────────────────────────────────────────────
+ * ── Why Solana's `chainId` is **absent**, and not `0` ──────────────────────────
  *
- * Because **Solana has no EIP-155 chain id**, and the alternative was to invent
- * one: `network` is CAIP-2 in Solana's own namespace and carries the real
- * identity (`solana:<first 32 of the mainnet genesis hash>`), while `chainId: 0`
- * says "there is no number here" rather than naming a chain that does not exist.
- * An EVM wallet is never asked to sign `chainId: 0`: the shape is uniform so the
- * screen has one code path, and for an EVM chain the number is the real one.
+ * Because **Solana has no EIP-155 chain id**, and every alternative to saying so
+ * is a lie. `0` looks like a number the cluster answered with, and a wallet that
+ * reads it as a chain id has been told a chain exists that does not. An EVM
+ * wallet is never asked to sign a Solana send, so nothing needs a number to fill
+ * the hole with.
+ *
+ * So `chainId` is **absent** on a chain that has no id, and `network` is CAIP-2
+ * in Solana's own namespace carrying the real identity
+ * (`solana:<first 32 of the mainnet genesis hash>`). The response for a Solana
+ * send therefore names its chain the way Solana names chains, and does not carry
+ * an EVM id at all — which is what the `kind: 'solana'` transaction shape below
+ * is for.
  */
 import { DEPOSIT_NETWORKS, type DepositChain } from '../deposit/catalog';
 import { asciiHex, keccak256 } from './keccak256';
@@ -50,6 +56,43 @@ export interface UnsignedTransfer {
   readonly chainId: number;
 }
 
+/**
+ * One unsigned Solana transaction.
+ *
+ * ── Why this is a second shape and not a stretched EVM one ───────────────────
+ *
+ * A compiled Solana message has no `to` and no `data`: it is a blockhash, an
+ * ordered list of instructions and their accounts. Writing `{to: recipient,
+ * data: '0x', value: lamports, chainId: 0}` for a Solana send produces something
+ * that *looks* like a transaction, answers 200, and cannot be signed on any
+ * Solana wallet. So the shape is stated as what it is — the serialized message
+ * the browser hands to `signAndSendTransaction` — and `kind` is the
+ * discriminant that says which of the two forms a screen is holding.
+ */
+export interface UnsignedSolanaTransfer {
+  /** Always `transfer`: a send is one transfer of one asset. */
+  readonly purpose: 'transfer';
+  /** The discriminant. `'solana'` here; absent on the EVM shape. */
+  readonly kind: 'solana';
+  /** The unsigned message, base64. Signed by the browser, never here. */
+  readonly serializedTransaction: string;
+  /** `'solana'`: the transaction names its own cluster. */
+  readonly chain: 'solana';
+}
+
+/**
+ * What a send can answer with.
+ *
+ * The EVM shape is left exactly as it was — no `kind` added to it — because it is
+ * a contract the browser already parses field by field, and a screen that learns
+ * `kind === 'solana'` has everything it needs without the existing fields moving.
+ */
+export type SendTransaction = UnsignedTransfer | UnsignedSolanaTransfer;
+
+/** The EVM shape, by shape and not by name: what is not Solana is EVM here. */
+export const isSolanaTransaction = (transaction: SendTransaction): transaction is UnsignedSolanaTransfer =>
+  'kind' in transaction && transaction.kind === 'solana';
+
 /** `transfer(address,uint256)`, derived and never remembered. */
 export const TRANSFER_SELECTOR = keccak256(asciiHex('transfer(address,uint256)')).slice(0, 10);
 
@@ -62,10 +105,23 @@ export const TRANSFER_SELECTOR = keccak256(asciiHex('transfer(address,uint256)')
  */
 const SOLANA_MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
 
+/**
+ * Solana mainnet in CAIP-2, and the value a Solana preparation reports.
+ *
+ * Exported rather than recomputed: the identity of a cluster is one fact, and a
+ * second copy of the string is a second answer to "which cluster is this".
+ */
+export const SOLANA_MAINNET_NETWORK = `solana:${SOLANA_MAINNET_GENESIS.slice(0, 32)}`;
+
 /** What a wallet has to be told to sign on the right network. */
 export interface ChainIdentity {
-  /** EIP-155 chain id; `0` on a chain that does not have one. */
-  readonly chainId: number;
+  /**
+   * EIP-155 chain id — **absent** on a chain that does not have one.
+   *
+   * Optional, and it is optional on purpose: `0` would be a number the cluster
+   * never said. A Solana send reports `network` only.
+   */
+  readonly chainId?: number;
   /** CAIP-2: `eip155:143`, `eip155:1`, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`. */
   readonly network: string;
 }
@@ -83,7 +139,8 @@ export const chainIdentityFor = (chain: DepositChain): ChainIdentity => {
 
   if (spec === undefined) throw new RangeError(`the catalog does not know the chain: ${chain}`);
   if (spec.evmNetwork === null) {
-    return { chainId: 0, network: `solana:${SOLANA_MAINNET_GENESIS.slice(0, 32)}` };
+    // No `chainId` key at all: the answer is the chain's own name, not a number.
+    return { network: SOLANA_MAINNET_NETWORK };
   }
 
   const chainId = Number.parseInt(spec.evmNetwork.replace('eip155:', ''), 10);

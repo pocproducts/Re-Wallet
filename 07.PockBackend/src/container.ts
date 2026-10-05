@@ -50,6 +50,7 @@ import {
   createHttpSolanaBalanceReader,
   DEFAULT_SOLANA_RPC_URL,
 } from './infrastructure/rpc/solanaBalanceReader.http';
+import { createHttpSolanaTransferPreparer } from './infrastructure/rpc/solanaTransferPreparer.http';
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
 import { createApp } from './interface/http/app';
 import type { Logger } from './domain/ports/logger';
@@ -143,6 +144,13 @@ export const buildApp = (config: Config, log: Logger) => {
     },
   });
   const solana = createHttpSolanaBalanceReader({ url: config.solanaRpcUrl });
+  /*
+   * The Solana **message builder**, over the same endpoint and the same cluster:
+   * reading a lamport balance and compiling a transaction are different jobs, but
+   * they are one conversation with one RPC. A message built for a different
+   * cluster than the catalog names is refused by the use case, not by this file.
+   */
+  const solanaTransfers = createHttpSolanaTransferPreparer({ url: config.solanaRpcUrl });
 
   /*
    * The Aave V3 pool on Monad. It reads the same network as the Monad balances but
@@ -192,6 +200,7 @@ export const buildApp = (config: Config, log: Logger) => {
       wallets: walletStore,
       evm,
       solana,
+      solanaTransfers,
       movements: createPostgresMovementStore(db),
       idempotency: createPostgresIdempotencyStore(db),
       log,

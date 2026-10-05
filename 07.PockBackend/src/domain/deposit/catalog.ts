@@ -189,9 +189,32 @@ export const DEPOSIT_NETWORKS: readonly DepositNetworkSpec[] = [
     chain: 'solana',
     label: 'Solana',
     evmNetwork: null,
-    // Solana todavía no tiene un dólar en el catálogo: **no** es un error de la
-    // pantalla de dólares, es un hecho del catálogo. Cuando entre un USDC acá,
-    // el camino de dólares lo muestra sin tocar ninguna pantalla.
-    assets: [{ symbol: 'SOL', name: 'Solana', kind: 'crypto', decimals: 9, native: true, token: null, balanceReadable: true }],
+    /*
+     * SOL y USDC. El dólar de Solana entró con su **mint** verificado —la misma
+     * regla que los contratos de las redes EVM, con la diferencia de que acá la
+     * dirección es un mint de un token program y no un contrato— y el camino de
+     * dólares lo muestra sin tocar ninguna pantalla.
+     *
+     * `balanceReadable: false` y **no** es una limitación de pantalla: no hay
+     * lector verificado para un saldo de SPL en la pantalla de cobro, así que la
+     * fila aparece con su red y su dirección y no con una cifra inventada. El
+     * envío sí lee el saldo —por otro puerto— porque ahí la cifra decide si la
+     * persona puede pagar.
+     */
+    assets: [
+      { symbol: 'SOL', name: 'Solana', kind: 'crypto', decimals: 9, native: true, token: null, balanceReadable: true },
+      {
+        symbol: 'USDC',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        // Mint del USDC de Solana mainnet. **No** es la dirección del USDC de
+        // Monad ni el del de Ethereum: son tres identidades distintas, y usar
+        // una donde vive otra lee el saldo de un activo que no existe ahí.
+        token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        balanceReadable: false,
+      },
+    ],
   },
 ];

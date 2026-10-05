@@ -83,16 +83,23 @@ describe('el catálogo de depósito — toda fila está clasificada', () => {
   });
 
   it('el mismo símbolo en dos redes es el mismo activo, con el mismo kind', () => {
-    // USDC vive en dos redes con dos contratos distintos: es un activo, no dos.
+    // USDC vive en tres redes con tres direcciones distintas: es un activo, no tres.
     const usdc = DEPOSIT_NETWORKS.flatMap((network) =>
       network.assets
         .filter((asset) => asset.symbol === 'USDC')
         .map((asset) => ({ chain: network.chain, kind: asset.kind, token: asset.token })),
     );
-    expect(usdc.map((asset) => asset.chain)).toEqual(['monad', 'ethereum']);
+    expect(usdc.map((asset) => asset.chain)).toEqual(['monad', 'ethereum', 'solana']);
     expect(new Set(usdc.map((asset) => asset.kind))).toEqual(new Set<DepositAssetKind>(['dollar']));
-    // Y los contratos NO son el mismo: por eso la red es parte del activo.
-    expect(new Set(usdc.map((asset) => asset.token)).size).toBe(2);
+    // Y las direcciones NO son la misma: por eso la red es parte del activo. En
+    // Solana la fila es un mint —una cuenta del Token Program— y no un contrato
+    // desplegado, pero la regla es la misma: cada red declara la suya.
+    expect(new Set(usdc.map((asset) => asset.token)).size).toBe(3);
+    // La de Solana no es una dirección EVM: usarla donde vive otra sería el bug
+    // que este catálogo ya pagó una vez.
+    expect(usdc.find((asset) => asset.chain === 'solana')?.token).toBe(
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    );
   });
 
   it('lo que el catálogo declara hoy: las cripto son cripto y los dólares son dólares', () => {

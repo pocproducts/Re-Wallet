@@ -17,6 +17,8 @@ import { describe, expect, it } from 'vitest';
 import { prepareSend, SendRejected, SendReplay, SendInFlight } from '../../src/application/send/prepareSend';
 import type { EvmBalanceReader } from '../../src/domain/ports/evm-balance-reader';
 import type { SolanaBalanceReader } from '../../src/domain/ports/solana-balance-reader';
+import type { SolanaTransferPreparer } from '../../src/domain/ports/solana-transfer-preparer';
+import { SOLANA_MAINNET_NETWORK } from '../../src/domain/send/transfer';
 import type { WalletStore } from '../../src/domain/ports/wallet-store';
 import type { MovementStore } from '../../src/domain/ports/movement-store';
 import { idempotencyKeyFor, type IdempotencyStore } from '../../src/domain/ports/idempotency-store';
@@ -46,6 +48,19 @@ const evm: EvmBalanceReader = {
 };
 const solana: SolanaBalanceReader = {
   lamports: async () => 4_000_000_000n,
+  tokenAmount: async () => 10_000_000n,
+};
+
+/**
+ * The Solana message builder, stubbed at the port.
+ *
+ * The bytes are the adapter's business and are asserted where the adapter is, in
+ * `test/infrastructure/solanaTransferPreparer.http.test.ts`. Over HTTP what
+ * matters is that the route carries a `kind: 'solana'` transaction with a
+ * serialized message and no EVM chain id.
+ */
+const solanaTransfers: SolanaTransferPreparer = {
+  prepare: async () => ({ serializedTransaction: 'AQID', network: SOLANA_MAINNET_NETWORK }),
 };
 
 const harness = () => {
@@ -85,7 +100,15 @@ const harness = () => {
       issue: async () => ({ token: 'rw1.super.secret', expiresAt: EXPIRY }),
       read: async (token) => (token === 'rw1.super.secret' ? { userId: USER_ID, privyDid: 'did:privy:2test' } : null),
     },
-    prepareSend: prepareSend({ wallets, evm, solana, movements: movementStore, idempotency, log: recordingLogger() }),
+    prepareSend: prepareSend({
+      wallets,
+      evm,
+      solana,
+      solanaTransfers,
+      movements: movementStore,
+      idempotency,
+      log: recordingLogger(),
+    }),
     log: recordingLogger(),
     now: () => new Date('2026-10-04T05:00:00.000Z'),
   });
@@ -188,6 +211,29 @@ describe('POST /api/send/prepare', () => {
     expect(await response.json()).toEqual({ error: { code: 'AMOUNT_EXCEEDS_BALANCE' } });
   });
 
+  it('answers a Solana send with a serialized message and no EVM chain id', async () => {
+    const { app } = harness();
+
+    const response = await post(app, {
+      ...validBody,
+      chain: 'solana',
+      asset: { symbol: 'SOL', decimals: 9 },
+      recipient: SOLANA_SENDER,
+      amountRaw: '1500000000',
+    });
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    // The discriminant the screen switches on, and the shape it switches to.
+    expect(body.transactions).toEqual([
+      { purpose: 'transfer', kind: 'solana', serializedTransaction: 'AQID', chain: 'solana' },
+    ]);
+    // No number that no cluster ever gave.
+    expect('chainId' in body).toBe(false);
+    expect(body.network).toMatch(/^solana:/);
+    expect(body.address).toBe(SOLANA_SENDER);
+  });
+
   it('carries the address in the stored answer a replay hands back', async () => {
     const { app, rows } = harness();
 
@@ -249,6 +295,7 @@ describe('POST /api/send/prepare', () => {
             },
           },
           solana,
+          solanaTransfers,
           movements: { createPending: async () => ({ id: 'm1', status: 'pending' }) },
           idempotency: {
             find: async () => null,
@@ -316,6 +363,7 @@ describe('POST /api/send/prepare', () => {
         },
         evm,
         solana,
+        solanaTransfers,
         movements: { createPending: async () => ({ id: 'm1', status: 'pending' }) },
         idempotency: {
           find: async () => null,

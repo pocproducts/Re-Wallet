@@ -165,7 +165,7 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
     expect(body.networks.map((network) => network.assets.map((asset) => asset.symbol))).toEqual([
       ['MON', 'USDC'],
       ['ETH', 'USDC'],
-      ['SOL'],
+      ['SOL', 'USDC'],
     ]);
 
     // Dos lecturas seguidas, el mismo orden. Una lista que se reordena sola hace
@@ -200,6 +200,19 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
     expect(at(at(body.networks, 1).assets, 1).token).toBe('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
     expect(at(body.networks, 2).assets).toEqual([
       { symbol: 'SOL', name: 'Solana', kind: 'crypto', decimals: 9, native: true, token: null, balanceReadable: true },
+      {
+        symbol: 'USDC',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        // El mint del USDC de Solana, y no el contrato de otra red: tres
+        // direcciones distintas para el mismo símbolo.
+        token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        // La fila aparece con su red y su dirección; la cifra no, porque no hay
+        // lector verificado de SPL para la pantalla de cobro.
+        balanceReadable: false,
+      },
     ]);
   });
 
@@ -214,8 +227,8 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
     // El campo no existe. No es `""`, no es `null`, y desde luego no es otra
     // dirección: donde no hay billetera no hay adónde recibir.
     expect(solana !== undefined && 'address' in solana).toBe(false);
-    // Y el activo sigue estando: es lo que se puede recibir en el resto de las redes.
-    expect(solana?.assets.map((asset) => asset.symbol)).toEqual(['SOL']);
+    // Y los activos siguen estando: es lo que se puede recibir en el resto de las redes.
+    expect(solana?.assets.map((asset) => asset.symbol)).toEqual(['SOL', 'USDC']);
   });
 });
 
@@ -241,6 +254,7 @@ describe('GET /api/deposit-info — la clasificación viaja con cada activo', ()
       { chain: 'ethereum', symbol: 'ETH', kind: 'crypto' },
       { chain: 'ethereum', symbol: 'USDC', kind: 'dollar' },
       { chain: 'solana', symbol: 'SOL', kind: 'crypto' },
+      { chain: 'solana', symbol: 'USDC', kind: 'dollar' },
     ]);
   });
 

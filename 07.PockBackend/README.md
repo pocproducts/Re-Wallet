@@ -961,6 +961,93 @@ because a request with no key cannot be protected from a double tap, the second
 because "somebody else is preparing this right now" is not the same answer as
 "this already happened" and must not be dressed as it.
 
+### Solana sends, and the second transaction shape
+
+A send to Solana answers with a **different** shape, because a compiled Solana
+message has no `to` and no `data`:
+
+```json
+{ "requestId": "…", "chain": "solana", "address": "5tzFki…",
+  "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+  "transactions": [ { "purpose": "transfer", "kind": "solana",
+                      "serializedTransaction": "<base64>",
+                      "chain": "solana" } ],
+  "movement": { "id": "…", "status": "pending" } }
+```
+
+Three things about that answer are not style:
+
+- **`kind` is the discriminant.** The EVM shape is unchanged — same fields, same
+  order — and it has no `kind`, so a screen reads `transactions[0].kind ===
+  'solana'` and switches on the *form*, not on the name of the network.
+- **There is no `chainId` key at all.** Solana has no EIP-155 id, and `0` would be
+  a number the cluster never gave. Before this task the route answered `chainId: 0`
+  with an EVM-shaped transaction that no Solana wallet could sign.
+- **`serializedTransaction` is an unsigned message.** Nothing on the server signs
+  it; the browser hands it to the wallet. `verifySignatures: false` is stated in the
+  code because there is no signature to verify.
+
+SOL moves with a `SystemProgram.transfer`. USDC moves as an SPL token, against the
+**token** balance — not the lamport balance, which is only read to know there is
+gas — and with the associated token account of the destination created by the
+**sender** when it does not exist, using the idempotent instruction so the rent is
+paid once per destination rather than on every payment, or failing on every
+payment after the first.
+
+A new refusal code came with this: **`PREPARATION_FAILED`**, for a Solana message
+that could not be built or serialized (an RPC that did not answer, a malformed
+address, a message built for a cluster other than the one the catalog names). It is
+deliberately not `BALANCE_UNREADABLE`: that one says "we cannot see your money", and
+this one says "we could not prepare this right now". Both are worth retrying; they
+are not the same sentence.
+
+### Known dependency advisories
+
+`npm audit` reports 14 (9 moderate, 4 high, 1 critical). They are two unrelated
+groups, and **none of them was fixed here on purpose**.
+
+**1. The test toolchain — pre-existing, dev-only, not shipped.** The critical is
+`vitest` (arbitrary file read when the Vitest UI server listens), the highs are
+`vite` and `@solana/buffer-layout-utils`'s `bigint-buffer`, and the moderates
+include `esbuild` and `@vitest/mocker`. The vitest/vite/esbuild ones are pre-existing
+in this project's devDependencies and never reach `dist-worker.js`; `bigint-buffer`
+arrived with the Solana library and is covered below. Fixing them wants a breaking
+Vitest major, which no task here authorised.
+
+**2. The Solana dependency — `@solana/web3.js` 1.99.0.** Two advisories come with it
+through `jayson`:
+
+- `stream-json` (moderate): its `pick`/`ignore`/`filter`/`replace` filters are
+  O(depth²) on nested input — a denial of service on crafted deeply nested JSON.
+- `uuid` (moderate): missing buffer bounds check in `v3`/`v5`/`v6` when a `buf` is
+  supplied.
+
+Neither sits in a path that parses untrusted input: the JSON this Worker parses is
+RPC responses from an endpoint the deployment configured, with shapes this codebase
+wrote, and no person can submit JSON to it. The upgrade path is
+`@solana/web3.js@3.0.0`, a **breaking major** — the `Connection`/`Transaction`
+APIs and the module layout both change — and `npm audit fix --force` wants that
+major plus the Vitest one. **Neither is authorised here, so both moderates stand.**
+Re-run `npm audit` before a major upgrade, not after.
+
+### `@solana/web3.js` and `@solana/spl-token` are runtime dependencies
+
+They are in `dependencies`, not `devDependencies`, and they are **inside the
+Worker bundle**. Both are needed to answer a request, not to test one:
+
+- `@solana/web3.js` compiles and serializes the message.
+- `@solana/spl-token` builds the SPL instructions, including the associated token
+  account creation and the address derivation behind it.
+
+Decision 1 of `odd/tasks/enviar-solana.md` was amended to authorise **both**: the
+first compiles and serializes, the second builds SPL instructions, and neither is
+sufficient alone. The keccak in `domain/send/` stays — it is a hash function, not a
+transaction.
+
+Watch `dist-worker.js` in the build report: the Solana libraries are by far the
+largest dependency this Worker has, and they are the reason a Workers bundle needs
+its entry picked deliberately (see "What is not proven here").
+
 ### What is not proven here
 
 No signed transfer has gone through this path. The calldata is asserted against
@@ -971,6 +1058,43 @@ not another network, that a Solana transfer built here is accepted by a Solana
 wallet as it stands, and that a pending movement becomes a completed one with a
 hash.
 
+The Solana message is asserted as far as a test can go without a cluster: the base64
+is **deserialized again** with `@solana/web3.js` and its instructions are read — one
+`SystemProgram.transfer` for SOL, and `[create associated account, transferChecked]`
+for USDC, in that order, naming the program-derived destination account and carrying
+the amount and the decimals. What that does not prove is that a real cluster
+accepts the message, that the associated-token program on mainnet handles the
+idempotent instruction the way this code assumes, and that a browser can hand the
+base64 to Privy's Solana wallet. A test with money is a person's job.
+
+### What the Solana libraries cost in the bundle
+
+`dist-worker.js` after this task: **1,918,013 bytes raw, 366,420 bytes gzipped**
+(unminified on purpose; esbuild writes it the way `build.mjs` is configured, and the
+Worker limit applies to the compressed size). Before it: 1,202,134 raw / 229,461
+gzipped, from the last successful build — an artifact that contains none of the
+Solana code.
+
+So the delta is roughly **+716 KB raw, +137 KB gzipped**, and the compressed Worker
+stays far inside the limit that applies to a deployment. The unminified figure is
+the one to watch, because it is also the one `esbuild` prints as `1.8mb ⚠️`: the
+warning is about a number that is not the limit.
+
+Inside that delta, the measured share of `@solana/web3.js`'s own code is ~251 KB and
+`@solana/spl-token` ~8 KB; the rest is their dependency tree (`@solana/errors`,
+`@solana/buffer-layout`, `bn.js`, `superstruct`, `jayson`, `rpc-websockets`, the
+noble curves), which exists only because of them. Minifying is the obvious lever if
+this ever gets tight, and it is not applied here because the bundle is currently
+debuggable.
+
+Getting it to build at all needed two scoped aliases in `build.mjs`, and both are
+there for a reason written next to them: `@solana/web3.js` → its browser entry
+(no `exports` map, so the default ESM entry imports `util`/`http`/`https` and
+`node-fetch`), and `bigint-buffer` → its browser variant (its default entry
+`require`s the native `bindings` loader, which reaches `fs` and `path` through
+`@solana/buffer-layout-utils`). `platform: 'browser'` would have done both at once
+and would also have changed how every other dependency in this Worker resolves.
+
 ## Layout
 
 ```
@@ -980,8 +1104,9 @@ src/
                        per-token balance-readability flag — also the only list of
                        what a send may move, and on which chain
   domain/send/         a recipient validated for its chain, the EIP-55 checksum
-                       and its dependency-free keccak-256, and the transfer
-                       calldata plus the chain identity
+                       and its dependency-free keccak-256, the transfer calldata,
+                       the chain identity, and the second (Solana) transaction
+                       shape
   domain/pool/         the Aave V3 Monad addresses, the twelve-output reserve
                        decode, the RAY arithmetic, the deposit calldata
   domain/webhooks/     the signature scheme, the event→sentence table, attribution
@@ -989,7 +1114,8 @@ src/
                        reads, deposit catalog, webhook intake, notification feed,
                        pool read and deposit preparation, send preparation
   infrastructure/      the adapters: Privy, Postgres, JWT, JSON-RPC balance reads,
-                       and the Aave pool reader
+                       the Aave pool reader, and the Solana balance and message
+                       builder over HTTP
   interface/http/      Hono: routes, cookies, the error boundary
   container.ts         reads config, builds adapters, wires the app
   index.ts             the Worker's `fetch`

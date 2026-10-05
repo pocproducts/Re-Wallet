@@ -154,10 +154,17 @@ describe('the chain a transaction is signed on', () => {
   });
 
   it('names Solana in its own namespace and claims no numeric chain id', () => {
-    // Solana has no EIP-155 id: `network` is the identifier and `chainId` is 0.
+    /*
+     * Solana has no EIP-155 id, so there is no number at all — not `0`, which
+     * would look like a number the cluster answered with. The key is **absent**
+     * from the answer, and that is asserted by its presence, not by its value.
+     */
     const identity = chainIdentityFor('solana');
 
     expect(identity.network.startsWith('solana:')).toBe(true);
-    expect(identity.chainId).toBe(0);
+    expect(identity.chainId).toBeUndefined();
+    expect('chainId' in identity).toBe(false);
+    // Which is why it never reaches a response: `JSON.stringify` has nothing to write.
+    expect(JSON.stringify(identity)).toBe(`{"network":"${identity.network}"}`);
   });
 });

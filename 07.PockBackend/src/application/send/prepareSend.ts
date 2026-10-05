@@ -72,6 +72,10 @@
  */
 import type { EvmBalanceReader } from '../../domain/ports/evm-balance-reader';
 import type { SolanaBalanceReader } from '../../domain/ports/solana-balance-reader';
+import {
+  SolanaPreparationError,
+  type SolanaTransferPreparer,
+} from '../../domain/ports/solana-transfer-preparer';
 import type { WalletStore } from '../../domain/ports/wallet-store';
 import type { MovementStore, PendingSendMovement } from '../../domain/ports/movement-store';
 import { idempotencyKeyFor, type IdempotencyStore } from '../../domain/ports/idempotency-store';
@@ -80,7 +84,13 @@ import { noopLogger } from '../../domain/ports/logger';
 import { DEPOSIT_NETWORKS, type DepositChain, type DepositAssetSpec } from '../../domain/deposit/catalog';
 import { WALLET_CHAIN_FOR, type EvmNetwork } from '../../domain/portfolio/networks';
 import { recipientForChain } from '../../domain/send/recipients';
-import { chainIdentityFor, encodeTransfer, nativeTransfer, type UnsignedTransfer } from '../../domain/send/transfer';
+import {
+  chainIdentityFor,
+  encodeTransfer,
+  nativeTransfer,
+  type SendTransaction,
+  type UnsignedSolanaTransfer,
+} from '../../domain/send/transfer';
 import { formatUnits } from '../../domain/portfolio/assets';
 import { WalletsUnavailable } from '../portfolio/readPortfolio';
 
@@ -115,12 +125,17 @@ export interface SendPreparation {
    * routes that move money answer with the address they validated.
    */
   readonly address: string;
-  /** EIP-155 chain id, so the wallet signs on the right network. `0` on Solana. */
-  readonly chainId: number;
+  /**
+   * EIP-155 chain id, **absent** on a chain that does not have one.
+   *
+   * Solana reports no number here and the transactions carry `kind: 'solana'`
+   * instead. `0` is not an option: it looks like an answer the cluster gave.
+   */
+  readonly chainId?: number;
   /** CAIP-2: `eip155:143`, `eip155:1`, `solana:…`. */
   readonly network: string;
   /** One transaction, unsigned. There is no approval. */
-  readonly transactions: readonly UnsignedTransfer[];
+  readonly transactions: readonly SendTransaction[];
   readonly movement: { readonly id: string; readonly status: 'pending' };
 }
 
@@ -133,7 +148,8 @@ export type SendRejectionCode =
   | 'INVALID_RECIPIENT'
   | 'AMOUNT_EXCEEDS_BALANCE'
   | 'BALANCE_UNREADABLE'
-  | 'NO_GAS';
+  | 'NO_GAS'
+  | 'PREPARATION_FAILED';
 
 export class SendRejected extends Error {
   static readonly codes: readonly SendRejectionCode[] = [
@@ -145,6 +161,7 @@ export class SendRejected extends Error {
     'AMOUNT_EXCEEDS_BALANCE',
     'BALANCE_UNREADABLE',
     'NO_GAS',
+    'PREPARATION_FAILED',
   ];
 
   readonly code: SendRejectionCode;
@@ -177,6 +194,12 @@ export interface PrepareSendDeps {
   readonly wallets: WalletStore;
   readonly evm: EvmBalanceReader;
   readonly solana: SolanaBalanceReader;
+  /**
+   * Builds and serializes the Solana message. Separate from the balance reader
+   * because building a transaction is not reading a number, and because the two
+   * fail in ways a screen says differently.
+   */
+  readonly solanaTransfers: SolanaTransferPreparer;
   readonly movements: MovementStore;
   readonly idempotency: IdempotencyStore;
   readonly now?: () => Date;
@@ -364,7 +387,13 @@ export const prepareSend = (deps: PrepareSendDeps): PrepareSend => {
        *    would be a second chance for the two answers to disagree.
        */
       const readBalance = async (): Promise<bigint> => {
-        if (chain === 'solana') return deps.solana.lamports(senderAddress);
+        if (chain === 'solana') {
+          // An SPL token on Solana is not lamports: reading the native balance for a
+          // USDC send would validate the amount against the wrong asset.
+          return asset.native
+            ? deps.solana.lamports(senderAddress)
+            : deps.solana.tokenAmount(senderAddress, asset.token as string);
+        }
         return asset.native
           ? deps.evm.nativeBalance(chain as EvmNetwork, senderAddress)
           : deps.evm.erc20Balance(chain as EvmNetwork, asset.token as string, senderAddress);
@@ -410,17 +439,70 @@ export const prepareSend = (deps: PrepareSendDeps): PrepareSend => {
         }
       }
 
-      /* 11. The transaction. One, unsigned, and no approval anywhere in it. */
+      /*
+       * 11. The transaction. One, unsigned, and no approval anywhere in it.
+       *
+       *     Solana is not a variant of this: a compiled message has no `to` and
+       *     no `data`, so it is built by its own port and travels in its own
+       *     shape. What is shared is the *decision* — amount, recipient and sender
+       *     are the same three facts on both chains, and all three were validated
+       *     above.
+       */
       const { chainId, network } = chainIdentityFor(chain);
-      const transaction: UnsignedTransfer = asset.native
-        ? nativeTransfer(recipient, amount, chainId)
-        : {
-            purpose: 'transfer',
-            to: asset.token as string,
-            data: encodeTransfer(recipient, amount),
-            value: '0',
-            chainId,
-          };
+      let transaction: SendTransaction;
+
+      if (chain === 'solana') {
+        let message: Awaited<ReturnType<SolanaTransferPreparer['prepare']>>;
+        try {
+          message = await deps.solanaTransfers.prepare({
+            from: senderAddress,
+            to: recipient,
+            amount,
+            mint: asset.native ? null : (asset.token as string),
+            decimals: asset.decimals,
+          });
+        } catch (error) {
+          log.error('send.solana_preparation_failed', { error, userId, chain });
+          // Not a refusal of the person: the message could not be built. Bounded,
+          // retryable, and a different sentence from a balance nobody could read.
+          throw new SendRejected(
+            'PREPARATION_FAILED',
+            error instanceof SolanaPreparationError
+              ? `the solana message could not be prepared (${error.code})`
+              : 'the solana message could not be prepared',
+          );
+        }
+
+        /*
+         * The message names its own cluster, and the catalog names one. A message
+         * built for another cluster than this chain is would be signed against the
+         * wrong ledger, so it is refused rather than returned with a comment.
+         */
+        if (message.network !== network) {
+          throw new SendRejected(
+            'PREPARATION_FAILED',
+            `the solana message was built for ${message.network}, and this chain is ${network}`,
+          );
+        }
+
+        const solanaTransaction: UnsignedSolanaTransfer = {
+          purpose: 'transfer',
+          kind: 'solana',
+          serializedTransaction: message.serializedTransaction,
+          chain: 'solana',
+        };
+        transaction = solanaTransaction;
+      } else {
+        transaction = asset.native
+          ? nativeTransfer(recipient, amount, chainId as number)
+          : {
+              purpose: 'transfer',
+              to: asset.token as string,
+              data: encodeTransfer(recipient, amount),
+              value: '0',
+              chainId: chainId as number,
+            };
+      }
 
       /* 12. One pending movement, so Activity and "recent sends" have a row. */
       const amountForRow = movementAmount(amount, asset.decimals);
@@ -453,7 +535,8 @@ export const prepareSend = (deps: PrepareSendDeps): PrepareSend => {
         // The very address steps 9 and 10 read the balance for. Recomputing it
         // here would be a second chance for the two to disagree.
         address: senderAddress,
-        chainId,
+        // Absent on a chain with no EIP-155 id: `0` would look like an answer.
+        ...(chainId === undefined ? {} : { chainId }),
         network,
         transactions: [transaction],
         movement: { id: created.id, status: created.status },

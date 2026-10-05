@@ -25,6 +25,17 @@ import { prepareSend, SendRejected, SendReplay, SendInFlight } from '../../src/a
 import { SEND_PREPARE_ENDPOINT } from '../../src/application/send/prepareSend';
 import type { EvmBalanceReader } from '../../src/domain/ports/evm-balance-reader';
 import type { SolanaBalanceReader } from '../../src/domain/ports/solana-balance-reader';
+import {
+  SolanaPreparationError,
+  type SolanaTransferPreparer,
+  type SolanaTransferRequest,
+} from '../../src/domain/ports/solana-transfer-preparer';
+import {
+  isSolanaTransaction,
+  SOLANA_MAINNET_NETWORK,
+  type SendTransaction,
+  type UnsignedTransfer,
+} from '../../src/domain/send/transfer';
 import type { WalletStore } from '../../src/domain/ports/wallet-store';
 import type { MovementStore, PendingSendMovement } from '../../src/domain/ports/movement-store';
 import { idempotencyKeyFor, type IdempotencyStore } from '../../src/domain/ports/idempotency-store';
@@ -60,8 +71,22 @@ interface Reads {
   readonly erc20?: bigint;
   readonly native?: bigint;
   readonly lamports?: bigint;
-  readonly fail?: 'erc20' | 'native' | 'lamports';
+  /** An SPL balance on Solana, in the token's own units. */
+  readonly token?: bigint;
+  readonly fail?: 'erc20' | 'native' | 'lamports' | 'token';
 }
+
+/**
+ * The EVM shape, or a failure that says the test is looking at the wrong one.
+ *
+ * A send on Solana answers with a **different** transaction shape (`kind:
+ * 'solana'`), so an assertion about `to`/`data`/`chainId` has to prove it is
+ * holding the EVM one rather than have TypeScript assume it for it.
+ */
+const evmOnly = (transaction: SendTransaction): UnsignedTransfer => {
+  if (isSolanaTransaction(transaction)) throw new Error('this preparation is not an EVM transaction');
+  return transaction;
+};
 
 const readers = (reads: Reads = {}) => {
   const asked: string[] = [];
@@ -85,6 +110,11 @@ const readers = (reads: Reads = {}) => {
       asked.push(`lamports:${address}`);
       if (fail === 'lamports') throw new Error('rpc 503');
       return reads.lamports ?? 4_000_000_000n;
+    },
+    async tokenAmount(address, mint) {
+      asked.push(`token:${mint}:${address}`);
+      if (fail === 'token') throw new Error('rpc 503');
+      return reads.token ?? 10_000_000n;
     },
   };
 
@@ -141,23 +171,50 @@ const idempotencyStore = () => {
   return { store, rows };
 };
 
-const harness = (options: Reads & { readonly now?: () => Date } = {}) => {
+const harness = (options: Reads & { readonly now?: () => Date; readonly prepareFails?: boolean } = {}) => {
   const readers_ = readers(options);
   const movements = movementStore();
   const idempotency = idempotencyStore();
   const log = recordingLogger();
 
+  /*
+   * The Solana message builder, recorded rather than built: the bytes themselves
+   * are asserted in `test/infrastructure/solanaTransferPreparer.http.test.ts`,
+   * where the RPC is stubbed. What matters *here* is that the use case asks for a
+   * message, passes the three validated facts, and refuses when there is none.
+   */
+  const prepared: SolanaTransferRequest[] = [];
+  const solanaTransfers: SolanaTransferPreparer = {
+    prepare: async (request) => {
+      prepared.push(request);
+      if (options.prepareFails) {
+        throw new SolanaPreparationError('RPC_UNAVAILABLE', 'the endpoint did not answer');
+      }
+      return { serializedTransaction: 'AQID', network: SOLANA_MAINNET_NETWORK };
+    },
+  };
+
   const prepare = prepareSend({
     wallets,
     evm: readers_.evm,
     solana: readers_.solana,
+    solanaTransfers,
     movements: movements.store,
     idempotency: idempotency.store,
     log,
     now: options.now ?? ((): Date => new Date('2026-10-04T05:00:00.000Z')),
   });
 
-  return { prepare, ...readers_, movements, idempotency, written: movements.written, rows: idempotency.rows, log };
+  return {
+    prepare,
+    ...readers_,
+    movements,
+    idempotency,
+    written: movements.written,
+    rows: idempotency.rows,
+    log,
+    prepared,
+  };
 };
 
 const send = (over: Partial<Parameters<ReturnType<typeof harness>['prepare']>[1]> = {}) => ({
@@ -190,7 +247,8 @@ describe('a valid ERC-20 send', () => {
     expect(prepared.network).toBe('eip155:143');
     expect(prepared.transactions).toHaveLength(1);
 
-    const [transaction] = prepared.transactions;
+    const [raw] = prepared.transactions;
+    const transaction = raw === undefined ? undefined : evmOnly(raw);
     expect(transaction?.purpose).toBe('transfer');
     expect(transaction?.to).toBe(MONAD_USDC);
     expect(transaction?.value).toBe('0');
@@ -201,7 +259,9 @@ describe('a valid ERC-20 send', () => {
     // One signature, no approval: the owner sends it directly, and an approval
     // would be a second signature plus a standing allowance nobody asked for.
     expect(prepared.transactions.map((tx) => tx.purpose)).toEqual(['transfer']);
-    expect(prepared.transactions[0]?.data).not.toContain(toFunctionSelector('approve(address,uint256)').slice(2));
+    expect(evmOnly(prepared.transactions[0] as SendTransaction).data).not.toContain(
+      toFunctionSelector('approve(address,uint256)').slice(2),
+    );
   });
 
   it('reads the balance of the address in the database, never one from the body', async () => {
@@ -264,7 +324,7 @@ describe('a valid native send', () => {
       send({ chain: 'monad', asset: { symbol: 'MON', decimals: 18 }, amountRaw: '1000000000000000000' }),
     );
 
-    expect(prepared.transactions[0]).toEqual({
+    expect(evmOnly(prepared.transactions[0] as SendTransaction)).toEqual({
       purpose: 'transfer',
       to: RECIPIENT,
       data: '0x',
@@ -289,12 +349,152 @@ describe('a valid Solana send', () => {
     );
 
     expect(prepared.network.startsWith('solana:')).toBe(true);
-    expect(prepared.transactions).toEqual([
-      { purpose: 'transfer', to: SOLANA_RECIPIENT, data: '0x', value: '1500000000', chainId: 0 },
-    ]);
+    // Before this task, a Solana send answered with exactly that: an EVM shape
+    // with `chainId: 0` that no Solana wallet could sign. See the Solana describe.
+    expect(prepared.transactions.map((tx) => tx.purpose)).toEqual(['transfer']);
     // The Solana balance was read with the Solana reader, not with an EVM one.
     expect(asked).toContain(`lamports:${SOLANA_ADDRESS}`);
     expect(asked.some((line) => line.startsWith('erc20:'))).toBe(false);
+  });
+
+  it('answers with a serialized Solana message and no EVM chain id at all', async () => {
+    const { prepare, prepared: asked } = harness({ lamports: 4_000_000_000n });
+
+    const prepared = await prepare(
+      USER_ID,
+      send({
+        chain: 'solana',
+        asset: { symbol: 'SOL', decimals: 9 },
+        recipient: SOLANA_RECIPIENT,
+        amountRaw: '1500000000',
+      }),
+    );
+
+    /*
+     * Before this task the answer was `{to, data: '0x', value, chainId: 0}`: an
+     * EVM transaction no Solana wallet can sign, with a chain id nobody has. Now
+     * it is a compiled message and the number is **absent**.
+     */
+    expect(prepared.transactions).toEqual([
+      { purpose: 'transfer', kind: 'solana', serializedTransaction: 'AQID', chain: 'solana' },
+    ]);
+    expect(prepared.chainId).toBeUndefined();
+    expect('chainId' in prepared).toBe(false);
+    expect(prepared.network).toBe(SOLANA_MAINNET_NETWORK);
+    // The wallet that signs is still the one whose balance was read.
+    expect(prepared.address).toBe(SOLANA_ADDRESS);
+
+    // The message was asked for with the three validated facts, and no mint.
+    expect(asked).toEqual([
+      { from: SOLANA_ADDRESS, to: SOLANA_RECIPIENT, amount: 1_500_000_000n, mint: null, decimals: 9 },
+    ]);
+  });
+
+  it('sends USDC on Solana as a token, against the token balance and not lamports', async () => {
+    const { prepare, asked, prepared: askedPreparer } = harness({ lamports: 1n, token: 10_000_000n });
+
+    const prepared = await prepare(
+      USER_ID,
+      send({
+        chain: 'solana',
+        asset: { symbol: 'USDC', decimals: 6 },
+        recipient: SOLANA_RECIPIENT,
+        amountRaw: '1500000',
+      }),
+    );
+
+    // The amount is validated against **USDC**, not against SOL: reading lamports
+    // here would refuse a send the person can afford and approve one they cannot.
+    expect(asked).toContain(`token:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v:${SOLANA_ADDRESS}`);
+    // Lamports are still read — for the **fee**, which is paid in SOL whatever the
+    // asset moved. They are not what the amount was validated against.
+    expect(asked.filter((line) => line === `lamports:${SOLANA_ADDRESS}`)).toHaveLength(1);
+    // And the message names the mint and its decimals, for the checked transfer.
+    expect(askedPreparer[0]).toMatchObject({
+      mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      decimals: 6,
+      amount: 1_500_000n,
+    });
+    expect(prepared.transactions[0]).toMatchObject({ kind: 'solana' });
+  });
+
+  it('refuses USDC on Solana the person does not have, with the same code as everywhere', async () => {
+    const { prepare, prepared: asked } = harness({ token: 1_000n });
+
+    const code = await codeOf(
+      prepare(
+        USER_ID,
+        send({
+          chain: 'solana',
+          asset: { symbol: 'USDC', decimals: 6 },
+          recipient: SOLANA_RECIPIENT,
+          amountRaw: '1500000',
+        }),
+      ),
+    );
+
+    expect(code).toBe('AMOUNT_EXCEEDS_BALANCE');
+    // Refused before any message was asked for: no transaction is prepared for a
+    // send that cannot happen.
+    expect(asked).toHaveLength(0);
+  });
+
+  it('reports a message that could not be built as PREPARATION_FAILED, not as a bad balance', async () => {
+    const { prepare } = harness({ prepareFails: true });
+
+    const code = await codeOf(
+      prepare(
+        USER_ID,
+        send({
+          chain: 'solana',
+          asset: { symbol: 'SOL', decimals: 9 },
+          recipient: SOLANA_RECIPIENT,
+          amountRaw: '1500000000',
+        }),
+      ),
+    );
+
+    // Different sentence, different thing to do: this is worth retrying, and it
+    // says nothing about how much money the person has.
+    expect(code).toBe('PREPARATION_FAILED');
+    expect(code).not.toBe('BALANCE_UNREADABLE');
+  });
+
+  it('refuses a message built for another cluster than the one the catalog names', async () => {
+    const { prepare } = harness();
+    const devnetPreparer: SolanaTransferPreparer = {
+      prepare: async () => ({ serializedTransaction: 'AQID', network: 'solana:devnet' }),
+    };
+    const build = prepareSend({
+      wallets,
+      evm: { nativeBalance: async () => 0n, erc20Balance: async () => 0n },
+      solana: { lamports: async () => 4_000_000_000n, tokenAmount: async () => 0n },
+      solanaTransfers: devnetPreparer,
+      movements: { createPending: async () => ({ id: 'm1', status: 'pending' }) },
+      idempotency: {
+        find: async () => null,
+        reserve: async () => true,
+        complete: async () => {},
+        release: async () => {},
+      },
+    });
+
+    const code = await codeOf(
+      build(
+        USER_ID,
+        send({
+          chain: 'solana',
+          asset: { symbol: 'SOL', decimals: 9 },
+          recipient: SOLANA_RECIPIENT,
+          amountRaw: '1500000000',
+        }),
+      ),
+    );
+
+    // A message for another ledger is not a message for this chain, and returning
+    // it with a comment would be a send to the wrong cluster.
+    expect(code).toBe('PREPARATION_FAILED');
+    expect(prepare).toBeTypeOf('function');
   });
 });
 
@@ -371,10 +571,17 @@ describe('an amount that cannot be right', () => {
   it('refuses an asset that is not on the chosen chain', async () => {
     const { prepare } = harness();
 
-    // Solana has no USDC in the catalog, and there is no second list to fall back on.
+    // USDC **is** on Solana now, so the asset that is not there is something else:
+    // the catalog is the only list, and there is no second one to fall back on.
     expect(
       await codeOf(
-        prepare(USER_ID, send({ chain: 'solana', asset: { symbol: 'USDC', decimals: 6 }, recipient: SOLANA_RECIPIENT })),
+        prepare(USER_ID, send({ chain: 'solana', asset: { symbol: 'USDT', decimals: 6 }, recipient: SOLANA_RECIPIENT })),
+      ),
+    ).toBe('ASSET_NOT_ON_CHAIN');
+    // And an asset of another chain is still not this chain's asset.
+    expect(
+      await codeOf(
+        prepare(USER_ID, send({ chain: 'monad', asset: { symbol: 'SOL', decimals: 9 }, recipient: RECIPIENT })),
       ),
     ).toBe('ASSET_NOT_ON_CHAIN');
   });
@@ -588,6 +795,7 @@ describe('the codes', () => {
       'AMOUNT_EXCEEDS_BALANCE',
       'BALANCE_UNREADABLE',
       'NO_GAS',
+      'PREPARATION_FAILED',
     ]);
   });
 });

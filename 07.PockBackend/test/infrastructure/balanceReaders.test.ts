@@ -6,6 +6,8 @@
  * past `2^53`, and **nothing that failed is ever reported as a zero**.
  */
 import { describe, expect, it } from 'vitest';
+import { PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 
 import { formatUnits, USDC_ADDRESS_BY_CHAIN } from '../../src/domain/portfolio/assets';
 import { BalanceReadError } from '../../src/domain/portfolio/errors';
@@ -210,6 +212,55 @@ describe('httpSolanaBalanceReader', () => {
     const reader = createHttpSolanaBalanceReader({ url: 'https://solana.invalid', fetchImpl });
 
     await expect(reader.lamports('nope')).rejects.toMatchObject({ reason: 'RPC_REJECTED' });
+  });
+
+  it('reads an SPL balance exactly, from the derived token account', async () => {
+    /*
+     * 10^19 units of a six-decimal token. A JSON `number` would already have lost
+     * digits here, which is why the amount is read out of the raw text.
+     */
+    const { fetchImpl, calls } = answering(() => ({
+      text: JSON.stringify({
+        context: { slot: 1 },
+        value: { amount: '10000000000000000000', decimals: 6, uiAmount: 10_000_000_000 },
+      }),
+    }));
+    const reader = createHttpSolanaBalanceReader({ url: 'https://solana.invalid', fetchImpl });
+
+    const owner = '5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9';
+    const mint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+    await expect(reader.tokenAmount(owner, mint)).resolves.toBe(10n ** 19n);
+
+    // The account asked about is the **associated token account**, derived: not
+    // the owner's address, and not a concatenation anybody can spell by hand.
+    expect(calls[0]?.body['method']).toBe('getTokenAccountBalance');
+    const asked = (calls[0]?.body['params'] as string[])[0] as string;
+    expect(asked).not.toBe(owner);
+    expect(asked).toBe(getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(owner), true).toBase58());
+  });
+
+  it('reads a token account that does not exist as zero, not as a failure', async () => {
+    // An address that has never held USDC holds none of it. That is a fact about
+    // the chain, and calling it unreadable would block a new wallet from sending.
+    const { fetchImpl } = answering(() => ({ text: JSON.stringify({ context: { slot: 1 }, value: null }) }));
+    const reader = createHttpSolanaBalanceReader({ url: 'https://solana.invalid', fetchImpl });
+
+    await expect(
+      reader.tokenAmount('5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
+    ).resolves.toBe(0n);
+  });
+
+  it('refuses a token balance for something that is not two Solana addresses', async () => {
+    // An EVM address pasted where a mint belongs: refused before any RPC, because
+    // there is no token account of an address that is not on this chain.
+    const { fetchImpl, calls } = answering(() => ({ text: JSON.stringify({ value: 1 }) }));
+    const reader = createHttpSolanaBalanceReader({ url: 'https://solana.invalid', fetchImpl });
+
+    await expect(
+      reader.tokenAmount('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
+    ).rejects.toMatchObject({ reason: 'RPC_REJECTED' });
+    expect(calls).toHaveLength(0);
   });
 
   it('reports an answer without a lamport value as RPC_MALFORMED_RESPONSE', async () => {
