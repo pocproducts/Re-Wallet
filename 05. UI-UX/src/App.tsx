@@ -23,6 +23,9 @@ import { useDepositInfo } from './hooks/useDepositInfo';
 import { usePool } from './hooks/usePool';
 import { useUserWallets } from './hooks/useUserWallets';
 import { ChargeQrModal, type ChargeReceiveAddress } from './components/Charge/ChargeQrModal';
+import { CreateChargeView } from './components/Wallet/CreateChargeView';
+import { PayChargeView } from './components/Wallet/PayChargeView';
+import { useIncomingPaymentRequest } from './hooks/useIncomingPaymentRequest';
 import { NavTab, TransactionItem } from './types';
 import { relativeTimeLabel, treatmentFor, NOTIFICATIONS_UNAVAILABLE_CODE } from './services/notifications';
 import {
@@ -129,6 +132,23 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeActionModal, setActiveActionModal] = useState<ActionModalType>(null);
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
+  /** La pantalla de cobrar por link, de tercer nivel como las de pool. */
+  const [isCreateChargeOpen, setIsCreateChargeOpen] = useState<boolean>(false);
+
+  /*
+   * EL LINK DE COBRO, LEÍDO AL ARRANCAR.
+   *
+   * Es la única parte de la app que mira dónde entró la persona, y vive **arriba**
+   * de la puerta de ingreso a propósito: alguien que abre un link de cobro sin
+   * sesión tiene que ver primero la puerta, entrar, y recién entonces el cobro. Si
+   * el id viviera dentro de la rama autenticada, se perdería al reiniciar la
+   * sesión y el link se abriría en la billetera de siempre sin decir nada.
+   *
+   * Y `clear()` borra la ruta cuando se cierra, así que una recarga no vuelve a
+   * abrir un cobro ya pagado: un link es de un solo uso y la barra de direcciones
+   * no tiene por qué seguir siendo el portador.
+   */
+  const incomingCharge = useIncomingPaymentRequest();
 
   // Estados de layout de 3er nivel
   const [isAavePoolsOpen, setIsAavePoolsOpen] = useState(false);
@@ -204,6 +224,7 @@ export default function App() {
       setIsDigitalDollarsOpen(false);
       setIsCryptoListOpen(false);
       setIsScannerOpen(false);
+      setIsCreateChargeOpen(false);
       setActiveActionModal(null);
       setCurrentTab('wallet');
     });
@@ -257,7 +278,7 @@ export default function App() {
     : '$joadata';
 
   const isAnyThirdLevelOpen =
-    isAavePoolsOpen || isDigitalDollarsOpen || isCryptoListOpen;
+    isAavePoolsOpen || isDigitalDollarsOpen || isCryptoListOpen || isCreateChargeOpen;
 
   /*
    * El botón de "volver a empezar" del fallo de intercambio se deshabilita
@@ -403,6 +424,7 @@ export default function App() {
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
                         hasUnreadNotifications={notifications.hasUnread}
                         onOpenAavePools={() => setIsAavePoolsOpen(true)}
+                        onOpenCreateCharge={() => setIsCreateChargeOpen(true)}
                       />
                     </div>
                   )}
@@ -518,6 +540,30 @@ export default function App() {
             userTag={userTag}
             portfolio={portfolio}
           />
+        )}
+
+        {/* 4. Cobrar por link (3er nivel desde Billetera -> Cobrar) */}
+        {isCreateChargeOpen && (
+          <CreateChargeView
+            /*
+             * El origen sale de `location` **acá**, en el `App`, y no dentro de la
+             * pantalla: esta no sabe de dónde vino la app, y el único que lo sabe
+             * es el que la montó. Un link armado con un origen escrito a mano sería
+             * un link que no abre la app en producción.
+             */
+            origin={typeof window === 'undefined' ? '' : window.location.origin}
+            onClose={() => setIsCreateChargeOpen(false)}
+          />
+        )}
+
+        {/* =========================================================================
+            EL COBRO QUE LLEGÓ POR EL LINK — pantalla de tercer nivel, como las de
+            Inversiones. Se abre arriba de todo porque es lo que esa persona vino a
+            hacer: si una persona abre un link de cobro y aterriza en la billetera,
+            el cobro se perdió sin ningún error que lo diga.
+           ========================================================================= */}
+        {incomingCharge.id !== null && sessionStatus === 'authenticated' && (
+          <PayChargeView id={incomingCharge.id} onClose={incomingCharge.clear} />
         )}
 
         {/* Modal de Feedback & Reportar Bugs (Botón BUG Flotante) */}

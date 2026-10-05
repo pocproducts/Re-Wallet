@@ -28,6 +28,9 @@ import { readPortfolio } from './application/portfolio/readPortfolio';
 import { readPool } from './application/pool/readPool';
 import { prepareDeposit } from './application/pool/prepareDeposit';
 import { prepareSend } from './application/send/prepareSend';
+import { createPaymentRequest } from './application/payment-requests/createPaymentRequest';
+import { readPaymentRequest } from './application/payment-requests/readPaymentRequest';
+import { payPaymentRequest } from './application/payment-requests/payPaymentRequest';
 import { readDepositInfo } from './application/deposit-info/readDepositInfo';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
 import { ingestPrivyWebhook } from './application/webhooks/ingestPrivyWebhook';
@@ -37,6 +40,7 @@ import { createPostgresUserStore } from './infrastructure/db/userStore.pg';
 import { createPostgresWalletStore } from './infrastructure/db/walletStore.pg';
 import { createPostgresWebhookEventStore } from './infrastructure/db/webhookEventStore.pg';
 import { createPostgresMovementStore } from './infrastructure/db/movementStore.pg';
+import { createPostgresPaymentRequestStore } from './infrastructure/db/paymentRequestStore.pg';
 import { createPostgresIdempotencyStore } from './infrastructure/db/idempotencyStore.pg';
 import { createPrivyTokenVerifier } from './infrastructure/privy/privyTokenVerifier';
 import { createPrivyUserDirectory } from './infrastructure/privy/privyUserDirectory';
@@ -164,6 +168,30 @@ export const buildApp = (config: Config, log: Logger) => {
         : [config.monadPoolRpcUrl, ...DEFAULT_POOL_ENDPOINTS],
   });
 
+  /*
+   * One send flow, shared.
+   *
+   * It is built here, once, and handed to both `prepareSend` and the charge
+   * payment: a payment of a charge **is** a send, with the destination resolved on
+   * this side instead of in the body. Two instances would mean two movement stores
+   * and two idempotency stores over the same tables, and the second one would be a
+   * place where the two could disagree about what was already prepared.
+   */
+  const movements = createPostgresMovementStore(db);
+  const idempotency = createPostgresIdempotencyStore(db);
+  const sendFlow = prepareSend({
+    wallets: walletStore,
+    evm,
+    solana,
+    solanaTransfers,
+    movements,
+    idempotency,
+    log,
+  });
+
+  /* The charges, in a table that already existed. No table is created here. */
+  const paymentRequests = createPostgresPaymentRequestStore(db);
+
   return createApp({
     mint: mintSession({
       verify,
@@ -196,15 +224,7 @@ export const buildApp = (config: Config, log: Logger) => {
      * qué red. El store de movimientos y el de idempotencia son nuevas filas en
      * tablas que ya existen; no se crea nada acá.
      */
-    prepareSend: prepareSend({
-      wallets: walletStore,
-      evm,
-      solana,
-      solanaTransfers,
-      movements: createPostgresMovementStore(db),
-      idempotency: createPostgresIdempotencyStore(db),
-      log,
-    }),
+    prepareSend: sendFlow,
     /*
      * The deposit catalog and the addresses that go with it, read through the
      * **same** store. One store, una sola fuente de dirección: si esta ruta
@@ -212,6 +232,25 @@ export const buildApp = (config: Config, log: Logger) => {
      * para recibir podría no ser la misma que la que el portfolio lee.
      */
     readDepositInfo: readDepositInfo({ wallets: walletStore, log }),
+
+    /*
+     * El link de cobro. Una tabla que ya estaba completa; acá no se crea nada.
+     *
+     * El pago de un cobro llama al **mismo** `sendFlow` de arriba: la única
+     * diferencia es que el destinatario se resuelve adentro del caso de uso, desde
+     * `rewallet.wallets`, y nunca viaja en un cuerpo ni vuelve en una respuesta.
+     */
+    createPaymentRequest: createPaymentRequest({ requests: paymentRequests, log }),
+    readPaymentRequest: readPaymentRequest({ requests: paymentRequests, log }),
+    payPaymentRequest: payPaymentRequest({
+      requests: paymentRequests,
+      // The **same** wallet store the portfolio reads and the send resolves its
+      // sender from: one source of addresses, so the address a charge resolves to
+      // is an address this project already owns.
+      wallets: walletStore,
+      prepareSend: sendFlow,
+      log,
+    }),
     // Intake and feed share one store: one write path and one read path over the
     // same rows, so "the feed shows what arrived" is a property of the wiring.
     ingestWebhook: ingestPrivyWebhook({

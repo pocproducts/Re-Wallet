@@ -21,6 +21,9 @@ import type { ReadPool } from '../../application/pool/readPool';
 import type { PrepareDeposit } from '../../application/pool/prepareDeposit';
 import type { ReadDepositInfo } from '../../application/deposit-info/readDepositInfo';
 import type { PrepareSend } from '../../application/send/prepareSend';
+import type { CreatePaymentRequest } from '../../application/payment-requests/createPaymentRequest';
+import type { ReadPaymentRequest } from '../../application/payment-requests/readPaymentRequest';
+import type { PayPaymentRequest } from '../../application/payment-requests/payPaymentRequest';
 import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
 import type { IngestPrivyWebhook } from '../../application/webhooks/ingestPrivyWebhook';
 import type { ReadNotifications } from '../../application/webhooks/readNotifications';
@@ -35,6 +38,7 @@ import { createDiagnosticsRoutes } from './routes/diagnostics';
 import { createNotificationsRoutes } from './routes/notifications';
 import { createPortfolioRoutes } from './routes/portfolio';
 import { createSendRoutes } from './routes/send';
+import { createPaymentRequestsRoutes } from './routes/paymentRequests';
 import { createPoolRoutes } from './routes/pool';
 import { createWalletsRoutes } from './routes/wallets';
 import { createWebhookRoutes } from './routes/webhooks';
@@ -75,6 +79,18 @@ export interface AppDeps {
    * between "this deployment cannot send" and "your send was refused".
    */
   readonly prepareSend?: PrepareSend;
+  /**
+   * The charge surface: create, read by id, and pay.
+   *
+   * Absent when any of the three is not wired, and then the whole surface is
+   * absent — the same rule as the pool pair. Creating a charge whose link cannot be
+   * paid is the one half of this feature that costs something real: a person shares
+   * a link, somebody opens it, and it leads to a 404. The honest answer to "this
+   * deployment cannot settle a charge" is that the route is not there.
+   */
+  readonly createPaymentRequest?: CreatePaymentRequest;
+  readonly readPaymentRequest?: ReadPaymentRequest;
+  readonly payPaymentRequest?: PayPaymentRequest;
   /** Absent when no signing secret is wired: the intake is then not there. */
   readonly ingestWebhook?: IngestPrivyWebhook;
   readonly readNotifications?: ReadNotifications;
@@ -189,6 +205,27 @@ export const createApp = (deps: AppDeps) => {
       createSendRoutes({
         sessions: deps.sessions,
         prepareSend: deps.prepareSend,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
+  /*
+   * `/api/payment-requests`. Mounted when all three use cases exist, for the same
+   * reason the claim route is mounted on its dependencies: the honest answer to
+   * "this deployment cannot charge" is that the route does not exist, not a 404
+   * that looks like a bad link.
+   */
+  if (deps.createPaymentRequest && deps.readPaymentRequest && deps.payPaymentRequest) {
+    app.route(
+      '/api/payment-requests',
+      createPaymentRequestsRoutes({
+        sessions: deps.sessions,
+        createPaymentRequest: deps.createPaymentRequest,
+        readPaymentRequest: deps.readPaymentRequest,
+        payPaymentRequest: deps.payPaymentRequest,
         cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
         now: deps.now,
         log,
