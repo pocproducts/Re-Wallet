@@ -109,9 +109,19 @@ export interface SendRequest {
   readonly symbol: string;
   /** Tiene que ser la del catálogo: el backend rechaza la que no coincida. */
   readonly decimals: number;
-  readonly recipient: string;
-  /** El monto en la unidad mínima, como texto decimal. */
-  readonly amountRaw: string;
+  /**
+   * La dirección a la que se manda el envío, o `null` si **no la tiene que mandar
+   * nadie**.
+   *
+   * `null` es el caso del pago de un cobro: el servidor resuelve el destinatario
+   * por dentro. Ver la nota del archivo.
+   */
+  readonly recipient: string | null;
+  /**
+   * El monto en la unidad mínima, como texto decimal, o `null` si el importe lo
+   * tiene el servidor (el pago de un cobro).
+   */
+  readonly amountRaw: string | null;
   /**
    * La dirección que esta persona tiene en la red, tal como la ve el catálogo.
    *
@@ -123,7 +133,27 @@ export interface SendRequest {
    * Antes de que el backend mandara la suya, esta era la única que había, y el
    * hook firmaba contra ella. Ya no.
    */
-  readonly senderAddress: string;
+  readonly senderAddress: string | null;
+}
+
+/**
+ * De dónde sale la transacción que este hook va a firmar.
+ *
+ * Por defecto es `POST /api/send/prepare`, con el cuerpo que arma la pantalla. Un
+ * segundo origen —el pago de un cobro— entra por acá y **sólo** cambia el paso 2:
+ * del paso 3 en adelante, la red, la billetera, la firma y el refresh son
+ * exactamente los mismos.
+ */
+export type SendPreparationSource = (input: {
+  readonly requestId: string;
+  readonly chain: SendChainId;
+  readonly symbol: string;
+  readonly decimals: number;
+}) => Promise<SendPreparationResponse | null>;
+
+export interface SendTransferOptions {
+  /** Reemplaza sólo la preparación. Sin esto, el hook usa `prepareSend`. */
+  readonly prepare?: SendPreparationSource;
 }
 
 export interface SendTransfer {
@@ -225,7 +255,10 @@ const initialStepsFor = (solana: boolean): readonly SendStep[] => [
 
 const INITIAL_STEPS: readonly SendStep[] = initialStepsFor(false);
 
-export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
+export const useSendTransfer = (
+  onSettled?: () => void,
+  options?: SendTransferOptions,
+): SendTransfer => {
   const { wallets } = useWallets();
   /*
    * Las billeteras de Solana salen de **otro** hook, en otro paquete:
@@ -253,6 +286,16 @@ export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
   const signedHashRef = useRef<string | null>(null);
   /** `true` mientras hay un intento en vuelo: el segundo toque no llega lejos. */
   const inFlightRef = useRef(false);
+
+  /*
+   * El origen de la preparación.
+   *
+   * Se saca del objeto de opciones **una vez por render** y se usa como dependencia
+   * del `send`: si el `send` dependiera del objeto entero, cambiaría de identidad en
+   * cada render y cualquier `useEffect` que lo tuviera como dependencia —como el
+   * que reinicia un flujo al abrir una pantalla— volvería a dispararse siempre.
+   */
+  const prepareSource = options?.prepare;
 
   const patch = useCallback((id: SendStepId, next: SendStep['status'], hash?: string) => {
     setSteps((current) => current.map((entry) => (entry.id === id ? step(id, entry.label, next, hash) : entry)));
@@ -303,18 +346,26 @@ export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
 
       try {
         /*
-         * 1. La dirección, antes de tocar la red.
+         * 1. La dirección y el importe, antes de tocar la red — **si** esta
+         *    pantalla los tiene.
          *
          * Es una comodidad y el comentario lo dice: el backend la vuelve a
          * validar con la misma regla y es la que manda. Acá se frena lo
          * obviamente mal formado sin gastar una ida y vuelta.
+         *
+         * `null` es el pago de un cobro, donde el servidor ya sabe las dos cosas.
+         * No hay nada que validar localmente, y no se valida un valor inventado
+         * para "tener algo": mandarle un `'0'` sería mandarle un destino falso.
          */
         patch('prepare', 'running');
-        if (!isValidRecipientForChain(request.chain, request.recipient)) {
+        if (request.recipient !== null && !isValidRecipientForChain(request.chain, request.recipient)) {
           fail('INVALID_RECIPIENT', 'prepare');
           return;
         }
-        if (!/^\d+$/.test(request.amountRaw) || BigInt(request.amountRaw) <= 0n) {
+        if (
+          request.amountRaw !== null &&
+          (!/^\d+$/.test(request.amountRaw) || BigInt(request.amountRaw) <= 0n)
+        ) {
           fail('INVALID_AMOUNT', 'prepare');
           return;
         }
@@ -332,13 +383,23 @@ export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
 
         let prepared: SendPreparationResponse | null = null;
         try {
-          prepared = await prepareSend({
-            requestId,
-            chain: request.chain,
-            asset: { symbol: request.symbol, decimals: request.decimals },
-            recipient: request.recipient,
-            amountRaw: request.amountRaw,
-          });
+          prepared =
+            prepareSource === undefined
+              ? await prepareSend({
+                  requestId,
+                  chain: request.chain,
+                  asset: { symbol: request.symbol, decimals: request.decimals },
+                  // Los dos son `string` en este camino: la validación de arriba
+                  // ya rechazó el caso `null` cuando la pantalla los tiene que mandar.
+                  recipient: request.recipient as string,
+                  amountRaw: request.amountRaw as string,
+                })
+              : await prepareSource({
+                  requestId,
+                  chain: request.chain,
+                  symbol: request.symbol,
+                  decimals: request.decimals,
+                });
         } catch (error) {
           // La preparación no ocurrió: la intención no se consumió y el id se suelta.
           requestIdRef.current = null;
@@ -601,7 +662,7 @@ export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
         inFlightRef.current = false;
       }
     },
-    [wallets, fail, patch, onSettled],
+    [wallets, fail, patch, onSettled, prepareSource],
   );
 
   return { phase, steps, failureCode, preparation, transferHash, send, reset };

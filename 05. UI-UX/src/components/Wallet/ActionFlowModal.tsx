@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { AssetTradeCard } from '../common';
+import { QrScannerModal } from './QrScannerModal';
 import { useAssetTrade } from '../../hooks/useAssetTrade';
 import type { DepositInfoView } from '../../hooks/useDepositInfo';
 import { assetOn, isEvmNetwork, truncateAddress, type DepositNetworkView } from '../../services/depositInfo';
@@ -115,6 +116,18 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   const [sendNetwork, setSendNetwork] = useState<SendChainId | null>(null);
   /** El monto que no se pudo convertir, o `null`. */
   const [sendAmountError, setSendAmountError] = useState<string | null>(null);
+  /**
+   * El escáner del paso de destino, abierto o no.
+   *
+   * Vive acá y no en `App.tsx` porque el escáner **es** parte del envío: es lo que
+   * reemplaza pegar una dirección, y necesita la red del envío para no aceptar
+   * una dirección de otra cadena. Abrirlo no pide la cámara todavía: eso pasa
+   * cuando el escáner se monta, y se apaga al cerrarlo.
+   *
+   * Cancelar no escribe acá: `setDestinationAddress` sólo se llama con una
+   * dirección que el escáner ya validó, así que el paso queda intacto.
+   */
+  const [isSendScannerOpen, setIsSendScannerOpen] = useState(false);
 
   /* =========================================================================
      ENVÍO: EL FLUJO QUE FIRMA
@@ -1695,8 +1708,8 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                * no hay que aprenderse ni transcribir nada.
                */}
               <p className="text-xs text-slate-400 font-medium leading-relaxed pt-1">
-                ReWALLET no te muestra direcciones ni te pide que memorices ninguna. Pegá acá la que te
-                dio la otra wallet.
+                ReWALLET no te muestra direcciones ni te pide que memorices ninguna. Escaneá el QR
+                de la otra wallet con el botón de acá al lado, o pegá la que te dio.
               </p>
             </div>
 
@@ -1723,7 +1736,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               </div>
             )}
 
-            {/* Input dirección, con Pegar. El escaneo de QR no está: ver abajo. */}
+            {/* Input dirección, con escanear y pegar. Ver el botón de QR abajo. */}
             <div className="p-4 bg-slate-100 rounded-3xl flex items-center justify-between gap-2 border border-slate-200">
               <input
                 type="text"
@@ -1733,6 +1746,34 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                 className="bg-transparent text-base text-black placeholder-slate-400 focus:outline-none w-full font-mono font-medium"
               />
               <div className="flex items-center gap-2 shrink-0">
+                {/*
+                 * El botón de escanear QR.
+
+                 * El que estaba acá escribía una dirección fija —`0xCcBe2540…`,
+                 * que no es la de ninguna wallet de ReWALLET— y por eso se sacó:
+                 * un botón que no hace lo que su nombre dice, en la pantalla donde
+                 * se decide a quién se le manda la plata, es peor que no tenerlo.
+
+                 * Ahora hace lo que dice: abre la cámara, y lo que se lee es el
+                 * frame de la cámara con `jsqr`, **en este teléfono**. No hay
+                 * servicio de por medio: mandarle el frame a alguien a ser quien
+                 * dice a quién le estás pagando, y el video ni siquiera se
+                 * prende hasta que alguien toca este botón.
+
+                 * Lo que escaneó se valida contra la red elegida del mismo modo
+                 * que lo pegado —`config/send.ts`—, así que un `0x…` en un envío
+                 * por Solana no llega al campo: lo dice el escáner y vuelve a
+                 * dejarla donde estaba.
+                 */}
+                <button
+                  type="button"
+                  onClick={() => setIsSendScannerOpen(true)}
+                  title="Escanear un código QR"
+                  aria-label="Escanear un código QR"
+                  className="p-1.5 rounded-lg text-slate-600 hover:text-black"
+                >
+                  <QrCode className="w-5 h-5" />
+                </button>
                 <button
                   type="button"
                   onClick={async () => {
@@ -1747,24 +1788,25 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                 >
                   <Clipboard className="w-5 h-5" />
                 </button>
-                {/*
-                 * El botón de escanear QR estaba acá y no escaneaba nada: escribía
-                 * una dirección fija, `0xCcBe254009A4e82B96cD3105B89B2EA68f267a6`,
-                 * que además no es la de ninguna wallet de ReWALLET. Un botón que
-                 * no hace lo que su nombre dice, en la pantalla donde se decide a
-                 * quién se le manda la plata, es peor que no tenerlo.
-                 *
-                 * Se saca en vez de implementarlo porque un escaneo de verdad
-                 * necesita decodificar el frames de la cámara y no hay ninguna
-                 * dependencia de eso en el proyecto: `QrScannerModal` abre la
-                 * cámara pero devuelve tags escritos a mano. Agregar el
-                 * decodificador es trabajo con nombre propio, no un detalle.
-                 */}
               </div>
             </div>
 
             {sendRecipientError !== null && (
               <p className="text-xs font-semibold text-red-600 leading-relaxed -mt-2">{sendRecipientError}</p>
+            )}
+
+            {/* El escáner va montado en este paso, no en `App`: es lo único que
+                sabe la red del envío, y la cámara no se pide hasta que aparece. */}
+            {isSendScannerOpen && (
+              <QrScannerModal
+                isOpen={isSendScannerOpen}
+                chain={sendChainResolved}
+                onClose={() => setIsSendScannerOpen(false)}
+                onScanSuccess={(address) => {
+                  setDestinationAddress(address);
+                  setIsSendScannerOpen(false);
+                }}
+              />
             )}
 
             {/*
