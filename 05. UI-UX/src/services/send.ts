@@ -37,13 +37,69 @@
  */
 
 import { postJson, ApiError } from './api';
-import type {
-  SendPreparationBody,
-  SendPreparationResponse,
-  SendUnsignedTransaction,
+import {
+  isSolanaSendTransaction,
+  type SendPreparationBody,
+  type SendPreparationResponse,
+  type SendTransaction,
+  type SendUnsignedTransaction,
 } from '../types/send.types';
 
 export type { SendPreparationBody, SendPreparationResponse, SendUnsignedTransaction };
+
+/**
+ * Base64 → bytes, y un `RangeError` si lo que vino no es base64.
+ *
+ * El mensaje de Solana viaja en base64 y la wallet lo toma en bytes, así que
+ * esta conversión es parte del contrato con Privy y no una comodidad.
+ *
+ * Se decodifica a mano y no con `atob`: el mismo código tiene que correr en un
+ * navegador, en una pestaña de pruebas y en un entorno de pruebas sin DOM, y
+ * `atob` es una global que cada runtime expone un poco distinto.
+ */
+const fromBase64 = (base64: string): Uint8Array => {
+  const text = base64.trim();
+  if (text.length === 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(text) || text.length % 4 !== 0) {
+    throw new RangeError(`un mensaje en base64 no puede ser "${base64}"`);
+  }
+
+  const bytes = new Uint8Array((text.length / 4) * 3);
+  let offset = 0;
+  for (let index = 0; index < text.length; index += 4) {
+    const chunk =
+      (BASE64_VALUES[text.charCodeAt(index)] ?? 0) * 262144 +
+      (BASE64_VALUES[text.charCodeAt(index + 1)] ?? 0) * 4096 +
+      (BASE64_VALUES[text.charCodeAt(index + 2)] ?? 0) * 64 +
+      (BASE64_VALUES[text.charCodeAt(index + 3)] ?? 0);
+    bytes[offset++] = (chunk >> 16) & 0xff;
+    if (text[index + 2] !== '=') bytes[offset++] = (chunk >> 8) & 0xff;
+    if (text[index + 3] !== '=') bytes[offset++] = chunk & 0xff;
+  }
+
+  return bytes.subarray(0, offset);
+};
+
+/** El valor de cada carácter del alfabeto base64; `-1` donde no hay carácter. */
+const BASE64_VALUES = (() => {
+  const table = new Int8Array(256).fill(-1);
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  for (let index = 0; index < alphabet.length; index += 1) table[alphabet.charCodeAt(index)] = index;
+  return table;
+})();
+
+/**
+ * El mensaje de una preparación de Solana, en bytes.
+ *
+ * Lanza si la transacción no es de Solana: la única forma de mensaje es la que
+ * trae `serializedTransaction`, y una preparación sin mensaje no es algo que se
+ * pueda firmar.
+ */
+export const solanaMessageBytes = (transaction: SendTransaction): Uint8Array => {
+  if (!isSolanaSendTransaction(transaction)) {
+    throw new RangeError('esta transacción no es un mensaje de Solana');
+  }
+  return fromBase64(transaction.serializedTransaction);
+};
 
 /**
  * Un identificador de intento, para `POST /api/send/prepare`.
@@ -79,24 +135,32 @@ export type PrepareSendInput = Omit<SendPreparationBody, 'requestId'>;
  * transacción que nadie revisó.
  *
  * Y `address` es parte de esa forma, no un extra: sin la dirección **que el
- * backend validó** no hay con qué comparar la wallet conectada, y adivinar
- * sería volver a firmar con la idea que tiene el cliente en vez de con la que
- * el servidor comprobó. Una respuesta sin `address` no es una preparación.
+ * backend validó** no hay con qué comparar la wallet conectada, y adivinar sería
+ * volver a firmar con la idea que tiene el cliente en vez de con la que el
+ * servidor comprobó. Una respuesta sin `address` no es una preparación.
+ *
+ * ── Por qué cada transacción se valida según **su** forma ─────────────────────
+ *
+ * Porque son dos formas y cada una tiene su contrato: la EVM se firma con
+ * `eth_sendTransaction` y necesita `to`, `data`, `value` y `chainId`; la de
+ * Solana se firma con `signAndSendTransaction` y necesita el mensaje serializado.
+ * Validar la forma de la una contra los campos de la otra dejaría pasar una
+ * preparación a medio hacer como si estuviera entera.
  */
 const isPreparation = (body: unknown): body is SendPreparationResponse => {
   const response = body as SendPreparationResponse | null;
   if (response === null || typeof response !== 'object') return false;
   if (typeof response.network !== 'string' || response.network.length === 0) return false;
   if (typeof response.address !== 'string' || response.address.length === 0) return false;
-  if (!Number.isInteger(response.chainId)) return false;
   if (!Array.isArray(response.transactions) || response.transactions.length === 0) return false;
 
-  return response.transactions.every(
-    (transaction) =>
-      typeof transaction?.to === 'string' &&
-      typeof transaction?.data === 'string' &&
-      typeof transaction?.value === 'string' &&
-      Number.isInteger(transaction.chainId),
+  return response.transactions.every((transaction: SendTransaction) =>
+    isSolanaSendTransaction(transaction)
+      ? typeof transaction.serializedTransaction === 'string' && transaction.serializedTransaction.length > 0
+      : typeof transaction.to === 'string' &&
+        typeof transaction.data === 'string' &&
+        typeof transaction.value === 'string' &&
+        Number.isInteger(transaction.chainId),
   );
 };
 

@@ -127,11 +127,38 @@ límite de un Worker.
 ### Front
 
 7. `config/send.ts`: Solana entra a `SEND_CHAINS`; `network` admite `solana:…`.
+   **Hecho.** `SendChainView` es una unión con `kind`: `'evm'` con
+   `chainId: number` y `'solana'` con **`chainId: null`**. No es `0`: una red sin
+   id EIP-155 no tiene id. El `satisfies` de las redes EVM queda intacto, y
+   `evmChainById` acepta `null`/`undefined` para que la fila de exploradora
+   pueda preguntar por el id de una red que no lo tiene.
 8. `useSendTransfer`: rama de firma de Solana. **Privy firma Solana con
    `signAndSendTransaction`**, no con `eth_sendTransaction`, y **no hay
    `switchChain`**.
+   **Hecho.** El método se verificó contra los tipos instalados
+   (`@privy-io/react-auth` 3.47.0) y no de memoria:
+   `ConnectedStandardSolanaWallet.signAndSendTransaction({ transaction: Uint8Array,
+   address: string, chain: 'solana:mainnet' })` devuelve `{ signature: Uint8Array }`.
+   El paso `network` **no desaparece**: queda `skipped` con el rótulo "Sin cambio
+   de red", porque una lista que cambia de largo entre redes confunde más que una
+   fila que dice la verdad.
 9. La billetera se busca por `type === 'solana'`.
+   **CORREGIDO**: las billeteras de Solana de `useWallets()` **no tienen `type`**.
+   Son `ConnectedStandardSolanaWallet` —tienen `address` y
+   `signAndSendTransaction`—, y la búsqueda se hace por el **método**, que es lo
+   que los tipos sí garantizan. Buscar por `type` sería buscar un campo que no
+   está.
 10. Decimales: SOL y USDC usan la cantidad del catálogo, no 6 por defecto.
+    **Sin cambios necesarios**: `ActionFlowModal.tsx` ya pasa `sendAsset.decimals`
+    —el del catálogo del servidor— a `sendAmountToRaw` y al hook. No hay un `6`
+    escrito en ningún punto de este flujo.
+
+### Una línea de este documento que quedó vieja
+
+El contrato de Solana dice que la respuesta "no tiene `chainId`". Sigue siendo
+cierto, pero **también devuelve `address`**, igual que en EVM y con la misma
+regla: se firma para la billetera que el servidor validó. Una preparación de
+Solana sin `address` es una preparación que no se entiende, y el hook no firma.
 
 ## Allowed edit surfaces
 

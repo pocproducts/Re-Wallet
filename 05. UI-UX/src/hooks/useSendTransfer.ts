@@ -53,11 +53,17 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { useWallets } from '@privy-io/react-auth';
+import { useWallets as useSolanaWallets } from '@privy-io/react-auth/solana';
 
-import { newSendRequestId, prepareSend } from '../services/send';
-import type { SendPreparationResponse } from '../types/send.types';
+import { newSendRequestId, prepareSend, solanaMessageBytes } from '../services/send';
+import { isSolanaSendTransaction, type SendPreparationResponse } from '../types/send.types';
 import { ApiError } from '../services/api';
-import { isValidRecipientForChain, sendChainByChainId, type SendChainId } from '../config/send';
+import {
+  isValidRecipientForChain,
+  sendChainByNetwork,
+  toBase58,
+  type SendChainId,
+} from '../config/send';
 
 /** Los pasos de un envío, en orden. Cuatro: el depósito tiene cinco. */
 export type SendStepId = 'prepare' | 'network' | 'transfer' | 'refresh';
@@ -155,18 +161,80 @@ const toHexValue = (value: string): string => {
   return `0x${BigInt(trimmed).toString(16)}`;
 };
 
+/**
+ * La billetera de una persona, si es de Solana, o `null` si no lo es.
+ *
+ * ── Por qué se reconoce por el método y no por `type` ────────────────────────
+ *
+ * En `@privy-io/react-auth`, `useWallets()` devuelve las billeteras EVM con
+ * `type: 'ethereum'` y las de Solana como **`ConnectedStandardSolanaWallet`**, que
+ * traen `address` y `signAndSendTransaction` y no traen `type`. Preguntar por
+ * `type === 'solana'` sería preguntar por un campo que los tipos de Privy no
+ * garantizan en esa billetera: compila o no según el tipo que se importó, y en
+ * runtime devuelve `undefined` para una wallet que sí puede firmar.
+ *
+ * Lo que sí está garantizado es el método, porque es lo que hay que llamar. Por
+ * eso la pregunta es por la capacidad.
+ *
+ * El tipo de la billetera de Solana no se importa de Privy a propósito: la
+ * forma del método es la misma para la embebida y para una externa conectada, y
+ * declarar una interfazlocal evita atar el hook a un tipo exportado que puede
+ * cambiar de forma entre versiones menores.
+ */
+interface SolanaSigner {
+  readonly address: string;
+  signAndSendTransaction(input: {
+    transaction: Uint8Array;
+    address: string;
+    chain: `solana:${string}`;
+  }): Promise<{ signature: Uint8Array }>;
+}
+
+const solanaWalletOf = (candidate: unknown): SolanaSigner | null => {
+  if (candidate === null || typeof candidate !== 'object') return null;
+  const wallet = candidate as Partial<SolanaSigner>;
+  if (typeof wallet.address !== 'string' || wallet.address.length === 0) return null;
+  return typeof wallet.signAndSendTransaction === 'function' ? (wallet as SolanaSigner) : null;
+};
+
 const step = (id: SendStepId, label: string, status: SendStep['status'], hash?: string): SendStep =>
   hash === undefined ? { id, label, status } : { id, label, status, hash };
 
-const INITIAL_STEPS: readonly SendStep[] = [
+/**
+ * Los pasos de un envío, y **cuál de ellos no existe** en cada red.
+ *
+ * En una red EVM hay un cambio de red que puede ser rechazado por la persona, y
+ * ese paso se reporta como cualquier otro. En **Solana no hay `switchChain`**: no
+ * es que no haga falta, es que la wallet no lo tiene y `eth_sendTransaction`
+ * tampoco aplica. El paso no se borra de la lista —la pantalla dibuja lo que el
+ * hook le da, y una lista que cambia de largo entre redes confunde más que una
+ * fila que dice la verdad— sino que se marca `skipped` con un rótulo que no
+ * promete nada: "Sin cambio de red".
+ *
+ * Los mismos cuatro pasos, en el mismo orden, para las dos redes: la pantalla no
+ * tiene que saber qué red es para leerlos.
+ */
+const initialStepsFor = (solana: boolean): readonly SendStep[] => [
   step('prepare', 'Preparando la transferencia', 'pending'),
-  step('network', 'Cambiando de red', 'pending'),
+  solana
+    ? step('network', 'Sin cambio de red', 'skipped')
+    : step('network', 'Cambiando de red', 'pending'),
   step('transfer', 'Enviando', 'pending'),
   step('refresh', 'Leyendo tus saldos', 'pending'),
 ];
 
+const INITIAL_STEPS: readonly SendStep[] = initialStepsFor(false);
+
 export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
   const { wallets } = useWallets();
+  /*
+   * Las billeteras de Solana salen de **otro** hook, en otro paquete:
+   * `@privy-io/react-auth/solana`. El de arriba es solo EVM y jamás devuelve una
+   * de Solana, así que las dos listas se piden y se recorren juntas — buscar la
+   * cadena entera en `wallets` terminaría en `WALLET_NOT_FOUND` con una wallet
+   * perfectamente creada.
+   */
+  const { wallets: solanaWallets } = useSolanaWallets();
   const [phase, setPhase] = useState<SendPhase>('idle');
   const [steps, setSteps] = useState<readonly SendStep[]>(INITIAL_STEPS);
   const [failureCode, setFailureCode] = useState<string | null>(null);
@@ -286,10 +354,15 @@ export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
         /*
          * 3. La red que se va a firmar tiene que ser la configurada.
          *
-         * La respuesta trae su propio `network` y el hook no lo adopta a ciegas:
-         * si el backend prepara para una cadena que esta billetera no tiene, no se
-         * firma. Se compara contra `config/chains.ts`, que es la configuración de
-         * red del proyecto.
+         * La respuesta trae su propio `network` en CAIP-2 y el hook no lo adopta a
+         * ciegas: si el backend prepara para una cadena que esta billetera no
+         * tiene, no se firma. Se compara contra `config/send.ts`, que es la
+         * configuración de red del proyecto.
+         *
+         * El lookup es por **`network`**, no por `chainId`, porque `chainId` sólo
+         * existe en las cadenas que tienen id EIP-155: en una preparación de
+         * Solana no está, y una comprobación que lo exigiera rechazaría todos los
+         * envíos de Solana por una razón que no existe.
          *
          * Un `requestId` ya quemado acá no se puede reusar: el backend responde
          * `409 IDEMPOTENT_REPLAY` con la preparación guardada y, por como está
@@ -297,12 +370,30 @@ export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
          * depende entonces de un id nuevo, que es correcto acá porque **nada se
          * firmó**: queda un movimiento `pending` de más, y ningún dinero movido.
          */
-        const configured = sendChainByChainId(prepared.chainId);
-        if (configured === null || configured.network !== prepared.network) {
+        const configured = sendChainByNetwork(prepared.network);
+        if (configured === null) {
           requestIdRef.current = null;
           fail('CHAIN_MISMATCH', 'prepare');
           return;
         }
+
+        /*
+         * La forma de la transacción decide el resto del flujo.
+         *
+         * Se decide por `kind` y **no** por el nombre de la cadena: una
+         * preparación de Solana trae un mensaje compilado que no tiene `to` ni
+         * `data`, y mandarlo por el camino de EVM no es un envío que falle — es
+         * calldata que se arma con `undefined` y una firma sobre un mensaje que
+         * no es el que el servidor preparó. Por eso, y sólo por eso, `kind` es la
+         * rama.
+         */
+        const transaction = prepared.transactions[0];
+        if (transaction === undefined) {
+          requestIdRef.current = null;
+          fail('PREPARATION_FAILED', 'prepare');
+          return;
+        }
+        const solana = isSolanaSendTransaction(transaction);
 
         setPreparation(prepared);
         patch('prepare', 'signed');
@@ -316,84 +407,186 @@ export const useSendTransfer = (onSettled?: () => void): SendTransfer => {
          *
          * `request.senderAddress` no participa: es la lectura de la pantalla, y
          * esta pregunta ya no se le hace.
+         *
+         * ── Por qué la comparación no es igual en las dos redes ───────────────
+         *
+         * Una dirección EVM no distingue mayúsculas —el checksum es el que dice
+         * cuál es la correcta— así que se comparan en minúscula. Una dirección de
+         * Solana es **base58 y distingue mayúsculas**: `5tzF…` y `5TZf…` son dos
+         * cuentas distintas, y bajarla a minúscula haría que dos wallets
+         * diferentes se confundieran con la que el servidor validó. Por eso la
+         * comparación es exacta en Solana, y por eso es una decisión y no un
+         * `.toLowerCase()` que nadie vuelve a mirar.
+         *
+         * ── Por qué la wallet de Solana se busca por lo que **puede hacer** ────
+         *
+         * `useWallets()` devuelve las billeteras EVM con `type: 'ethereum'` y las
+         * de Solana como billeteras estándar de Solana, que traen `address` y
+         * `signAndSendTransaction` y **no** traen `type`. Preguntar por
+         * `type === 'solana'` sería preguntar por un campo que los tipos de
+         * Privy no garantizan en esa billetera, y el hook se caería en runtime en
+         * la primera wallet de Solana que aparezca. Lo que sí está garantizado es
+         * el método, porque es lo que hay que llamar.
          */
-        const wallet = wallets.find(
-          (candidate) =>
-            candidate.type === 'ethereum' && candidate.address.toLowerCase() === prepared.address.toLowerCase(),
+        /*
+         * Cada red busca en su propia lista y no en una mezclada. Una billetera de
+         * Solana no tiene `type`, ni `chainId`, ni `switchChain`: juntarlasProduce un
+         * tipo del que ninguna rama puede leer un campo. Que son dos clases de
+         * billetera distintas es la razón de que el hook sea un `if` y no una lista.
+         */
+        const solanaWallet = solanaWallets.find((candidate) => candidate.address === prepared.address);
+        const evmWallet = wallets.find(
+          (candidate): candidate is Extract<typeof candidate, { type: 'ethereum' }> =>
+            candidate.type === 'ethereum' &&
+            candidate.address.toLowerCase() === prepared.address.toLowerCase(),
         );
+        const wallet = solana ? solanaWallet : evmWallet;
+
         if (wallet === undefined) {
+          /*
+           * La fila que se marca como fallida es la del primer paso que **existe**
+           * en esta red: en EVM es el cambio de red, que es donde se decide con qué
+           * billetera se firma; en Solana no hay cambio de red, y marcar fallida una
+           * fila que dice "Sin cambio de red" sería señalar un paso que no pasó.
+           */
           fail(
-            wallets.some((candidate) => candidate.type === 'ethereum') ? 'WRONG_WALLET' : 'WALLET_NOT_FOUND',
-            'network',
+            (solana ? solanaWallets.length : wallets.some((candidate) => candidate.type === 'ethereum'))
+              ? 'WRONG_WALLET'
+              : 'WALLET_NOT_FOUND',
+            solana ? 'transfer' : 'network',
           );
           return;
         }
 
-        /*
-         * 5. La red, antes de firmar: mainnet cobra gas y fuera de red no firma.
-         *
-         * Se pasa el **número** de cadena y no el CAIP-2: es lo que acepta y lo
-         * que hace `usePoolDeposit`, y cambiarlo acá haría que el envío y el
-         * depósito cambien de red de dos maneras distintas. La comparación de la
-         * línea de arriba sí es en CAIP-2, que es como la wallet nombra la red en
-         * la que está.
-         */
-        patch('network', 'running');
-        if (wallet.chainId !== configured.network) {
-          try {
-            await wallet.switchChain(configured.chainId);
-          } catch {
-            fail('CHAIN_SWITCH_REJECTED', 'network');
+        let hash: string;
+
+        if (solana) {
+          /*
+           * 5. Solana: sin cambio de red, y con otro método de firma.
+           *
+           * No hay `switchChain` en Solana: la wallet no tiene el concepto y el
+           * paso queda marcado como saltado arriba. Lo que hay es
+           * `signAndSendTransaction`, que toma **bytes** —el mensaje que el
+           * backend compiló— y devuelve la **firma**, que es el identificador de la
+           * transacción en Solana, el mismo que muestra una exploradora.
+           *
+           * El cluster se pasa explícito (`solana:mainnet`) y sale de la
+           * configuración, no de la respuesta: la respuesta trae CAIP-2
+           * (`solana:5eykt…`) y ese es otro vocabulario del mismo clúster.
+           */
+          if (configured.kind !== 'solana') {
+            // La respuesta dijo una red y trajo una transacción de otra forma. No
+            // es un problema de billetera: es una preparación que no se entiende.
+            requestIdRef.current = null;
+            fail('CHAIN_MISMATCH', 'prepare');
             return;
           }
-        }
-        patch('network', 'signed');
+          const solanaWallet = solanaWalletOf(wallet);
+          if (solanaWallet === null) {
+            requestIdRef.current = null;
+            fail('WALLET_NOT_FOUND', 'transfer');
+            return;
+          }
 
-        let provider;
-        try {
-          provider = await wallet.getEthereumProvider();
-        } catch {
-          fail('WALLET_NOT_FOUND', 'network');
-          return;
-        }
+          let message: Uint8Array;
+          try {
+            message = solanaMessageBytes(transaction);
+          } catch {
+            // El mensaje del backend no se entendió. No hay nada que firmar.
+            requestIdRef.current = null;
+            fail('PREPARATION_FAILED', 'prepare');
+            return;
+          }
 
-        // 6. La firma. Una sola, y con el `value` que vino.
-        setPhase('signing');
-        patch('transfer', 'running');
-
-        const transaction = prepared.transactions[0];
-        let hash: string;
-        try {
-          hash = (await provider.request({
-            method: 'eth_sendTransaction',
-            params: [
-              {
-                from: wallet.address,
-                to: transaction.to,
-                data: transaction.data,
-                // Acá `"0"` de un ERC-20 y el monto entero de una moneda nativa.
-                value: toHexValue(transaction.value),
-                chainId: `0x${transaction.chainId.toString(16)}`,
-              },
-            ],
-          })) as string;
-        } catch {
+          setPhase('signing');
+          patch('transfer', 'running');
+          try {
+            const result = await solanaWallet.signAndSendTransaction({
+              transaction: message,
+              address: prepared.address,
+              chain: configured.cluster,
+            });
+            // La firma **es** el identificador de la transacción en Solana, y lo
+            // que la pantalla muestra es el mismo string en las dos redes.
+            hash = toBase58(result.signature);
+          } catch {
+            requestIdRef.current = null;
+            fail('SIGNATURE_REJECTED', 'transfer');
+            return;
+          }
+          patch('transfer', 'signed', hash);
+        } else {
           /*
-           * Un envío sin firma no es un envío. La pantalla no dice "listo": dice
-           * que se rechazó, y el intento queda abierto para reintentarlo con una
-           * preparación nueva, porque acá no se movió nada.
+           * 6. EVM: la red, antes de firmar: mainnet cobra gas y fuera de red no
+           *    firma.
+           *
+           * Se pasa el **número** de cadena y no el CAIP-2: es lo que acepta y lo
+           * que hace `usePoolDeposit`, y cambiarlo acá haría que el envío y el
+           * depósito cambien de red de dos maneras distintas. La comparación de más
+           * arriba sí es en CAIP-2, que es como la wallet nombra la red en la que
+           * está.
            */
-          requestIdRef.current = null;
-          fail('SIGNATURE_REJECTED', 'transfer');
-          return;
+          if (configured.kind !== 'evm' || evmWallet === undefined) {
+            requestIdRef.current = null;
+            fail('CHAIN_MISMATCH', 'network');
+            return;
+          }
+
+          patch('network', 'running');
+          if (evmWallet.chainId !== configured.network) {
+            try {
+              await evmWallet.switchChain(configured.chainId);
+            } catch {
+              fail('CHAIN_SWITCH_REJECTED', 'network');
+              return;
+            }
+          }
+          patch('network', 'signed');
+
+          let provider;
+          try {
+            provider = await evmWallet.getEthereumProvider();
+          } catch {
+            fail('WALLET_NOT_FOUND', 'network');
+            return;
+          }
+
+          // 7. La firma. Una sola, y con el `value` que vino.
+          setPhase('signing');
+          patch('transfer', 'running');
+
+          try {
+            hash = (await provider.request({
+              method: 'eth_sendTransaction',
+              params: [
+                {
+                  from: wallet.address,
+                  to: transaction.to,
+                  data: transaction.data,
+                  // Acá `"0"` de un ERC-20 y el monto entero de una moneda nativa.
+                  value: toHexValue(transaction.value),
+                  chainId: `0x${transaction.chainId.toString(16)}`,
+                },
+              ],
+            })) as string;
+          } catch {
+            /*
+             * Un envío sin firma no es un envío. La pantalla no dice "listo": dice
+             * que se rechazó, y el intento queda abierto para reintentarlo con una
+             * preparación nueva, porque acá no se movió nada.
+             */
+            requestIdRef.current = null;
+            fail('SIGNATURE_REJECTED', 'transfer');
+            return;
+          }
+          patch('transfer', 'signed', hash);
         }
 
         signedHashRef.current = hash;
         setTransferHash(hash);
-        patch('transfer', 'signed', hash);
 
         /*
-         * 7. Los saldos se vuelven a leer de la cadena.
+         * 8. Los saldos se vuelven a leer de la cadena.
          *
          * El hash dice que la transacción se envió; no dice que el saldo bajó. El
          * número de pantalla sale de la lectura, no del hecho de que la persona

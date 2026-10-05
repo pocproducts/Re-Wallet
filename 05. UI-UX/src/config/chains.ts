@@ -72,6 +72,44 @@ export const monad = defineChain({
 /** Ethereum mainnet: la red por defecto, y la que no se reemplaza. */
 export const ethereumMainnet = mainnet;
 
+/**
+ * LAS REDES QUE NO SON EVM QUE LA APP CONFIGURA.
+ *
+ * Está en el mismo archivo que las EVM y por la misma razón: la respuesta a
+ * "¿en qué redes puede funcionar esto?" tiene que estar escrita una sola vez, y
+ * una lista de redes en dos archivos es una lista que se desincroniza.
+ *
+ * ── Por qué Solana no es una cadena de `viem` ────────────────────────────────
+ *
+ * Porque `viem` no habla Solana, y escribir un `defineChain` para una cadena que
+ * `viem` no puede firmar sería exactamente el tipo de configuración que dice que
+ * una red existe para la app cuando no. Lo que hay acá es su **identidad**, que
+ * es lo único que el front necesita: el backend arma el mensaje y la wallet lo
+ * firma.
+ *
+ * ── Por qué `network` es una cadena y no un id ────────────────────────────────
+ *
+ * Es CAIP-2 en el espacio de nombres de Solana, que es como el backend nombra la
+ * cadena y como la wallet la nombra. **No hay `chainId`**, porque no hay id
+ * EIP-155: escribir `0` sería un número que el clúster nunca respondió.
+ *
+ * El valor viene del backend (`src/domain/send/transfer.ts`, `SOLANA_MAINNET_NETWORK`)
+ * y es el mismo con el que él firma: si los dos no coinciden, el hook corta con
+ * `CHAIN_MISMATCH` en vez de mandar un mensaje a una cadena que no es la del
+ * catálogo. El prefijo son los primeros 32 caracteres del hash génesis de
+ * mainnet, que es lo que CAIP-2 define para Solana.
+ *
+ * `cluster` es el mismo clúster con la forma que lo nombra la wallet de Privy
+ * (`solana:mainnet`), que no es CAIP-2: son dos vocabularios del mismo clúster y
+ * no hay forma de que uno signifique el otro sin decirlo.
+ */
+export const SOLANA_MAINNET = {
+  key: 'solana',
+  label: 'Solana',
+  network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+  cluster: 'solana:mainnet',
+} as const;
+
 /** Todas las redes EVM soportadas, en el orden en que se ofrecen. Ethereum primero. */
 export const SUPPORTED_EVM_CHAINS = [ethereumMainnet, monad] as const;
 
@@ -96,6 +134,11 @@ export const EVM_CHAIN_BY_ID: Readonly<Record<number, (typeof SUPPORTED_EVM_CHAI
  * `null` y no la primera: una red desconocida tiene que poder rechazarse. Volver
  * a Ethereum por defecto sería mandar una transacción a una red que nadie
  * eligió.
+ *
+ * Acepta `null` y `undefined` a propósito: una preparación de **Solana** no trae
+ * `chainId`, y el lugar que la muestra —la fila de exploradora— tiene que poder
+ * preguntar por el id de una red que no tiene ninguno sin romper la compilación.
+ * La respuesta es `null`, que es la misma que para una red desconocida.
  */
-export const evmChainById = (chainId: number): (typeof SUPPORTED_EVM_CHAINS)[number] | null =>
-  EVM_CHAIN_BY_ID[chainId] ?? null;
+export const evmChainById = (chainId: number | null | undefined): (typeof SUPPORTED_EVM_CHAINS)[number] | null =>
+  typeof chainId === 'number' ? (EVM_CHAIN_BY_ID[chainId] ?? null) : null;

@@ -9,6 +9,19 @@
  * es mandar otra plata que la que la persona escribió. El texto decimal es
  * exacto de punta a punta y es lo que el backend ya valida y usa.
  *
+ * ── Por qué hay **dos** formas de transacción ─────────────────────────────────
+ *
+ * Una transacción de Solana compilada no tiene `to` ni `data`: es un mensaje con
+ * un blockhash, instrucciones y cuentas. Estirarla dentro de la forma EVM
+ * (`{to, data:'0x', value, chainId: 0}`) produce algo que parece una
+ * transacción, responde 200, y no se puede firmar en ninguna wallet de Solana.
+ *
+ * Por eso el backend contesta con `kind: 'solana'` y esta tabla tiene las dos
+ * formas, y por eso el hook decide por **`kind`**. Escribirse por el nombre de la
+ * red sería decidir por un dato del catálogo: hoy funciona, y el día que el
+ * catálogo sume una red con el mismo nombre en otro espacio de nombres deja de
+ * funcionar sin que ninguna prueba se entere.
+ *
  * ── Por qué `value` NO es `'0'` como en el depósito ──────────────────────────
  *
  * `services/pool.types.ts` declara `value: '0'` porque un depósito de USDC no
@@ -63,6 +76,13 @@ export interface SendPreparationBody {
  */
 export interface SendUnsignedTransaction {
   readonly purpose: 'transfer';
+  /**
+   * Nunca está en una transacción EVM, y por eso la forma ya la identifica: una
+   * que llega con `kind: 'solana'` es la otra. Si algún día el backend empieza a
+   * mandar `kind` en todas, esta propiedad acepta el valor y el resto del hook no
+   * cambia.
+   */
+  readonly kind?: 'evm';
   readonly to: string;
   /** `transfer(recipient, amount)`, o `'0x'` para un envío nativo. */
   readonly data: string;
@@ -93,13 +113,52 @@ export interface SendPreparationResponse {
    * no se entiende y no se firma. Mismo nombre que `POST /api/pool/deposit`.
    */
   readonly address: string;
-  /** El id de cadena donde hay que firmar. `0` en una red sin id EIP-155. */
-  readonly chainId: number;
+  /**
+   * El id de cadena donde hay que firmar.
+   *
+   * **No está** en una cadena que no tenga id EIP-155: en Solana esta propiedad
+   * no existe en la respuesta, y no es `0`. El nombre de la red, en CAIP-2, está
+   * en `network`, y es lo que se compara con la configuración de la app.
+   */
+  readonly chainId?: number;
   /** CAIP-2, que es como la wallet nombra la red. */
   readonly network: string;
-  /** Siempre uno: un envío es una transferencia. */
-  readonly transactions: readonly SendUnsignedTransaction[];
+  /** Siempre uno: un envío es una transferencia. Una forma u otra, nunca dos. */
+  readonly transactions: readonly SendTransaction[];
   readonly movement: PendingSendMovement;
+}
+
+/**
+ * El discriminador entre las dos formas de transacción.
+ *
+ * Se decide por `kind` y **nunca** por el nombre de la cadena: una transacción
+ * serializada de Solana no tiene `to` ni `data`, y una de EVM no tiene
+ * `serializedTransaction`, así que la forma es lo que dice de qué se trata. El
+ * nombre de la red es un dato del catálogo, y el catálogo cambia.
+ */
+export type SendTransaction = SendUnsignedTransaction | SendUnsignedSolanaTransaction;
+
+/** `true` cuando la transacción es un mensaje de Solana compilado. */
+export const isSolanaSendTransaction = (
+  transaction: SendTransaction,
+): transaction is SendUnsignedSolanaTransaction => 'kind' in transaction && transaction.kind === 'solana';
+
+/**
+ * Una transacción de Solana, ya compilada por el backend y sin firmar.
+ *
+ * `serializedTransaction` es el **mensaje** en base64 —blockhash, instrucciones
+ * y cuentas—, no una transacción firmada: la firma la pone la wallet de la
+ * persona, en el navegador. Es la forma que espera `signAndSendTransaction` de
+ * Privy, que toma bytes.
+ */
+export interface SendUnsignedSolanaTransaction {
+  readonly purpose: 'transfer';
+  /** El discriminador. La forma EVM no lo lleva: su forma ya lo dice. */
+  readonly kind: 'solana';
+  /** El mensaje sin firmar, en base64. */
+  readonly serializedTransaction: string;
+  /** `'solana'`: el mensaje nombra su propio clúster. */
+  readonly chain: 'solana';
 }
 
 /**

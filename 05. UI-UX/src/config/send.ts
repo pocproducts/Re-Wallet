@@ -20,19 +20,27 @@
  * una red a `SUPPORTED_EVM_CHAINS` sin decidir acá qué clave de catálogo tiene.
  * Una red nueva no entra "de rebote": o se mapea, o no compila.
  *
- * ── Por qué el envío es sólo EVM ────────────────────────────────────────────
+ * ── Por qué el envío ya no es sólo EVM ───────────────────────────────────────
  *
- * El backend construye **una transacción EVM sin firmar** para las tres redes de
- * su catálogo —incluida Solana, donde `chainId` vale `0` porque no existe un id
- * EIP-155—. Lo que no hay es una billetera Solana en esta app: el flujo firma con
- * `eth_sendTransaction` sobre la wallet embebida de Privy, que es EVM. Ofrecer
- * Solana sin poder firmarla sería otra versión de la misma mentira de las once
- * redes, así que el filtro es explícito y va en el único lugar que decide.
+ * El backend arma **dos** formas de transacción: una EVM sin firmar para las
+ * redes de `viem`, y una **transacción Solana compilada y serializada** para
+ * Solana, que no tiene `to` ni `data` y viaja como `kind: 'solana'` con su
+ * mensaje en base64.
+ *
+ * Y la forma de la red también cambió: `chainId` es `number` en una red EVM y
+ * **`null`** en Solana, porque no hay id EIP-155. Un `0` sería un número que
+ * el clúster nunca respondió, y la forma de una red que no tiene id no puede
+ * decir que tiene `0`.
+ *
+ * El discriminador es `kind`, en la transacción y en la red. Nunca el nombre de
+ * la cadena: "solana" es un dato que puede cambiar, y una rama escrita sobre él
+ * se rompe el día que el catálogo sume una red con el mismo nombre en otro
+ * espacio de nombres.
  */
 
 import { checksumAddress } from 'viem';
 
-import { SUPPORTED_EVM_CHAINS, ethereumMainnet, monad } from './chains';
+import { SOLANA_MAINNET, SUPPORTED_EVM_CHAINS, ethereumMainnet, monad } from './chains';
 import type { DepositChainId } from '../types/deposit.types';
 
 /**
@@ -44,8 +52,9 @@ import type { DepositChainId } from '../types/deposit.types';
  */
 export type SendChainId = DepositChainId;
 
-/** Una red en la que el envío se puede firmar, con su identidad. */
-export interface SendChainView {
+/** Una red EVM en la que el envío se puede firmar, con su identidad. */
+export interface EvmSendChainView {
+  readonly kind: 'evm';
   /** La clave del catálogo, que es lo que viaja en el cuerpo del pedido. */
   readonly chain: SendChainId;
   /** El nombre que ve la persona. */
@@ -55,6 +64,27 @@ export interface SendChainView {
   /** La red en CAIP-2, como la nombra la wallet. */
   readonly network: `eip155:${number}`;
 }
+
+/**
+ * Solana, con la forma que Solana tiene.
+ *
+ * `chainId` es `null` y no `0`: **no hay id EIP-155**, y `0` es un número que
+ * parece una respuesta del clúster. `network` es CAIP-2 en el espacio de nombres
+ * de Solana, y ese es el identificador real.
+ */
+export interface SolanaSendChainView {
+  readonly kind: 'solana';
+  readonly chain: SendChainId;
+  readonly label: string;
+  /** `null`: esta red no tiene id EIP-155. Ver la nota arriba. */
+  readonly chainId: null;
+  readonly network: `solana:${string}`;
+  /** El clúster como lo nombra la wallet de Privy: `solana:mainnet`. */
+  readonly cluster: `solana:${string}`;
+}
+
+/** Una red en la que el envío se puede firmar. `kind` dice de qué clase es. */
+export type SendChainView = EvmSendChainView | SolanaSendChainView;
 
 /** Un id de cadena de las configuradas. */
 type ConfiguredChainId = (typeof SUPPORTED_EVM_CHAINS)[number]['id'];
@@ -71,17 +101,48 @@ const CHAIN_KEY_BY_ID = {
   [monad.id]: 'monad',
 } as const satisfies Readonly<Record<ConfiguredChainId, SendChainId>>;
 
-/** Las redes en las que se puede firmar un envío, en el orden de la configuración. */
-export const SEND_CHAINS: readonly SendChainView[] = SUPPORTED_EVM_CHAINS.map((chain) => ({
+/** Las redes EVM en las que se puede firmar un envío, en el orden de la configuración. */
+const EVM_SEND_CHAINS: readonly EvmSendChainView[] = SUPPORTED_EVM_CHAINS.map((chain) => ({
+  kind: 'evm',
   chain: CHAIN_KEY_BY_ID[chain.id],
   label: chain.name,
   chainId: chain.id,
   network: `eip155:${chain.id}`,
 }));
 
-/** La red de envío con ese id, o `null` si no está soportada. */
-export const sendChainByChainId = (chainId: number): SendChainView | null =>
-  SEND_CHAINS.find((entry) => entry.chainId === chainId) ?? null;
+/**
+ * Solana entra por la misma puerta que las demás y por la misma regla.
+ *
+ * La fila del backend lo declara firmable, y el backend sí la compila y la
+ * serializa; lo que cambia es **la forma**, no si se puede. `chainId: null` es
+ * parte del contrato: una red sin id EIP-155 lo dice así.
+ */
+export const SEND_CHAINS: readonly SendChainView[] = [
+  ...EVM_SEND_CHAINS,
+  {
+    kind: 'solana',
+    chain: SOLANA_MAINNET.key,
+    label: SOLANA_MAINNET.label,
+    chainId: null,
+    network: SOLANA_MAINNET.network,
+    cluster: SOLANA_MAINNET.cluster,
+  },
+];
+
+/** La red de envío con ese id EIP-155, o `null` si no está soportada. */
+export const sendChainByChainId = (chainId: number): EvmSendChainView | null =>
+  EVM_SEND_CHAINS.find((entry) => entry.chainId === chainId) ?? null;
+
+/**
+ * La red de envío con esa red CAIP-2, o `null` si no está soportada.
+ *
+ * Es el lookup que usa el hook, porque `network` es el único campo que viaja en
+ * **las dos** formas de la respuesta: una preparación de Solana no trae `chainId`.
+ * Comparar por CAIP-2 —y no por el nombre de la cadena— es lo que hace que la
+ * comprobación siga valiendo para ambas.
+ */
+export const sendChainByNetwork = (network: string): SendChainView | null =>
+  SEND_CHAINS.find((entry) => entry.network === network) ?? null;
 
 /** La red de envío con esa clave, o `null` si no está soportada. */
 export const sendChainByKey = (chain: SendChainId): SendChainView | null =>
@@ -155,6 +216,39 @@ const base58ByteLength = (value: string): number | null => {
 export const isSolanaAddress = (value: string): boolean => {
   if (value.length === 0) return false;
   return base58ByteLength(value) === 32;
+};
+
+/**
+ * Bytes a base58, con **el mismo alfabeto** con el que se valida una dirección.
+ *
+ * Vive acá y no en el hook porque el alfabeto es un hecho de la red y ya está
+ * escrito en este archivo: dos alfabitos son dos respuestas a "cómo se escribe
+ * una dirección de Solana", y una firma que se muestra con el alfabeto
+ * equivocado es un identificador que no existe en ninguna exploradora.
+ *
+ * Se usa para el hash de la transacción de Solana, que Privy devuelve como bytes
+ * y la pantalla muestra como texto. Es aritmética entera en base 58 y el
+ * resultado tiene que ser el mismo que escribiría cualquier wallet.
+ */
+export const toBase58 = (bytes: Uint8Array): string => {
+  if (bytes.length === 0) return '';
+
+  let number = 0n;
+  for (const byte of bytes) number = number * 256n + BigInt(byte);
+
+  let base58 = '';
+  while (number > 0n) {
+    base58 = `${BASE58_ALPHABET[Number(number % 58n)]}${base58}`;
+    number /= 58n;
+  }
+
+  // Los bytes cero iniciales no aparecen en el entero: son `1` en base58.
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    base58 = `1${base58}`;
+  }
+
+  return base58;
 };
 
 /**
