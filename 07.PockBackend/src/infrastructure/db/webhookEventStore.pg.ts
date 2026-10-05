@@ -68,8 +68,12 @@
  * round trip. The containment test itself is unchanged, and the DID terms remain
  * constant per path, so the GIN index still serves them.
  *
- * The payload is not selected: the item is a sentence, and the sentence is
- * computed from `event_type` in the application layer.
+ * The payload is selected, and read for three fields. It used not to be: the
+ * sentence was computed from `event_type` alone, and this header said so. A real
+ * deposit arrived, and the notification could not say how much — so the
+ * projection now carries the payload and `describeEvent` asks one question of it:
+ * how much, on which chain, in which asset. Every other field of it stays
+ * unreadable from the feed, and none of it reaches the item.
  */
 import type { PersonWebhookEvent, WebhookEventStore } from '../../domain/ports/webhook-event-store';
 import { PERSON_WALLET_ID_PATHS, personDidContainments } from '../../domain/webhooks/attribution';
@@ -79,6 +83,7 @@ interface EventRow {
   readonly id: string;
   readonly event_type: string;
   readonly created_at: string | Date;
+  readonly payload: Record<string, unknown>;
 }
 
 /**
@@ -148,7 +153,7 @@ export const createPostgresWebhookEventStore = (db: Database): WebhookEventStore
 
     const rows = (await db.query(
       `
-        SELECT id, event_type, created_at
+        SELECT id, event_type, created_at, payload
           FROM rewallet.webhook_events
          WHERE (${predicate})
          ORDER BY created_at DESC
@@ -161,6 +166,7 @@ export const createPostgresWebhookEventStore = (db: Database): WebhookEventStore
       id: row.id,
       eventType: row.event_type,
       createdAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
+      payload: row.payload ?? {},
     }));
   },
 });

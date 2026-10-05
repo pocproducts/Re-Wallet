@@ -35,6 +35,17 @@ export interface PersonWebhookEvent {
   readonly id: string;
   readonly eventType: string;
   readonly createdAt: Date;
+  /**
+   * The stored payload, as the provider sent it.
+   *
+   * It is here for one question: how much, on which chain, in which asset —
+   * answered by `describeEvent` through `resolveEventAmount`, which reads three
+   * fields and gets a figure only from our own catalog. It is **not** a document
+   * for the screen: no field of it reaches `GET /api/notifications`, and the
+   * identifiers it carries — a `wallet_id`, a `sender`, a `recipient` — are
+   * exactly what the feed must never show a person.
+   */
+  readonly payload: Readonly<Record<string, unknown>>;
 }
 
 export interface WebhookEventStore {

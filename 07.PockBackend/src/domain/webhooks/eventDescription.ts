@@ -16,18 +16,31 @@
  * concerned. So the fallback says exactly one true thing — an event was received
  * — and invents nothing about which, when a chain failed, or whether money moved.
  *
- * ── Why the money entries name no amount, no asset and no chain ──────────────
+ * ── Why the money entries name no amount and no chain ─────────────────────────
  *
- * `wallet.funds_deposited` carries `amount` and `asset`; `transaction.*` carries
- * neither. A table keyed only by `event_type` cannot say "0.4 MON" for one of them
- * and stay honest for the other, and a sentence that invents a figure for the
- * events that lack one is worse than a short one. So each sentence below says
- * **what happened**, in second person, and stops there.
+ * The sentences below say **what happened**, in second person, and stop there.
+ * They are what an event says when nothing about the payload is available — a
+ * `transaction.*` event, which carries no `amount` at all, and a
+ * `wallet.funds_deposited` whose chain or asset this product cannot place.
  *
- * Taking the payload into account would mean changing `describeEvent`'s signature
- * and every caller with it — a deliberate change, not a free one, because the
- * "unknown type is never blank and never dropped" guarantee above is what this
- * table exists to keep.
+ * ── Why the payload is read now, and only three fields of it ──────────────────
+ *
+ * A real deposit arrived and the notification could not say how much: the
+ * person saw that funds landed and had to ask. So `describeEvent` now takes the
+ * payload, and the *only* thing taken from it is a figure, via
+ * `resolveEventAmount` (`.eventAmount.ts`): the decimals come from our own
+ * catalog, never from the payload, and an unresolved chain or asset yields no
+ * figure at all.
+ *
+ * The sentence may carry **an amount and a symbol**. It may never carry a
+ * sender, a recipient, a `wallet_id` or a truncated address:
+ * `docs/contrato-dinero.md` forbids showing a person an address, and a
+ * notification is a place a person reads. The payload's other fields are
+ * unreachable from here, not merely unused.
+ *
+ * The signature change is deliberate: the "unknown type is never blank and never
+ * dropped" guarantee above is what this table exists to keep, and it holds
+ * exactly as before for every input, payload or not.
  *
  * The `wallet.*` funds entries and the `transaction.*` lifecycle are all
  * category `wallet`: each one is about the person's wallet.
@@ -37,6 +50,9 @@
  * the person's own wallet, so those events can never fire here, and a sentence
  * for them would describe a flow this product does not have.
  */
+
+import { resolveEventAmount } from './eventAmount';
+import type { ResolvedAmount } from './eventAmount';
 
 export type NotificationCategory = 'account' | 'security' | 'wallet' | 'link' | 'other';
 
@@ -86,5 +102,39 @@ const DESCRIPTIONS: Record<string, EventDescription> = {
 
 const FALLBACK: EventDescription = { message: UNKNOWN_EVENT_MESSAGE, category: 'other' };
 
-export const describeEvent = (eventType: string): EventDescription =>
-  DESCRIPTIONS[eventType] ?? FALLBACK;
+/**
+ * The money events that may state a figure, and how each of them says it.
+ *
+ * A table like this rather than a second copy of `DESCRIPTIONS`: a sentence with
+ * a figure in it is a **function** of the amount, and an event type absent from
+ * here keeps the sentence in the table above whatever the payload says. That is
+ * also what keeps `transaction.*` unchanged — they carry no `amount`, and they
+ * are not in this table, so nothing is invented for them.
+ */
+const AMOUNT_SENTENCES: Record<string, (amount: ResolvedAmount) => string> = {
+  'wallet.funds_deposited': (amount) => `Entraron ${amount.value} ${amount.symbol}.`,
+  'wallet.funds_withdrawn': (amount) => `Salieron ${amount.value} ${amount.symbol} de tu billetera.`,
+};
+
+/**
+ * The event type → sentence.
+ *
+ * `payload` is the stored row's payload, and it is optional: with none — a
+ * `transaction.*` event, or a caller that has no payload — the table's sentence
+ * stands unchanged. When one is given, it is read for a figure **only**, and only
+ * for the event types in `AMOUNT_SENTENCES`; anything unresolvable leaves the
+ * sentence exactly as it was, digits included none of.
+ */
+export const describeEvent = (
+  eventType: string,
+  payload?: Readonly<Record<string, unknown>> | null,
+): EventDescription => {
+  const described = DESCRIPTIONS[eventType] ?? FALLBACK;
+  const sayAmount = AMOUNT_SENTENCES[eventType];
+  if (sayAmount === undefined || payload === undefined || payload === null) return described;
+
+  const amount = resolveEventAmount(payload);
+  if (amount === null) return described;
+
+  return { ...described, message: sayAmount(amount) };
+};

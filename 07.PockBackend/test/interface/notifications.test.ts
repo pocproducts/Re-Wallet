@@ -8,7 +8,8 @@
  *   2. **Only this person's events.** The DID comes from the session claims, and
  *      the request has no parameter that could name somebody else.
  *   3. **No payload in the item.** A sentence, a category and a time. The row
- *      holds identifiers — a webhook payload is not a document to render.
+ *      holds identifiers — and the feed reads the payload for exactly one
+ *      thing, the amount — but none of it is what the screen renders.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -36,10 +37,12 @@ const acceptingCodec = (): SessionCodec => ({
 /** Rows for two people. The store answers per DID, so a leak has to be a query. */
 const rowsFor: Record<string, readonly PersonWebhookEvent[]> = {
   [DID]: [
-    { id: 'e3', eventType: 'wallet.created', createdAt: new Date('2025-06-01T11:00:00Z') },
-    { id: 'e2', eventType: 'user.created', createdAt: new Date('2025-06-01T10:00:00Z') },
+    { id: 'e3', eventType: 'wallet.created', createdAt: new Date('2025-06-01T11:00:00Z'), payload: { user_did: DID } },
+    { id: 'e2', eventType: 'user.created', createdAt: new Date('2025-06-01T10:00:00Z'), payload: { user_did: DID } },
   ],
-  [OTHER_DID]: [{ id: 'x1', eventType: 'user.created', createdAt: new Date('2025-06-01T11:30:00Z') }],
+  [OTHER_DID]: [
+    { id: 'x1', eventType: 'user.created', createdAt: new Date('2025-06-01T11:30:00Z'), payload: { user_did: OTHER_DID } },
+  ],
 };
 
 const fakeStore = (
@@ -177,7 +180,7 @@ describe('GET /api/notifications — unattributable events', () => {
 describe('GET /api/notifications — an unknown event type', () => {
   it('still produces a usable sentence, not a blank', async () => {
     const store = fakeStore({
-      [DID]: [{ id: 'e9', eventType: 'wallet.something_new_2026', createdAt: new Date('2025-06-01T09:00:00Z') }],
+      [DID]: [{ id: 'e9', eventType: 'wallet.something_new_2026', createdAt: new Date('2025-06-01T09:00:00Z'), payload: {} }],
     });
 
     const response = await get(app(store), { cookie: SESSION_COOKIE });
@@ -190,6 +193,49 @@ describe('GET /api/notifications — an unknown event type', () => {
     expect(item?.category).toBe('other');
     // The sentence must not claim to know what happened.
     expect(item?.message).not.toContain('wallet.something_new_2026');
+  });
+});
+
+describe('GET /api/notifications — a deposit that says how much', () => {
+  const SENDER = '8o9sri4iYYvUKds7Lu3ENa4c7RDswwrrzNugjFkqwjxy';
+  const RECIPIENT = '2FYhafYQKkrEMMgF1w5Y517xbd9iD2zX1KbXMvuG76RF';
+
+  const depositRow = (payload: Record<string, unknown>): Record<string, PersonWebhookEvent[]> => ({
+    [DID]: [{ id: 'd1', eventType: 'wallet.funds_deposited', createdAt: new Date('2025-06-01T12:00:00Z'), payload }],
+  });
+
+  const messageFor = async (payload: Record<string, unknown>): Promise<string> => {
+    const response = await get(app(fakeStore(depositRow(payload))), { cookie: SESSION_COOKIE });
+    const body = (await response.json()) as { notifications: { message: string }[] };
+    return body.notifications[0]?.message ?? '';
+  };
+
+  it('renders the amount the catalog says, over HTTP, and no address with it', async () => {
+    const message = await messageFor({
+      type: 'wallet.funds_deposited',
+      wallet_id: 'x2tmz6fpz57yv1q5bciddxzc',
+      caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+      asset: { type: 'native-token', address: null },
+      amount: '6006650',
+      sender: SENDER,
+      recipient: RECIPIENT,
+      transaction_hash: '4BsbV8gu',
+    });
+
+    expect(message).toBe('Entraron 0.00600665 SOL.');
+    expect(message).not.toContain(SENDER);
+    expect(message).not.toContain(RECIPIENT);
+  });
+
+  it('keeps the payload out of the body even when the payload names a person', async () => {
+    const store = fakeStore(depositRow({ caip2: 'eip155:143', asset: { type: 'native-token' }, amount: '1000000000000000000', wallet_id: 'w1', sender: SENDER }));
+
+    const response = await get(app(store), { cookie: SESSION_COOKIE });
+
+    expect(response.status).toBe(200);
+    const serialised = JSON.stringify(await response.json());
+    expect(serialised).not.toContain(SENDER);
+    expect(serialised).not.toContain('wallet_id');
   });
 });
 

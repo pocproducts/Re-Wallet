@@ -589,8 +589,10 @@ segment or header that can name somebody else.
 ```
 
 Newest first, at most **50** items (`NOTIFICATIONS_PAGE_SIZE`). **No payload in
-the item, and no way to ask for one:** a Privy payload carries a DID, an address
-and a wallet id that the UI has no use for. The row stays in the table.
+the item, and no way to ask for one:** the feed reads the payload for exactly one
+thing — the amount a money event states — and a Privy payload also carries a DID,
+an address and a wallet id that the UI has no use for. None of that reaches the
+item. The row stays in the table.
 
 `502 NOTIFICATIONS_UNAVAILABLE` when the rows cannot be read: an empty list is a
 claim ("you have no notifications"), and a failed read is not that claim.
@@ -610,7 +612,39 @@ One table, in `src/domain/webhooks/eventDescription.ts`:
 | `wallet.deleted` | Se eliminó una billetera de tu cuenta. | `wallet` |
 | `linked_account.created` | Conectaste un método de acceso a tu cuenta. | `link` |
 | `linked_account.deleted` | Desconectaste un método de acceso de tu cuenta. | `link` |
+| `wallet.funds_deposited` | Entraron &lt;amount&gt; &lt;SYMBOL&gt;. — see below | `wallet` |
+| `wallet.funds_withdrawn` | Salieron &lt;amount&gt; &lt;SYMBOL&gt; de tu billetera. — see below | `wallet` |
+| `transaction.*` | (unchanged; these carry no `amount`) | `wallet` |
 | **anything else** | **Se recibió un evento de tu cuenta.** (`category: other`) | `other` |
+
+### When a money event states the amount
+
+A real `wallet.funds_deposited` arrived and its notification could not say how
+much: `amount` is `"6006650"` and **nothing in the payload says what unit that
+is**. Read as lamports it is a fraction of a SOL; read as 6-decimal USDC base
+units it is a million dollars. So the exponent never comes from the payload — it
+comes from `src/domain/deposit/catalog.ts`, the same list the deposit screen
+reads, via `caip2` (which chain) plus `asset` (`native-token`, or the contract
+or mint address of that chain):
+
+| `caip2` + `asset` | Decimals | `"6006650"` reads as |
+|---|---|---|
+| `solana:5eykt…` + native | 9 | `0.00600665 SOL` |
+| `eip155:143` + native | 18 | `0.00000000000600665 MON` |
+| `eip155:1` / `eip155:143` + USDC contract | 6 | `1.234567 USDC` |
+
+**If it does not resolve, no figure is printed.** An unknown chain, an unknown
+contract, a missing `amount`, an `amount` that is not base units — all of them
+leave the sentence exactly as it was, digits included none of. There is no
+default decimals and no "assume lamports": the sentence that says what happened
+is the honest one, and the guarantee that an unknown event type is never blank
+and never dropped still holds for every input.
+
+The sentence may carry **an amount and a symbol**. It may not carry a `sender`,
+a `recipient`, a `wallet_id` or a truncated address — `docs/contrato-dinero.md`
+forbids showing a person an address, and a notification is a place a person
+reads. `resolveEventAmount` reads three fields and is structurally unable to see
+the rest.
 
 The fallback states one true thing and invents nothing: not the type, not a chain,
 not a success. Privy adds event types without asking, and a blank line renders as a

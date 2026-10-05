@@ -217,9 +217,8 @@ describe('createPostgresWebhookEventStore — the feed query', () => {
     expect(sql).toContain('LIMIT');
     expect(sql).toContain('DESC');
     expect(valuesOf(db)).toContain(50);
-    // Only the columns the item is built from. The payload itself is not selected:
-    // the sentence is computed in the application, from the event type.
-    expect(sql).not.toContain('SELECT payload');
+    // The payload IS selected now — for the amount, never for an identifier.
+    expect(sql).toContain('SELECT id, event_type, created_at, payload');
   });
 
   it('matches every shape the intake reads the person from', async () => {
@@ -243,9 +242,21 @@ describe('createPostgresWebhookEventStore — the feed query', () => {
     const rows = await createPostgresWebhookEventStore(db).listForPerson(DID, 50);
 
     expect(rows).toEqual([
-      { id: 'e3', eventType: 'wallet.created', createdAt: new Date('2025-06-01T11:00:00.000Z') },
-      { id: 'e2', eventType: 'user.created', createdAt: new Date('2025-06-01T10:00:00.000Z') },
+      { id: 'e3', eventType: 'wallet.created', createdAt: new Date('2025-06-01T11:00:00.000Z'), payload: {} },
+      { id: 'e2', eventType: 'user.created', createdAt: new Date('2025-06-01T10:00:00.000Z'), payload: {} },
     ]);
+  });
+
+  it('hands the payload to the feed, which is what makes an amount possible', async () => {
+    // The one row that changed shape. The sentence needs `caip2`, `asset` and
+    // `amount`, and none of them can be invented from an event type.
+    const db = recordingDb([
+      { id: 'e1', event_type: 'wallet.funds_deposited', created_at: '2025-06-01T12:00:00.000Z', payload: { caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', amount: '6006650' } },
+    ]);
+
+    const [row] = await createPostgresWebhookEventStore(db).listForPerson(DID, 50);
+
+    expect(row?.payload).toEqual({ caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', amount: '6006650' });
   });
 });
 

@@ -1,8 +1,10 @@
 /**
  * The feed: the authenticated person's events, as sentences.
  *
- * No payload leaves this module. The row is a record of what a provider said; the
- * screen needs a sentence.
+ * The payload enters the application layer and stops at the sentence. The row is
+ * a record of what a provider said; the screen needs a sentence, and the only
+ * thing taken from the payload is a figure — see
+ * `domain/webhooks/eventAmount.ts`. No payload field is passed on to the item.
  *
  * ── Why the store cannot be asked about somebody else ─────────────────────────
  *
@@ -59,7 +61,7 @@ export const readNotifications = (deps: {
     }
 
     return rows.map((row) => {
-      const described = describeEvent(row.eventType);
+      const described = describeEvent(row.eventType, row.payload);
       return {
         id: row.id,
         eventType: row.eventType,

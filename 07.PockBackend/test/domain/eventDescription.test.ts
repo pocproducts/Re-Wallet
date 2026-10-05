@@ -60,6 +60,27 @@ describe('describeEvent — the types this product knows', () => {
     const messages = cases.map(([eventType]) => describeEvent(eventType).message);
     expect(new Set(messages).size).toBe(messages.length);
   });
+
+  it('leaves the nine account sentences byte-identical, payload or not', () => {
+    // The whole change is about money events. These nine are pinned exactly,
+    // and stay that way whatever payload the row happens to carry.
+    const expected: Record<string, string> = {
+      'user.created': 'Se creó tu cuenta en ReWALLET.',
+      'user.updated': 'Se actualizaron los datos de tu cuenta.',
+      'user.deleted': 'Se eliminó tu cuenta.',
+      'user.signed_in': 'Iniciaste sesión en ReWALLET.',
+      'user.auth_recovered': 'Recuperaste el acceso a tu cuenta.',
+      'wallet.created': 'Se creó una billetera nueva en tu cuenta.',
+      'wallet.deleted': 'Se eliminó una billetera de tu cuenta.',
+      'linked_account.created': 'Conectaste un método de acceso a tu cuenta.',
+      'linked_account.deleted': 'Desconectaste un método de acceso de tu cuenta.',
+    };
+
+    for (const [eventType, message] of Object.entries(expected)) {
+      expect(describeEvent(eventType).message).toBe(message);
+      expect(describeEvent(eventType, { caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', amount: '6006650' }).message).toBe(message);
+    }
+  });
 });
 
 describe('describeEvent — the money events, which carry no DID', () => {
@@ -110,6 +131,143 @@ describe('describeEvent — the money events, which carry no DID', () => {
       expect(described.message).toBe(UNKNOWN_EVENT_MESSAGE);
       expect(described.category).toBe('other');
     }
+  });
+});
+
+describe('describeEvent — the amount a deposit may state', () => {
+  const NATIVE = { type: 'native-token', address: null };
+  const SENDER = '8o9sri4iYYvUKds7Lu3ENa4c7RDswwrrzNugjFkqwjxy';
+  const RECIPIENT = '2FYhafYQKkrEMMgF1w5Y517xbd9iD2zX1KbXMvuG76RF';
+  const WALLET_ID = 'x2tmz6fpz57yv1q5bciddxzc';
+
+  /** The real `wallet.funds_deposited` that arrived and could not be understood. */
+  const SOLANA_DEPOSIT = {
+    type: 'wallet.funds_deposited',
+    wallet_id: WALLET_ID,
+    caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+    asset: NATIVE,
+    amount: '6006650',
+    sender: SENDER,
+    recipient: RECIPIENT,
+    transaction_hash: '4BsbV8gu',
+    block: { number: 453667852 },
+  } as const;
+
+  const GENERIC_DEPOSIT = 'Llegaron fondos a tu billetera.';
+
+  it('states the figure, with the decimals our catalog declares — not the payload\'s', () => {
+    // `6006650` says nothing about its unit. SOL is 9 decimals **because our
+    // catalog says so**; the payload contributes the digits and nothing else.
+    // Exact digits, not a substring: the on-chain balance is this figure.
+    expect(describeEvent('wallet.funds_deposited', SOLANA_DEPOSIT)).toEqual({
+      message: 'Entraron 0.00600665 SOL.',
+      category: 'wallet',
+    });
+  });
+
+  it('uses 18 decimals for Monad native, which would be a different figure entirely', () => {
+    const monad = { ...SOLANA_DEPOSIT, caip2: 'eip155:143', amount: '1500000000000000000' };
+
+    // Read as 9 decimals the same payload would read as 1.5 billion MON.
+    expect(describeEvent('wallet.funds_deposited', monad).message).toBe('Entraron 1.5 MON.');
+
+    const ethereum = { ...SOLANA_DEPOSIT, caip2: 'eip155:1', amount: '1' };
+    expect(describeEvent('wallet.funds_deposited', ethereum).message).toBe('Entraron 0.000000000000000001 ETH.');
+  });
+
+  it('uses 6 decimals for USDC, and matches it on the contract of that chain', () => {
+    // Same six decimals in three chains, three different contracts: matching the
+    // address is what keeps a Solana mint from being read as a Monad token.
+    const monadUsdc = {
+      ...SOLANA_DEPOSIT,
+      caip2: 'eip155:143',
+      asset: { type: 'token', address: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603' },
+      amount: '1234567',
+    };
+    const solanaUsdc = {
+      ...SOLANA_DEPOSIT,
+      asset: { type: 'token', address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
+      amount: '1500000',
+    };
+
+    expect(describeEvent('wallet.funds_deposited', monadUsdc).message).toBe('Entraron 1.234567 USDC.');
+    expect(describeEvent('wallet.funds_deposited', solanaUsdc).message).toBe('Entraron 1.5 USDC.');
+  });
+
+  it('says nothing about the amount when the chain is one we do not carry', () => {
+    const unknown = { ...SOLANA_DEPOSIT, caip2: 'eip155:137', amount: '6006650' };
+
+    const { message } = describeEvent('wallet.funds_deposited', unknown);
+
+    expect(message).toBe(GENERIC_DEPOSIT);
+    expect(message).not.toMatch(/\d/);
+    expect(message).not.toMatch(/sol|eth|mon|usd|eip155|\$/i);
+  });
+
+  it('says nothing about the amount when the payload does not carry one', () => {
+    for (const payload of [
+      { ...SOLANA_DEPOSIT, amount: undefined },
+      { ...SOLANA_DEPOSIT, amount: null },
+      { ...SOLANA_DEPOSIT, amount: 'not a number' },
+      // A `transaction.*` payload shape, which has no amount at all.
+      { type: 'transaction.confirmed', caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', asset: NATIVE },
+    ]) {
+      const { message } = describeEvent('wallet.funds_deposited', payload);
+
+      expect(message).toBe(GENERIC_DEPOSIT);
+      expect(message).not.toMatch(/\d/);
+    }
+  });
+
+  it('leaves a transaction sentence exactly as it was, payload or not', () => {
+    // `transaction.*` carries no amount. There is nothing to state, so the
+    // sentence must not move — not even if a payload with an amount is handed in.
+    const withAmount = { ...SOLANA_DEPOSIT, type: 'transaction.confirmed' };
+
+    for (const eventType of [
+      'transaction.confirmed',
+      'transaction.broadcasted',
+      'transaction.failed',
+      'transaction.replaced',
+      'transaction.still_pending',
+      'transaction.execution_reverted',
+    ]) {
+      expect(describeEvent(eventType, withAmount)).toEqual(describeEvent(eventType));
+      expect(describeEvent(eventType, withAmount).message).not.toMatch(/\d/);
+    }
+  });
+
+  it('never carries an address, a wallet id or a hash into a sentence', () => {
+    // Structural, not a sample: the sentence is the only thing the screen gets,
+    // and `docs/contrato-dinero.md` forbids a person seeing an address.
+    const produced = [
+      describeEvent('wallet.funds_deposited', SOLANA_DEPOSIT).message,
+      describeEvent('wallet.funds_deposited', { ...SOLANA_DEPOSIT, caip2: 'eip155:143', amount: '1' }).message,
+      describeEvent('wallet.funds_withdrawn', SOLANA_DEPOSIT).message,
+    ];
+
+    for (const message of produced) {
+      expect(message).not.toContain(SENDER);
+      expect(message).not.toContain(RECIPIENT);
+      expect(message).not.toContain(WALLET_ID);
+      // Not truncated either: an ellipsised address is still an address.
+      for (const address of [SENDER, RECIPIENT]) {
+        for (let start = 0; start < address.length; start += 8) {
+          expect(message).not.toContain(address.slice(start, start + 8));
+        }
+      }
+      // And nothing that looks like one at all.
+      expect(message).not.toMatch(/[1-9A-HJ-NP-Za-km-z]{32,}|0x[0-9a-fA-F]{8,}/);
+    }
+  });
+
+  it('reads three fields and no others, so a payload cannot speak through it', () => {
+    // An amount is the whole of what this module is allowed to know.
+    const described = describeEvent('wallet.funds_deposited', SOLANA_DEPOSIT);
+
+    expect(Object.keys(described).sort()).toEqual(['category', 'message']);
+    // No symbol or value is smuggled out beside the sentence.
+    expect(JSON.stringify(described)).not.toContain('6006650');
   });
 });
 
