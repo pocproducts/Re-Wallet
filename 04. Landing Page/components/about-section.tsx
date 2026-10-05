@@ -132,7 +132,7 @@ export function AboutSection() {
           {/* Image label overlay */}
           <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-2 bg-foreground/80 backdrop-blur-sm">
             <span className="text-[10px] tracking-[0.2em] uppercase text-background/60 font-mono">
-              ARQUITECTURA E INGENIERIA PLANTEADA
+              {copy.sections.architecture}
             </span>
             <span className="text-[10px] tracking-[0.2em] uppercase text-[#ea580c] font-mono">
               LIVE
@@ -141,7 +141,7 @@ export function AboutSection() {
 
           <Image
             src="/images/about-isometric.jpg"
-            alt="Isometric view of AI infrastructure with server racks and data pipelines"
+            alt="Vista isométrica de la infraestructura que corre detrás de ReWALLET"
             fill
             className="object-cover"
             sizes="(max-width: 1024px) 100vw, 50vw"

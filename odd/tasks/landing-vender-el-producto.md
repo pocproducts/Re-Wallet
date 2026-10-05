@@ -128,6 +128,43 @@ lector usa para decidir qué creer.
   El encabezado de sección queda con el título y la descripción, sin columna derecha.
 - Contadores en `out/index.html` después de este turno: ver sección L1c.
 
+### L2 — Orden y encuadre (hecho)
+
+- **Reorden.** `Navbar → Hero → FeatureGrid → PricingSection (producto) → AboutSection → RoadmapSection → Footer`.
+  `PricingSection` se partió en **dos exports del mismo archivo** (`PricingSection` = grilla de producto,
+  `RoadmapSection` = hoja de ruta + acceso a la alpha) para que la arquitectura quedara entre el producto
+  y el plan. Mismo markup, mismo CSS; no hay archivos nuevos. `id="roadmap"` y `id="pricing-tiers"` intactos,
+  así que los links del navbar siguen funcionando. `nav.how` pasó a decir **"Arquitectura"** en los tres
+  idiomas, porque `#solución` ahora es el bloque opcional del stack.
+- **El CTA "Probar ahora" no se movió:** sigue en el hero, primer bloque del scroll.
+- **Manifest en humano, con los términos traducidos al lado.** Se conservan **TEE** y **paymaster**, pero
+  cada uno lleva su oración: el TEE es "un tipo de servidor aislado donde nadie puede leer tu clave", el
+  paymaster es "el componente que paga las comisiones de la red por vos". `PAYMASTER:` / `GAS ABSORBIDO`
+  pasaron a `PAYMASTER (PAGA LAS COMISIONES POR VOS):` / `COMISIONES QUE NO PAGAS`.
+- **Hoja de ruta reescrita:** hoy y después, con la **etapa 2 nombrada** — multichain, swaps y bridges.
+  Las cinco etapas de pitch (LABORATORIO → ECOSISTEMA) se fueron. Quedaron cuatro filas: etapa 1 (lo que
+  está en manos de la gente), etapa 2 (multichain, swaps y bridges), etapa 3 (retiro a moneda local) y
+  rendimiento, que va **sin número de etapa** porque todavía no se le asignó una.
+- **Los tiers de L1 decían "etapa 04"** para retiro y carga desde el banco. `docs/contrato-dinero.md`
+  dice que el retiro a moneda local es **Fase 3**, así que los dos cards pasaron a etapa 3. La carga desde
+  el banco no tiene etapa asignada en el contrato: quedó escrita como "junto con el retiro, en la etapa 3".
+- **`GlitchMarquee` saiu de la página.** Decía `// ALIADOS` sobre los logos de OpenAI, Anthropic, Google,
+  Meta, NVIDIA, Mistral, Cohere, Stability, DeepMind y Hugging Face: no hay ningún acuerdo con ninguna de
+  esas empresas, y en un track donde el juez prueba el producto eso es la primera cosa que se cae.
+  No era ni copy ni orden — era una afirmación falsa. **El componente queda en el repo, sin borrar**, por
+  si se quiere recuperar con otro encuadre; `components/glitch-marquee.tsx` no se tocó.
+- **El nodo "Rendir" del hero** pasó a **"Rendir (test)"** (`Grow (test)` / `Render (test)`). Yield nunca
+  se corrió con plata real y el diagrama está arriba de todo, en el hero: no puede decir "Rendir" a secas.
+- **El CTA de instituciones y partners se desinstitucionalizó:** `betaTitle` "Entrá a la alpha.",
+  y `betaDescription` pide el email para avisar cuándo se abre el acceso. El formulario se queda —es el
+  único punto de conversión de la página— pero ya no le habla a un inversor.
+
+### Fuera de alcance (sigue)
+
+- `topology-graph.tsx` está **muerto**: no lo importa nadie. No se tocó.
+- `components/bento/*` y `hero-section.tsx`, `feature-grid.tsx`, `footer.tsx` no necesitaron cambios.
+
+
 ### L1c — Metadatos y STATS (hecho)
 
 - `app/layout.tsx`, metadata solamente: `title`, `description`, `keywords`,

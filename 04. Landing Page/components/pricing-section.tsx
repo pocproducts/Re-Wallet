@@ -287,9 +287,19 @@ export function PricingSection() {
         </span>
         <div className="flex-1 border-t border-border" />
       </motion.div>
+    </section>
+  )
+}
 
+/* ── roadmap + alpha access ──
+   Lives below the architecture block: the product comes first, the plan last.
+   Same markup, split only so the page can order the sections. */
+export function RoadmapSection() {
+  const { copy } = useLanguage()
+  return (
+    <section id="roadmap" className="w-full px-6 pb-20 lg:px-12">
       {/* Roadmap */}
-      <div id="roadmap" className="mt-20">
+      <div className="mt-20">
         <motion.div initial={{ opacity: 0, x: -20 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.6, ease }} className="mb-8 flex items-center gap-4">
           <span className="text-[10px] tracking-[0.2em] uppercase text-muted-foreground font-mono">{copy.sections.roadmap}</span>
           <div className="flex-1 border-t border-border" />
@@ -306,7 +316,7 @@ export function PricingSection() {
               <span className="text-[10px] tracking-[0.2em] uppercase text-background/60 font-mono">{copy.sections.architecture}</span>
               <span className="text-[10px] tracking-[0.2em] uppercase text-[#ea580c] font-mono">LIVE</span>
             </div>
-            <img src="/images/roadmap-architecture.png" alt="Arquitectura vertical de ReWALLET con cinco etapas conectadas, desde la custodia hasta el ecosistema digital" className="h-full min-h-[360px] w-full object-cover" />
+            <img src="/images/roadmap-architecture.png" alt="Diagrama de la arquitectura interna de ReWALLET, desde la custodia hasta el movimiento del saldo" className="h-full min-h-[360px] w-full object-cover" />
             <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-between bg-foreground/85 px-4 py-2 backdrop-blur-sm"><span className="text-[10px] tracking-[0.2em] uppercase text-background/40 font-mono">FLOW: ON-CHAIN / ABSTRACTED</span><span className="text-[10px] tracking-[0.2em] uppercase text-background/40 font-mono">RES: 2048x2048</span></div>
           </div>
         </motion.div>
