@@ -1,0 +1,130 @@
+erDiagram
+    USERS ||--o| WALLETS : "tiene una"
+    USERS ||--o{ CONTACTS : "guarda"
+    USERS ||--o{ SESSIONS : "abre"
+    USERS ||--o{ IDEMPOTENCY_KEYS : "usa"
+    USERS ||--o{ PAYMENT_REQUESTS : "crea"
+    USERS ||--o{ POLICY_DECISIONS : "genera"
+    USERS ||--o{ GAS_SPONSORSHIPS : "consume"
+    WALLETS ||--o{ MOVEMENTS : "registra"
+    WALLETS ||--o| YIELD_POSITIONS : "tiene"
+    WALLETS ||--o{ YIELD_ACCRUALS : "acumula"
+    PAYMENT_REQUESTS ||--o| MOVEMENTS : "genera"
+
+    USERS {
+        uuid id PK
+        text privy_did UK
+        text name
+        text tag UK
+        text tag_normalized UK
+        text recovery_email
+        text recovery_phone
+        text avatar_color
+        timestamptz created_at
+    }
+
+    WALLETS {
+        uuid id PK
+        uuid user_id FK
+        text address UK
+        numeric balance
+        timestamptz yield_started_at
+    }
+
+    MOVEMENTS {
+        uuid id PK
+        uuid wallet_id FK
+        text type
+        numeric amount
+        text title
+        text status
+        jsonb meta
+        timestamptz created_at
+    }
+
+    CONTACTS {
+        uuid id PK
+        uuid user_id FK
+        text name
+        text tag
+        text color
+        text initials
+    }
+
+    SESSIONS {
+        uuid id PK
+        uuid user_id FK
+        text token_hash UK
+        jsonb device_info
+        timestamptz expires_at
+        timestamptz revoked_at
+    }
+
+    IDEMPOTENCY_KEYS {
+        text key PK
+        uuid user_id FK
+        text endpoint
+        jsonb response
+        timestamptz expires_at
+    }
+
+    PAYMENT_REQUESTS {
+        text id PK
+        uuid user_id FK
+        numeric amount
+        text status
+        uuid paid_by_user_id FK
+        uuid paid_movement_id FK
+        timestamptz expires_at
+    }
+
+    YIELD_POSITIONS {
+        uuid id PK
+        uuid wallet_id FK
+        numeric aave_atoken_bal
+        timestamptz last_accrued_at
+    }
+
+    YIELD_ACCRUALS {
+        uuid id PK
+        uuid wallet_id FK
+        numeric amount
+        integer apy_bps
+        date accrued_for_date
+    }
+
+    POLICY_RULES {
+        uuid id PK
+        uuid user_id FK
+        text rule_id
+        boolean enabled
+        jsonb config
+    }
+
+    POLICY_DECISIONS {
+        uuid id PK
+        uuid user_id FK
+        text source
+        text action
+        numeric amount
+        text decision
+        jsonb reasons
+        text policy_version
+    }
+
+    GAS_SPONSORSHIPS {
+        uuid id PK
+        uuid user_id FK
+        text provider
+        text mode
+        text tx_hash
+        text status
+    }
+
+    WEBHOOK_EVENTS {
+        uuid id PK
+        text source
+        text event_type
+        jsonb payload
+        boolean signature_valid
+    }

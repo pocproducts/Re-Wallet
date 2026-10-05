@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    participant U as 👤 Usuario
+    participant W as ⚡ Worker
+    participant DB as 🐘 Neon
+    participant P as 🔑 Privy
+    participant PM as ⛽ Paymaster (Alchemy)
+    participant M as ⛓️ Monad
+
+    U->>W: POST /wallet/send<br/>Cookie + Idempotency-Key
+    W->>DB: verificar session
+    DB-->>W: user + wallet
+    W->>DB: check Idempotency-Key
+    DB-->>W: primera vez
+
+    W->>W: Policy Engine<br/>max_single · velocity · allowlist
+    W-->>U: 200 (preview) o 202 (confirm)
+
+    U->>W: confirmar
+    W->>P: firmar (wallet embedded)
+    P->>PM: rutear gas sponsorship
+    PM-->>P: UserOp firmada
+    P->>M: broadcast tx
+    M-->>P: txHash
+    P-->>W: { txHash, gasUsed }
+
+    W->>DB: INSERT movements
+    W->>DB: INSERT idempotency_keys
+    W->>DB: UPDATE wallets.balance
+    W-->>U: 200 { movement, newBalance }

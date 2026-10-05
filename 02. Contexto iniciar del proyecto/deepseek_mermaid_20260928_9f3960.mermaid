@@ -1,0 +1,61 @@
+flowchart TB
+    subgraph CLIENTE["📱 CLIENTE · PWA"]
+        direction TB
+        UI["UI (pantallas + sheets)"]
+        ROUTER["Router"]
+        STORE["Store (memoria + cache)"]
+        APICLIENT["API Client (fetch)"]
+        PRIVYSDK["Privy SDK (passkey + wallet)"]
+        UI --> ROUTER --> STORE --> APICLIENT
+        PRIVYSDK -.->|WebAuthn| UI
+    end
+
+    subgraph CF["☁️ CLOUDFLARE WORKERS (free tier)"]
+        direction TB
+        WORKER["Worker: bestpath-api"]
+        subgraph MIDDLEWARE["Middleware"]
+            M1["auth"]
+            M2["idempotency"]
+            M3["rateLimit"]
+            M4["error"]
+            M5["policy (básica)"]
+        end
+        subgraph ROUTES["Routes"]
+            R1["/auth/*"]
+            R2["/wallet/*"]
+            R3["/contacts/*"]
+            R4["/yield/*"]
+            R5["/webhooks/*"]
+        end
+        subgraph SERVICES["Services"]
+            S1["privy.ts"]
+            S2["gas/ (PrivySponsor)"]
+            S3["aave.ts"]
+            S4["monad.ts"]
+            S5["indexer.ts"]
+            S6["yield.ts"]
+        end
+        CRON["Cron (1 min) · indexer"]
+        DO["Durable Object · IndexerCursor"]
+        D1[("D1 · cursor_state")]
+
+        WORKER --> MIDDLEWARE --> ROUTES --> SERVICES
+        CRON --> DO --> D1
+        CRON --> S5
+    end
+
+    subgraph EXTERNAL["🌍 EXTERNOS"]
+        NEON[("Neon Postgres")]
+        PRIVY["Privy (auth + wallet + gas)"]
+        MONAD["Monad Testnet"]
+        AAVE["Aave V3 Pool"]
+    end
+
+    APICLIENT -->|HTTPS + cookie| WORKER
+    S1 --> PRIVY
+    S2 --> PRIVY
+    S3 --> AAVE
+    S4 --> MONAD
+    ROUTES --> NEON
+    S5 --> MONAD
+    S6 --> AAVE
