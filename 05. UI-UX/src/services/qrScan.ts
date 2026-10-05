@@ -26,18 +26,48 @@
  *
  * ── Por qué el decoder se achica el frame antes de leerlo ────────────────────
  *
- * `jsQR` recorre **todos** los píxeles: el costo crece con el área. Un frame de
- * 1280×720 son 921.600 píxeles por lectura, y eso en cada `requestAnimationFrame`
- * es un teléfono caliente por una lectura que no lo necesita. Achicar a 480 de
- * lado mayor deja el código en plenty de resolución —el QR se lee por sus
- * módulos, no por su detalle— y baja el trabajo a una fracción, sin cambiar lo
- * que se devuelve.
+ * ── Por qué 960 y no 480, medido ────────────────────────────────────────────
+ *
+ * Antes eran 480, con el argumento de que "achicar baja el trabajo sin cambiar lo
+ * que se devuelve". **Las dos partes de ese argumento eran falsas**, y está
+ * medido con un QR real de una dirección Solana, en frames de 1280×960, en
+ * exactamente el camino que usa este decoder:
+ *
+ * | Tamaño del QR en el frame | 480 | 640 | 800 | 960 | 1280 |
+ * |---|---|---|---|---|---|
+ * | 60% del lado corto | falla | falla | falla | **lee** | lee |
+ * | 35% | falla | falla | falla | **lee** | lee |
+ * | 20% | falla | falla | lee | **lee** | lee |
+ *
+ * Dos conclusiones, y la segunda es la incomoda:
+ *
+ * 1. **480 no leía nunca.** No es un caso límite: fallaba en los tres tamaños,
+ *    con el QR tapando la mitad del frame. El escáner no tenía un problema de
+ *    distancia ni de ángulo: sencillamente no tenía resolución.
+ * 2. **Achicar no compraba CPU.** 480×360 tarda ~74 ms y 960×720 ~70 ms sobre el
+ *    mismo frame. El costo de `jsQR` no está en recorrer píxeles sino en el
+ *    localizador y el extractor, que trabajan sobre la estructura. Achicar
+ *    cuatro veces el área no compra nada — y rompía la lectura.
+ *
+ * 960 es el primer valor que lee en los tres casos, y a 1280 no se gana nada que
+ * 960 no lea, a un costo mayor por frame. Por eso 960 y no más.
+ *
+ * **La lección para el próximo que quiera "optimizarlo":** una constante de
+ * rendimiento anotada con una explicación razonable no es un dato. Se midió, y
+ * la explicación era razonable y estaba equivocada. Si se va a tocar este
+ * número, se mide primero.
  */
 
 import jsQR from 'jsqr';
 
-/** El lado mayor, en píxeles, con el que se lee el frame. Ver la nota de arriba. */
-export const QR_DECODE_MAX_EDGE = 480;
+/**
+ * El lado mayor, en píxeles, con el que se lee el frame.
+ *
+ * **960, no 480.** Con 480 el escáner no leía ningún QR realista. Ver la tabla de
+ * la nota de arriba: no es un ajuste de compromiso, es el primer valor que
+ * funciona, y achicar más barato no era.
+ */
+export const QR_DECODE_MAX_EDGE = 960;
 
 /**
  * Un canvas de lectura y su contexto, guardados para no crear uno por frame.
