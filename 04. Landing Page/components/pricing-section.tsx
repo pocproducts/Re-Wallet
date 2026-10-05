@@ -42,25 +42,6 @@ function ScramblePrice({ target, prefix = "#" }: { target: string; prefix?: stri
   )
 }
 
-/* ── data-stream status line ── */
-function StatusLine() {
-  const [throughput, setThroughput] = useState("0.0")
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setThroughput((Math.random() * 50 + 10).toFixed(1))
-    }, 2000)
-    return () => clearInterval(interval)
-  }, [])
-
-  return (
-    <div className="flex items-center gap-2 text-[10px] tracking-widest text-muted-foreground uppercase font-mono">
-      <span className="h-1.5 w-1.5 bg-[#ea580c]" />
-      <span>live throughput: {throughput}k req/s</span>
-    </div>
-  )
-}
-
 /* ── blinking cursor indicator ── */
 function BlinkDot() {
   return <span className="inline-block h-2 w-2 bg-[#ea580c] animate-blink" />
@@ -79,17 +60,36 @@ interface Tier {
   highlighted: boolean
 }
 
-const TIERS: Tier[] = [
-  { id: "face-id", name: "LOGIN CON FACE ID", price: "01", period: "", tag: "CORE", description: "Tu cara es tu contraseña. Sin semillas, sin passwords.", features: [{ text: "Wallet creada automáticamente", included: true }, { text: "Registro en 10 segundos", included: true }], cta: "CONOCER MÁS", highlighted: true },
-  { id: "deposito", name: "DEPÓSITO", price: "02", period: "", tag: null, description: "Transferencia u otra wallet. El backend se encarga de todo.", features: [{ text: "Desde cualquier lugar", included: true }, { text: "Una cuenta en dólares", included: true }], cta: "CONOCER MÁS", highlighted: false },
-  { id: "yield", name: "RENDIMIENTO", price: "03", period: "", tag: "CORE", description: "~4-5% anual generado desde el primer segundo. Sin staking.", features: [{ text: "Interés compuesto diario", included: true }, { text: "Sin acción manual", included: true }], cta: "CONOCER MÁS", highlighted: true },
-  { id: "tags", name: "ENVÍOS POR TAG", price: "04", period: "", tag: null, description: "Mandá dinero a @carlos, un email o un teléfono.", features: [{ text: "Sin direcciones hex", included: true }, { text: "Sin elegir redes", included: true }], cta: "CONOCER MÁS", highlighted: false },
-  { id: "links", name: "LINKS DE COBRO", price: "05", period: "", tag: "CORE", description: "Generá un link y compartilo. Sin app del receptor.", features: [{ text: "Cobrá como mandás un mensaje", included: true }, { text: "Fácil para todos", included: true }], cta: "CONOCER MÁS", highlighted: true },
-  { id: "activity", name: "ACTIVIDAD", price: "06", period: "", tag: null, description: "Todos tus movimientos en un solo lugar, agrupados por fecha.", features: [{ text: "Historial unificado", included: true }, { text: "Transparencia total", included: true }], cta: "CONOCER MÁS", highlighted: false },
-  { id: "withdraw", name: "RETIRO", price: "07", period: "", tag: null, description: "Retirá cuando quieras. Sin locks, mínimos ni penalidades.", features: [{ text: "Liquidez inmediata", included: true }, { text: "Controlás tu dinero", included: true }], cta: "CONOCER MÁS", highlighted: false },
-  { id: "multi-asset", name: "MULTI-ASSET", price: "08", period: "", tag: "NEXT", description: "Dólares, Bitcoin, Ethereum. Todo en un solo saldo.", features: [{ text: "Múltiples activos", included: true }, { text: "Una sola experiencia", included: true }], cta: "CONOCER MÁS", highlighted: false },
-  { id: "off-ramp", name: "OFF-RAMP", price: "09", period: "", tag: "NEXT", description: "On-ramp y off-ramp: convertí dinero local a dólares digitales y retiralos cuando quieras.", features: [{ text: "Salida simple a moneda local", included: true }, { text: "Expansión a mercados LATAM", included: true }], cta: "CONOCER MÁS", highlighted: false },
-]
+/* Only the badge and the emphasis live here. The words come from language-provider,
+   so every card changes in every language. */
+const TIER_PRESENTATION: Record<string, { tag: string | null; highlighted: boolean }> = {
+  passkey: { tag: "CORE", highlighted: true },
+  receive: { tag: "CORE", highlighted: false },
+  yield: { tag: "NEXT", highlighted: false },
+  handle: { tag: "CORE", highlighted: true },
+  links: { tag: "CORE", highlighted: true },
+  activity: { tag: "CORE", highlighted: false },
+  withdraw: { tag: "NEXT", highlighted: false },
+  multinet: { tag: null, highlighted: false },
+  onramp: { tag: "NEXT", highlighted: false },
+}
+
+function buildTiers(copy: { tiers: { id: string; name: string; description: string; features: string[] }[]; sections: { tierCta: string } }): Tier[] {
+  return copy.tiers.map((tier, i) => {
+    const presentation = TIER_PRESENTATION[tier.id] ?? { tag: null, highlighted: false }
+    return {
+      id: tier.id,
+      name: tier.name,
+      price: String(i + 1).padStart(2, "0"),
+      period: "",
+      tag: presentation.tag,
+      description: tier.description,
+      features: tier.features.map((text) => ({ text, included: true })),
+      cta: copy.sections.tierCta,
+      highlighted: presentation.highlighted,
+    }
+  })
+}
 
 /* ── single pricing card ── */
 function PricingCard({ tier, index }: { tier: Tier; index: number }) {
@@ -228,6 +228,7 @@ function PricingCard({ tier, index }: { tier: Tier; index: number }) {
 /* ── main pricing section ── */
 export function PricingSection() {
   const { copy } = useLanguage()
+  const tiers = buildTiers(copy)
   return (
     <section id="pricing-tiers" className="w-full px-6 py-20 lg:px-12">
       {/* Section label */}
@@ -264,12 +265,11 @@ export function PricingSection() {
             {copy.sections.featuresDescription}
           </p>
         </div>
-        <StatusLine />
       </motion.div>
 
       {/* Pricing grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
-        {TIERS.map((tier, i) => (
+        {tiers.map((tier, i) => (
           <PricingCard key={tier.id} tier={tier} index={i} />
         ))}
       </div>
@@ -283,7 +283,7 @@ export function PricingSection() {
         className="flex items-center gap-3 mt-6"
       >
         <span className="text-[10px] tracking-[0.2em] uppercase text-muted-foreground font-mono">
-          {"* Una experiencia. Más capacidades. Cero complejidad."}
+          {copy.sections.featuresNote}
         </span>
         <div className="flex-1 border-t border-border" />
       </motion.div>

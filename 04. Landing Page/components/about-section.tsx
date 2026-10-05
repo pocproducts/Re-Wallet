@@ -76,12 +76,6 @@ function UptimeCounter() {
 }
 
 /* ── stat block ── */
-const STATS = [
-  { label: "01 / CUSTODIA", value: "TEE" },
-  { label: "02 / GAS", value: "0 FEES" },
-  { label: "03 / RENDIMIENTO", value: "AAVE V3" },
-  { label: "04 / ROUTING", value: "AUTO" },
-]
 
 function StatBlock({ label, value, index }: { label: string; value: string; index: number }) {
   return (
@@ -232,7 +226,7 @@ export function AboutSection() {
 
             {/* Stats grid */}
             <div className="grid grid-cols-2 gap-0 mt-6">
-              {STATS.map((stat, i) => (
+              {copy.stats.map((stat, i) => (
                 <StatBlock key={stat.label} {...stat} index={i} />
               ))}
             </div>
