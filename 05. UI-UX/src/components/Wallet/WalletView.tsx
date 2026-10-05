@@ -12,7 +12,6 @@ import {
   ArrowDown,
   ArrowUp,
   DollarSign,
-  Receipt,
   ChevronRight,
 } from 'lucide-react';
 import { UserProfileData } from '../../types';
@@ -43,16 +42,6 @@ interface WalletViewProps {
    */
   hasUnreadNotifications?: boolean;
   onOpenAavePools?: () => void;
-  /**
-   * Abrir la pantalla de **cobrar por link**.
-   *
-   * Es el cuarto camino de acción, junto a Depositar, Usar y Enviar, y está en
-   * esta pantalla a propósito: cobrar y enviar son las dos mitades del mismo
-   * dinero. Va con un prop y no con un import del modal porque el flujo de cobro
-   * por link es una pantalla de tercer nivel —se entra, se hace, se vuelve— y no
-   * el modal de dos pasos que hay en la barra inferior.
-   */
-  onOpenCreateCharge?: () => void;
 }
 
 export const WalletView: React.FC<WalletViewProps> = ({
@@ -68,7 +57,6 @@ export const WalletView: React.FC<WalletViewProps> = ({
   onOpenNotifications,
   hasUnreadNotifications,
   onOpenAavePools,
-  onOpenCreateCharge,
 }) => {
   const [showBalance, setShowBalance] = useState<boolean>(true);
 
@@ -254,8 +242,8 @@ export const WalletView: React.FC<WalletViewProps> = ({
               </button>
             </div>
 
-            {/* 4 Botones Circulares de Acción (Negro + Verde Fluo) */}
-            <div className="grid grid-cols-4 gap-3 pt-4">
+            {/* 3 Botones Circulares de Acción (Negro + Verde Fluo) */}
+            <div className="grid grid-cols-3 gap-3 pt-4">
               {/* Depositar */}
               <div className="flex flex-col items-center">
                 <button
@@ -297,28 +285,6 @@ export const WalletView: React.FC<WalletViewProps> = ({
                   Enviar
                 </span>
               </div>
-
-              {/*
-                Cobrar. Es la otra mitad de "Enviar": el mismo movimiento de
-                plata, del otro lado del link. Va acá y no escondido en un menú
-                porque el contrato dice que el dinero entra por un link
-                compartido o por QR, y las dos tienen que estar a un toque.
-              */}
-              {onOpenCreateCharge !== undefined && (
-                <div className="flex flex-col items-center">
-                  <button
-                    onClick={onOpenCreateCharge}
-                    type="button"
-                    aria-label="Cobrar por link"
-                    className="w-14 h-14 rounded-full bg-black flex items-center justify-center text-[#ccff00] shadow-md hover:bg-slate-900 active:scale-90 transition-transform cursor-pointer"
-                  >
-                    <Receipt className="w-5 h-5 stroke-[2.5]" />
-                  </button>
-                  <span className="text-xs font-semibold text-black mt-2">
-                    Cobrar
-                  </span>
-                </div>
-              )}
             </div>
           </div>
         </div>

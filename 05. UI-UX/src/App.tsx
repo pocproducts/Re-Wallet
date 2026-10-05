@@ -424,7 +424,6 @@ export default function App() {
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
                         hasUnreadNotifications={notifications.hasUnread}
                         onOpenAavePools={() => setIsAavePoolsOpen(true)}
-                        onOpenCreateCharge={() => setIsCreateChargeOpen(true)}
                       />
                     </div>
                   )}
