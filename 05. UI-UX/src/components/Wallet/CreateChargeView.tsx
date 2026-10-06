@@ -48,6 +48,7 @@ import {
   type PaymentRequest,
 } from '../../services/paymentRequests';
 import { paymentRequestShareUrl } from '../../config/paymentLinks';
+import { encodeQrText, qrSvgPath } from '../../services/qrEncode';
 
 interface CreateChargeViewProps {
   onClose: () => void;
@@ -77,6 +78,17 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
     () => (charge === null ? null : paymentRequestShareUrl(charge.id, origin)),
     [charge, origin],
   );
+
+  /*
+   * El QR de **ese** link, no de otra cosa.
+   *
+   * El link y el QR son el mismo cobro: el id es del backend, el link se arma
+   * acá y el código dibuja ese mismo texto. Que el QR esté en esta pantalla
+   * también es lo que hace que las dos presentaciones sean la misma —una
+   * persona puede mostrar el código o mandar el link y quien recibe llega igual
+   * a `PayChargeView` con el mismo cobro—.
+   */
+  const qrMatrix = useMemo(() => (shareUrl === null ? null : encodeQrText(shareUrl)), [shareUrl]);
 
   const onKeyPress = useCallback((key: string) => {
     setAmount((current) => {
@@ -255,6 +267,29 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
         {charge?.note ? (
           <span className="text-xs font-semibold text-black/60 leading-snug">{charge.note}</span>
         ) : null}
+
+        {/*
+          El QR del link, y el link.
+
+          Los dos están porque son la misma fila de `payment_requests` mostrada de
+          dos maneras. Si el link llegara a no entrar en un QR, no se dibuja un
+          código inventado en su lugar: no se dibuja, se dice abajo y el link
+          queda —que es lo mismo y siempre funciona.
+        */}
+        {qrMatrix !== null && (
+          <div className="w-full bg-white rounded-[28px] p-4 shadow-xl border-2 border-black/10">
+            <svg
+              viewBox={`0 0 ${qrMatrix.size + 2} ${qrMatrix.size + 2}`}
+              className="w-full max-w-[240px] mx-auto block"
+              role="img"
+              aria-label="Código QR del cobro"
+              shapeRendering="crispEdges"
+            >
+              <rect width="100%" height="100%" fill="#ffffff" />
+              <path d={qrSvgPath(qrMatrix)} fill="#000000" />
+            </svg>
+          </div>
+        )}
 
         {/*
           El link, y sólo el link.

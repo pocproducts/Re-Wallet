@@ -487,6 +487,12 @@ export default function App() {
           isOpen={isChargeModalOpen}
           onClose={() => setIsChargeModalOpen(false)}
           receiveAddress={receiveAddress}
+          /*
+           * El mismo origen que recibe `CreateChargeView`, y por el mismo
+           * motivo: el link del cobro se arma en el navegador, no con una
+           * constante escrita a mano acá.
+           */
+          origin={typeof window === 'undefined' ? '' : window.location.origin}
           onAddTransaction={handleAddTransaction}
           onNavigateToActivity={() => {
             setIsChargeModalOpen(false);
