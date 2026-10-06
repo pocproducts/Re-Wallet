@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { TransactionItem } from '../../types';
+import { QrScannerModal } from '../Wallet/QrScannerModal';
+import { PayChargeView } from '../Wallet/PayChargeView';
 
 /**
  * Una dirección de cobro y la red a la que pertenece.
@@ -42,11 +44,31 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
   receiveAddress,
   onAddTransaction,
 }) => {
-  const [step, setStep] = useState<
-    'select_action' | 'charge_input' | 'charge_qr' | 'pay_scan'
-  >('select_action');
+  const [step, setStep] = useState<'select_action' | 'charge_input' | 'charge_qr'>('select_action');
   const [amount, setAmount] = useState('0');
   const [copied, setCopied] = useState(false);
+
+  /*
+   * PAGAR: no es un paso de este menú, es otra pantalla encima.
+   *
+   * Durante un tiempo "Pagar" fue un cuarto paso de este mismo menú con un visor
+   * falso: un rectángulo negro con cuatro escuadras y la frase *"todavía no
+   * podemos leer el código"*. Era un callejón sin salida —no leía nada, no
+   * reciénía nada y no dejaba pagar nada— y la forma de arreglarlo sin inventar
+   * una pantalla nueva es dejar de fingir que el paso existe.
+   *
+   * Ahora "Pagar" abre el **escáner de verdad**, que es el mismo componente que ya
+   * usa el flujo de envío, en modo `pay`. Y cuando el QR resulta ser un link de
+   * cobro, ese id abre `PayChargeView` por encima de todo esto.
+   *
+   * Dos banderas y no un paso más, y la razón es de navegación: el escáner
+   * vuelve a `select_action`, y hacer eso con un `step` obligaría a memorizar un
+   * paso que nunca se dibuja —porque durante la lectura la pantalla de arriba es
+   * el escáner, no el menú—.
+   */
+  const [isPayScannerOpen, setIsPayScannerOpen] = useState<boolean>(false);
+  /** El cobro escaneado, que se paga en `PayChargeView`, o `null`. */
+  const [payForChargeId, setPayForChargeId] = useState<string | null>(null);
 
   useEffect(() => {
     // Al abrir el modal, siempre reiniciar en la pantalla inicial de selección
@@ -54,22 +76,26 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
       setStep('select_action');
       setAmount('0');
       setCopied(false);
+      setIsPayScannerOpen(false);
+      setPayForChargeId(null);
     }
   }, [isOpen]);
 
   /*
    * El pago con QR ya no simula un pago.
    *
-   * Antes, 1,8 segundos después de entrar a `pay_scan` esta pantalla restaba
+   * Antes, 1,8 segundos después de abrir "Pagar" esta pantalla restaba
    * `0,00005 BTC` de un saldo inventado, disparaba confeti, escribía un
-   * movimiento con ese importe en Actividad y mostraba “¡Pago realizado!”
+   * movimiento con ese importe en Actividad y mostraba "¡Pago realizado!"
    * con la cifra. Nadie había pagado nada: el número lo escribía el modal, y
    * el saldo que tocaba ni siquiera venía de la cadena.
    *
-   * Hoy no hay lector de facturas conectado, así que no hay nada que confirmar:
-   * por eso la pantalla **dice eso** en lugar de fabricar un comprobante. Cuando
-   * el lector exista, el importe del cobro va a venir de la factura escaneada —
-   * nunca de acá.
+   * Después hubo un paso "Pagar con QR" con un visor dibujado a mano y la
+   * frase *"todavía no podemos leer el código"*. Sigue sin ser un pago, pero ya
+   * no es una mentira: es el escáner de verdad, y lo que hace —leer un QR, abrir
+   * el cobro que ese QR sea, y no abrir nada si no lo es— es exactamente lo que
+   * dice. El importe del cobro, cuando lo hay, lo lee `PayChargeView` del
+   * backend: nunca de acá.
    */
 
   if (!isOpen) return null;
@@ -177,6 +203,8 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
   const handleClose = () => {
     setStep('select_action');
     setAmount('0');
+    setIsPayScannerOpen(false);
+    setPayForChargeId(null);
     onClose();
   };
 
@@ -207,9 +235,14 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
                 </button>
 
                 {/* Opción 2: Pagar */}
+                {/*
+                  Abre el escáner de verdad. Antes esta opción iba a un visor
+                  dibujado a mano que no leía nada — y una opción del menú que no
+                  hace nada es peor que no tenerla.
+                */}
                 <button
                   type="button"
-                  onClick={() => setStep('pay_scan')}
+                  onClick={() => setIsPayScannerOpen(true)}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
                   Pagar
@@ -425,69 +458,42 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
         </div>
       )}
 
-      {/* =====================================================================
-          4. PAGAR CON QR: VISOR DE ESCANEO (sin pago simulado)
-         ===================================================================== */}
-      {step === 'pay_scan' && (
-        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between overflow-hidden shadow-2xl">
-          <div className="flex-1 flex flex-col justify-between p-5 h-full animate-in fade-in slide-in-from-right-3 duration-200">
-            {/* Header */}
-            <div className="flex items-center justify-between shrink-0 pt-2">
-              <button
-                onClick={() => setStep('select_action')}
-                type="button"
-                className="w-11 h-11 rounded-full bg-black/10 hover:bg-black/20 text-black flex items-center justify-center active:scale-90 transition-transform cursor-pointer"
-                aria-label="Volver"
-              >
-                <ArrowLeft className="w-5 h-5 stroke-[2.5]" />
-              </button>
-              <h2 className="text-base font-black font-display text-black uppercase tracking-wider">
-                Pagar con QR
-              </h2>
-              <button
-                onClick={handleClose}
-                type="button"
-                className="w-11 h-11 rounded-full bg-black/10 hover:bg-black/20 text-black flex items-center justify-center active:scale-90 transition-transform cursor-pointer"
-                aria-label="Cerrar"
-              >
-                <X className="w-5 h-5 stroke-[2.5]" />
-              </button>
-            </div>
+      {/*
+        =====================================================================
+        PAGAR: EL ESCÁNER REAL, Y EL COBRO QUE SALGA DE ÉL
+        =====================================================================
+        No es un cuarto paso: son dos pantallas que se abren **encima** de este
+        menú, y por eso son banderas y no `step`.
 
-            {/* Visor de Escaneo */}
-            <div className="my-auto max-w-sm mx-auto w-full space-y-6 text-center">
-              <div className="relative w-64 h-64 mx-auto bg-black rounded-[36px] overflow-hidden p-6 flex flex-col items-center justify-center shadow-2xl border-4 border-black">
-                <div className="absolute top-4 left-4 w-7 h-7 border-t-4 border-l-4 border-[#ccff00] rounded-tl-xl" />
-                <div className="absolute top-4 right-4 w-7 h-7 border-t-4 border-r-4 border-[#ccff00] rounded-tr-xl" />
-                <div className="absolute bottom-4 left-4 w-7 h-7 border-b-4 border-l-4 border-[#ccff00] rounded-bl-xl" />
-                <div className="absolute bottom-4 right-4 w-7 h-7 border-b-4 border-r-4 border-[#ccff00] rounded-br-xl" />
+        - `isPayScannerOpen` abre `QrScannerModal` en modo `pay`: el mismo
+          componente —y la misma cámara, la misma linterna, los mismos rechazos— que
+          usa el flujo de envío. Volver cierra el escáner y deja el menú tal como
+          estaba.
+        - `payForChargeId` abre `PayChargeView`, que es la pantalla que paga el
+          cobro. Se monta acá y no en el `App` a propósito: el id **viene de un
+          escaneo**, no de la barra de direcciones, y no debería recorrer la app
+          entera para llegar a una pantalla que sólo existe durante un segundo.
 
-                <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center text-[#F7931A] text-2xl font-black mb-2">
-                  ₿
-                </div>
-                {/*
-                  El visor sigue siendo el mismo —esa es la interacción que la
-                  persona conoce—, pero ya no se resuelve solo. Antes un
-                  temporizador de 1,8 segundos daba el pago por hecho, restaba
-                  una cantidad de un saldo inventado y mostraba un comprobante
-                  con esa cifra. Ahora dice la verdad: todavía no hay lector de
-                  facturas, así que no se puede confirmar ningún pago desde
-                  acá.
-                */}
-                <span className="text-xs font-bold text-white/80">
-                  Todavía no podemos leer el código
-                </span>
-                <span className="text-[11px] font-medium text-white/50 mt-1 px-4 text-center leading-snug">
-                  Tu saldo no se movió.
-                </span>
-              </div>
-            </div>
-
-            <div className="h-4" />
-          </div>
-        </div>
+        `z-[60]` y `z-[70]` son los del escáner y los de la pantalla de pago, por
+        encima de este menú, que es `z-50`.
+      */}
+      {isPayScannerOpen && (
+        <QrScannerModal
+          isOpen
+          mode="pay"
+          onClose={() => setIsPayScannerOpen(false)}
+          onPaymentLink={(chargeId) => {
+            setIsPayScannerOpen(false);
+            setPayForChargeId(chargeId);
+          }}
+        />
       )}
 
+      {payForChargeId !== null && (
+        <div className="absolute inset-0 z-[70] w-full max-w-md mx-auto bg-[#f3f4f6]">
+          <PayChargeView id={payForChargeId} onClose={() => setPayForChargeId(null)} />
+        </div>
+      )}
     </div>
   );
 };

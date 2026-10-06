@@ -109,4 +109,48 @@ export const paymentRequestIdFromPath = (pathname: string): string | null => {
  * comparte. Acá sólo sirve para dejar escrito en un lugar por qué el frontend y el
  * backend comparten origen, que es lo que hace posible la cookie de sesión.
  */
+/**
+ * El id de cobro de **un valor escaneado con la cámara**, o `null`.
+ *
+ * Es `paymentRequestIdFromPath` con una diferencia: lo que sale de un QR es
+ * cualquiera de las dos formas en que ese link puede existir en el mundo real —
+ * el link completo que la app comparte (`https://…/cobrar/<id>`) o la ruta suelta
+ * (`/cobrar/<id>`) — y ninguna de las dos es un `pathname` porque sí. Por eso
+ * primero se saca el `pathname` y después se aplica la misma función pura.
+ *
+ * Sigue siendo ** pura**: no lee `location`, no usa `window`, y un `URL` que no
+ * parsea es `null`, no una excepción. `config/qrScan.ts` la llama y nada más.
+ *
+ * ── Por qué no se acepta `dominio/cobrar/<id>` sin esquema ───────────────────
+ *
+ * Porque sin `://` no se sabe qué es el dominio y qué es la ruta: `rewallet.me`
+ * puede ser un host o el primer segmento de una ruta. Aceptarlo sería adivinar
+ * qué servidor es, y un link de cobro resuelto por el host equivocado es un
+ * cobro que se pierde. Lo que no se reconoce devuelve `null`, y quien llama le
+ * dice a la persona que eso no es un link de cobro.
+ */
+export const paymentRequestIdFromScannedValue = (raw: string): string | null => {
+  if (typeof raw !== 'string') return null;
+
+  const value = raw.trim();
+  if (value.length === 0) return null;
+
+  // El link completo, que es lo que la app copia al portapapeles y lo que los
+  // chats y los navegadores muestran como QR. La ruta y cualquier `?utm=…`
+  // salen del `pathname`, así que no pueden colarse dentro del id.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    try {
+      const { pathname } = new URL(value);
+      return paymentRequestIdFromPath(pathname);
+    } catch {
+      return null;
+    }
+  }
+
+  // La ruta suelta: `/cobrar/<id>`, con o sin barra final.
+  if (value.startsWith('/')) return paymentRequestIdFromPath(value);
+
+  return null;
+};
+
 export const isSingleOrigin = (): boolean => API_BASE_URL === '';

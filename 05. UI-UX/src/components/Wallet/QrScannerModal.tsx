@@ -38,7 +38,12 @@ import React, { useCallback, useState } from 'react';
 import { QrCode, X, Zap, ZapOff, CameraOff, RotateCcw } from 'lucide-react';
 
 import { useQrScanner } from '../../hooks/useQrScanner';
-import { CAMERA_STATUS_TEXT, SCAN_FRAME_NOTE, judgeScannedValue } from '../../config/qrScan';
+import {
+  CAMERA_STATUS_TEXT,
+  SCAN_FRAME_NOTE,
+  judgeScannedValue,
+  type ScanMode,
+} from '../../config/qrScan';
 import type { SendChainView } from '../../config/send';
 
 interface QrScannerModalProps {
@@ -53,6 +58,14 @@ interface QrScannerModalProps {
    */
   onScanSuccess?: (address: string) => void;
   /**
+   * Salió un link de cobro de ReWALLET, y este escáner estaba pagando.
+   *
+   * Es un camino **distinto** y no una variante de `onScanSuccess`: acá no hay una
+   * dirección, hay el id de un cobro, y lo que se abre con ese id es otra
+   * pantalla. Por eso son dos props y no una que devuelve las dos cosas.
+   */
+  onPaymentLink?: (chargeId: string) => void;
+  /**
    * La red del envío, o `null` si el escáner se abrió sin una.
    *
    * Es lo que permite decir *"esa dirección es de otra red"* en vez de dejar que
@@ -60,13 +73,24 @@ interface QrScannerModalProps {
    * cabecera— no se puede afirmar la red y sólo se valida la forma.
    */
   chain?: SendChainView | null;
+  /**
+   * Para qué flujo está leyendo este escáner.
+   *
+   * `send` es el default y es el que conservaba el comportamiento anterior: un
+   * link de cobro ahí es un error, porque el destino de un envío es una dirección.
+   * `pay` habilita el link de ReWALLET y nada más cambia: la cámara, la validación
+   * de red y los rechazos son los mismos.
+   */
+  mode?: ScanMode;
 }
 
 export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   isOpen,
   onClose,
   onScanSuccess,
+  onPaymentLink,
   chain = null,
+  mode = 'send',
 }) => {
   /** El rechazo que se está mostrando, o `null` si el QR no dio uno. */
   const [rejection, setRejection] = useState<string | null>(null);
@@ -75,7 +99,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
   const onDecoded = useCallback(
     (text: string) => {
-      const verdict = judgeScannedValue(text, chain);
+      const verdict = judgeScannedValue(text, chain, mode);
 
       if (!verdict.ok) {
         // No se muestra el valor: se muestra qué se detectó y qué hacer. Ver la
@@ -86,9 +110,17 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       }
 
       setRejection(null);
+
+      // Dos salidas distintas, y ninguna escribe en la pantalla de atrás si lo
+      // que se escaneó no era eso.
+      if (verdict.kind === 'payment_link') {
+        onPaymentLink?.(verdict.chargeId);
+        return;
+      }
+
       onScanSuccess?.(verdict.address);
     },
-    [chain, onScanSuccess],
+    [chain, mode, onPaymentLink, onScanSuccess],
   );
 
   const scanner = useQrScanner(isOpen, onDecoded);
@@ -97,8 +129,25 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   if (!isOpen) return null;
 
   const cameraMissing = scanner.status === 'denied' || scanner.status === 'unavailable' || scanner.status === 'insecure';
+  /*
+   * Qué se le pide que apunte, y qué vuelve a la pantalla de atrás cuando alguien
+   * se arrepiente.
+   *
+   * En pagar no hay un envío al que volver. Hay dos lugares desde donde se abre
+   * este escáner: la cabecera de la billetera y el menú "¿Qué querés hacer?" del
+   * modal de cobrar. En los dos casos lo que hay debajo es **la billetera o ese
+   * menú**, nunca una pantalla de envío —decir "volver al envío" ahí mandaría a
+   * una pantalla que no se abrió— así que el botón de un rechazo se llama
+   * "Volver" y no promete un destino que este componente no conoce. El `onClose`
+   * lo decide quien abrió el escáner, y es el que sabe a qué pantalla vuelve.
+   */
   const expectedNote =
-    chain === null ? 'Apuntá al QR de la otra billetera.' : `Apuntá al QR de cobro en ${chain.label}.`;
+    mode === 'pay'
+      ? 'Apuntá al QR de cobro de ReWALLET.'
+      : chain === null
+        ? 'Apuntá al QR de la otra billetera.'
+        : `Apuntá al QR de cobro en ${chain.label}.`;
+  const rejectionBackLabel = 'Volver';
 
   return (
     <div className="absolute inset-0 z-[60] bg-[#0d0d0f] text-white flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans w-full max-w-md mx-auto">
@@ -115,7 +164,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
         <h1 className="text-sm font-extrabold font-display tracking-tight text-white flex items-center gap-1.5">
           <QrCode className="w-4 h-4 text-[#ccff00]" />
-          <span>Escanear código QR</span>
+          <span>{mode === 'pay' ? 'Escanear un cobro' : 'Escanear código QR'}</span>
         </h1>
 
         {scanner.torchSupported ? (
@@ -251,7 +300,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               type="button"
               className="w-full py-3.5 bg-[#ccff00] hover:bg-[#b8e600] text-black font-extrabold text-xs rounded-2xl active:scale-95 transition-all shadow-sm cursor-pointer"
             >
-              Volver al envío
+              {rejectionBackLabel}
             </button>
           </div>
         )}

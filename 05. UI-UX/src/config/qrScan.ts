@@ -36,8 +36,36 @@
  * Completar el destino con un link sería mandar la plata a un sitio que no es
  * una dirección. Se rechaza con la frase que manda a la persona al camino
  * correcto.
+ *
+ * ── Y cómo se concilia eso con "Pagar" ───────────────────────────────────────
+ *
+ * Ese rechazo es del **envío**, y sigue siendo correcto: pegar un link de cobro
+ * en un destino de envío es mandar plata a un lugar que no es una dirección. Por
+ * eso el link se acepta sólo cuando el escáner está sirviendo a **pagar un
+ * cobro**, que es un flujo distinto con una pantalla distinta: `mode`.
+ *
+ * `mode` no cambia qué es una dirección ni cómo se valida —la misma
+ * `isValidRecipientForChain`— ni agrega una excepción: en `send` el link se sigue
+ * rechazando, en `pay` el link es exactamente lo que se buscaba. Un modo nuevo no
+ * habilita "aceptar links en todas partes", que es el error que este archivo evita
+ * a propósito.
  */
 import { isEvmAddress, isSolanaAddress, type SendChainView } from './send';
+import { paymentRequestIdFromScannedValue } from './paymentLinks';
+
+/**
+ * Para qué flujo está leyendo el escáner.
+ *
+ * La diferencia es de **destino**, no de validación: los dos leen el mismo QR con
+ * la misma cámara y la misma regla de red, y lo que cambia es qué se hace con lo
+ * que sale.
+ *
+ * - `send`: completa el destino de un envío. Un link no sirve y se explica por qué.
+ * - `pay`: abre el cobro de otro. Ahí el link de ReWALLET es lo que se busca, y
+ *   una dirección sigue siendo aceptable porque pagar a una dirección escaneada
+ *   es una forma de pagar como la otra.
+ */
+export type ScanMode = 'send' | 'pay';
 
 /**
  * Por qué no se usó un valor escaneado.
@@ -51,6 +79,7 @@ export type ScanRejection = 'not_address' | 'wrong_chain' | 'too_long' | 'empty'
 /** El QR servía: es el destino, para la red que está en juego. */
 export interface ScanAccepted {
   readonly ok: true;
+  readonly kind: 'address';
   /**
    * La dirección, ya recortada.
    *
@@ -62,6 +91,21 @@ export interface ScanAccepted {
   readonly chain: SendChainView | null;
 }
 
+/**
+ * El QR era un link de cobro de ReWALLET, y el escáner estaba pagando.
+ *
+ * No lleva `address` a propósito: acá no hay una dirección que devolver. Lo que
+ * sale es el id del cobro, y la pantalla que lo recibe —`PayChargeView`— nunca
+ * muestra ni pide un destino. Por eso es un caso aparte del discriminador y no un
+ * `chain` más: son dos respuestas distintas a "qué hago con esto".
+ */
+export interface ScanPaymentLinkAccepted {
+  readonly ok: true;
+  readonly kind: 'payment_link';
+  /** El id del cobro, ya validado con el mismo patrón del link. */
+  readonly chargeId: string;
+}
+
 /** El QR no servía, y hay una frase para decirlo. */
 export interface ScanRejected {
   readonly ok: false;
@@ -71,7 +115,7 @@ export interface ScanRejected {
 }
 
 /** El veredicto del escaneo: se usa o se explica. */
-export type ScanVerdict = ScanAccepted | ScanRejected;
+export type ScanVerdict = ScanAccepted | ScanPaymentLinkAccepted | ScanRejected;
 
 /**
  * Cuánto texto se acepta antes de decir que el código no es una dirección.
@@ -121,9 +165,20 @@ const FAMILY_LABEL: Readonly<Record<ChainFamily, string>> = {
  * El orden importa: primero se distingue lo que la persona probablemente quiso
  * escanear —un link, un tag— de lo que no tiene forma de dirección, porque la
  * acción que sigue es distinta. En ningún caso se devuelve el texto escaneado.
+ *
+ * `mode` cambia sólo la frase del link, y sólo cuando el link **no** era un link
+ * de cobro: en `pay` ya se buscó un id antes de llegar acá, así que un link que no
+ * lo tiene no es "abrilo en el navegador" sino "no es un cobro de ReWALLET".
  */
-const notAddressMessage = (value: string): string => {
+const notAddressMessage = (value: string, mode: ScanMode): string => {
   if (URL_SHAPED.test(value)) {
+    if (mode === 'pay') {
+      return (
+        'Ese código es un link, pero no es un cobro de ReWALLET. Pedile a quien ' +
+        'te cobra que te mande el link del cobro y apuntá ese.'
+      );
+    }
+
     return (
       'Ese código es un link, no una dirección. Si es un cobro de ReWALLET, ' +
       'abrilo desde el chat o desde el navegador y la app lo lleva a la pantalla del cobro.'
@@ -153,7 +208,11 @@ const notAddressMessage = (value: string): string => {
  * es el que decide. Rechazar sin red sería inventar una restricción que nadie
  * pidió.
  */
-export const judgeScannedValue = (raw: string, chain: SendChainView | null): ScanVerdict => {
+export const judgeScannedValue = (
+  raw: string,
+  chain: SendChainView | null,
+  mode: ScanMode = 'send',
+): ScanVerdict => {
   const value = raw.trim();
 
   if (value.length === 0) {
@@ -168,16 +227,33 @@ export const judgeScannedValue = (raw: string, chain: SendChainView | null): Sca
     };
   }
 
+  /*
+   * Pagar un cobro: primero el link, y primero **siempre**.
+   *
+   * Un link nunca es una dirección, así que probarlo antes de la familia de red
+   * no le quita ningún caso válido a nadie: si esto devuelve `null` sigue el
+   * camino de siempre. Y si devuelve un id, ese id ya vino validado con el mismo
+   * patrón que la barra de direcciones —`paymentRequestIdFromPath`—, así que acá
+   * no hay una segunda versión de la regla.
+   *
+   * En `send` este bloque no existe, y por eso pegar un link de cobro en un
+   * destino de envío sigue siendo un error.
+   */
+  if (mode === 'pay') {
+    const chargeId = paymentRequestIdFromScannedValue(value);
+    if (chargeId !== null) return { ok: true, kind: 'payment_link', chargeId };
+  }
+
   const family = familyOf(value);
 
   if (family === null) {
-    return { ok: false, reason: 'not_address', message: notAddressMessage(value) };
+    return { ok: false, reason: 'not_address', message: notAddressMessage(value, mode) };
   }
 
   // Sin red elegida no se puede afirmar que sea "de otra red": se acepta la
   // dirección y es el flujo del envío el que después decide.
   if (chain === null) {
-    return { ok: true, address: value, chain: null };
+    return { ok: true, kind: 'address', address: value, chain: null };
   }
 
   /*
@@ -194,17 +270,19 @@ export const judgeScannedValue = (raw: string, chain: SendChainView | null): Sca
     };
   }
 
-  return { ok: true, address: value, chain };
+  return { ok: true, kind: 'address', address: value, chain };
 };
 
 /**
  * La dirección, o `null` si lo escaneado no sirve.
  *
  * Es un convenience para el consumidor —el que llena el campo— que no quiere
- * mirar el discriminador. `null` es lo único que significa "no llenes nada".
+ * mirar el discriminador. `null` es lo único que significa "no llenes nada", y un
+ * link de cobro también es `null`: para el destino de un envío no hay nada que
+ * llenar.
  */
 export const scannedAddressOrNull = (verdict: ScanVerdict): string | null =>
-  verdict.ok ? verdict.address : null;
+  verdict.ok && verdict.kind === 'address' ? verdict.address : null;
 
 /**
  * La frase de una cámara que no se pudo abrir.
