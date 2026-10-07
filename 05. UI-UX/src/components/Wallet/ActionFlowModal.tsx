@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   X,
   ArrowLeft,
@@ -22,6 +22,10 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { AssetTradeCard } from '../common';
+import { BalancePieceRow } from '../Investments/BalancePieceRow';
+import { byUsdValueDesc } from '../../services/walletBalance';
+import type { WalletBalancePart } from '../../services/walletBalance';
+import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import { QrScannerModal } from './QrScannerModal';
 import { useAssetTrade } from '../../hooks/useAssetTrade';
 import type { DepositInfoView } from '../../hooks/useDepositInfo';
@@ -67,6 +71,16 @@ interface ActionFlowModalProps {
    * que no pudo leer en lugar de pintar un cero.
    */
   holdings: readonly PortfolioHolding[];
+
+  /**
+   * El balance que ya leyó `GET /api/wallet-balance`, para que las filas de esta
+   * pantalla se vean **exactamente** como las de *Bitcoin & Crypto*.
+   *
+   * No se pide un dato nuevo: es la misma lectura que ya está en pantalla en
+   * otro lado, y sin ella esta pantalla no podría pintar el valor en dólares
+   * sin inventarlo.
+   */
+  balance?: WalletBalanceScreenView;
   /**
    * Avisa que los saldos hay que volver a leerlos.
    *
@@ -84,8 +98,31 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   userTag,
   depositInfo,
   holdings,
+  balance,
   onBalancesChanged,
 }) => {
+  /*
+   * The dollar value of each crypto asset, indexed by symbol.
+   *
+   * The deposit list is one row per **symbol**, while the backend's pieces are
+   * one per **(chain, symbol)**. Today every crypto asset here is native to a
+   * single chain, so the match is one to one and the row can paint a number the
+   * backend composed.
+   *
+   * If a symbol ever had pieces on two chains, this deliberately paints
+   * **nothing** rather than adding them up: that sum is the backend's job, and
+   * a browser that adds two pieces by hand is how two screens end up showing
+   * two different totals.
+   */
+  const partBySymbol = useMemo(() => {
+    const index = new Map<string, WalletBalancePart[]>();
+    for (const part of balance?.balance?.cryptoValue.parts ?? []) {
+      const symbol = part.key.split('.').at(-1);
+      if (symbol === undefined || symbol.length === 0) continue;
+      index.set(symbol, [...(index.get(symbol) ?? []), part]);
+    }
+    return index;
+  }, [balance]);
   // Estado del flujo
   const [currentStep, setCurrentStep] = useState<string>('initial'); // 'initial' = pantalla lima
   const [selectedCoin, setSelectedCoin] = useState<string>('USDC');
@@ -382,6 +419,27 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   /** La lista de un camino: los dólares o las cripto, del mismo catálogo. */
   const sendableAssetsOfKind = (kind: 'crypto' | 'dollar'): readonly typeof depositInfo.assets[number][] =>
     sendableAssets.filter((asset) => asset.kind === kind);
+
+  /**
+   * La pieza del backend de este símbolo, **si hay exactamente una**.
+   *
+   * El catálogo es una fila por símbolo y las piezas son una por (cadena,
+   * símbolo). Hoy cada cripto es nativo de una sola cadena, así que el match es
+   * 1 a 1. Con más de una no se pinta valor: sumarlas en el navegador es la
+   * suma del backend, y dos copias de esa suma divergen.
+   */
+  const partForSymbol = (symbol: string): WalletBalancePart | null => {
+    const matches = partBySymbol.get(symbol) ?? [];
+    return matches.length === 1 ? matches[0] : null;
+  };
+
+  /** Un activo del catálogo con su pieza y su posición por valor en dólares. */
+  const sortedByUsd = (
+    items: readonly typeof depositInfo.assets[number][],
+  ): readonly { asset: typeof depositInfo.assets[number]; part: WalletBalancePart | null }[] =>
+    [...items]
+      .map((asset) => ({ asset, part: partForSymbol(asset.symbol) }))
+      .sort((a, b) => byUsdValueDesc(a.part, b.part));
 
   /**
    * Arranca el envío: convierte el monto a la unidad mínima y se lo pasa al hook.
@@ -1260,14 +1318,14 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               Elegir un activo que vive en dos redes lleva a la pantalla de redes:
               la dirección depende de la red elegida.
             */}
-            {depositInfo.cryptoAssets
-              .filter(
+            {sortedByUsd(
+              depositInfo.cryptoAssets.filter(
                 (asset) =>
                   cryptoSearch.trim().length === 0 ||
                   asset.symbol.toLowerCase().includes(cryptoSearch.trim().toLowerCase()) ||
                   asset.name.toLowerCase().includes(cryptoSearch.trim().toLowerCase()),
-              )
-              .map((asset) => {
+              ),
+            ).map(({ asset, part }) => {
                 const identity = identityOf(asset.symbol);
                 const balance = assetBalanceLabel(asset.symbol);
 
@@ -1284,26 +1342,47 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                         {identity?.glyph ?? asset.symbol.slice(0, 1)}
                       </div>
                       <div>
-                        <span className="text-sm font-extrabold text-black block leading-none">{asset.symbol}</span>
-                        <span className="text-xs text-slate-400 font-medium block mt-0.5">{asset.name}</span>
-                        <span className="text-[11px] text-slate-400 font-medium block mt-0.5">
-                          {/*
-                            Las redes van en la fila del activo, no en una lista aparte: la
-                            pregunta "¿en qué red?" tiene que aparecer antes de la
-                            dirección, no después.
-                          */}
-                          {asset.receivableNetworkCount === 0
-                            ? 'Todavía no tenés dónde recibirlo'
-                            : joinNetworkLabels(asset.networks.map((network) => network.label))}
-                        </span>
+                        {/*
+                          Título arriba y símbolo abajo, como en las filas de
+                          *Bitcoin & Crypto*. Antes iba al revés —símbolo de
+                          título y nombre de subtítulo— y por eso esta pantalla
+                          se veía distinta de todas las demás.
+                        */}
+                        <span className="text-sm font-extrabold text-black block leading-none">{asset.name}</span>
+                        <span className="text-xs font-mono font-bold text-slate-400 block mt-1">{asset.symbol}</span>
+                        {/*
+                          La lista de redes ya no se pinta: la red se elige en el
+                          paso siguiente y la fila quedó igual que en *Bitcoin &
+                          Crypto*.
+
+                          Lo que **no** puede desaparecer es el aviso de que un
+                          activo no se puede recibir en ninguna parte. `assetsOfKind`
+                          no filtra por redes con dirección, así que un activo sin
+                          destino aparece igual en la lista y tocarlo lleva a un
+                          callejón sin salida. Un activo con redes no dice nada, como
+                          en el resto de las filas.
+                        */}
+                        {asset.receivableNetworkCount === 0 && (
+                          <span className="text-[11px] font-medium text-amber-600 block mt-0.5">
+                            Todavía no tenés dónde recibirlo
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <div className="text-right">
-                      {/* `null` es "no lo sé": no se pinta un cero. */}
-                      <span className="text-sm font-extrabold text-black block leading-none">
-                        {balance === null ? '—' : balance}
-                      </span>
-                      <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5] ml-auto mt-1" />
+                    <div className="text-right shrink-0">
+                      {part !== null ? (
+                        /* El mismo renglón que las otras pantallas: valor arriba,
+                           cantidad abajo. */
+                        <BalancePieceRow part={part} hideLabel />
+                      ) : (
+                        <>
+                          {/* `null` es "no lo sé": no se pinta un cero. */}
+                          <span className="text-sm font-extrabold text-black block leading-none">
+                            {balance === null ? '—' : balance}
+                          </span>
+                          <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5] ml-auto mt-1" />
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -2116,7 +2195,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
 
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
               {/* También del catálogo del servidor, no de una lista escrita a mano. */}
-              {sendableAssetsOfKind('crypto').map((c) => {
+              {sortedByUsd(sendableAssetsOfKind('crypto')).map(({ asset: c, part }) => {
                 const known = assetByTicker(c.symbol);
                 return (
                   <div
@@ -2136,11 +2215,21 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                         {known?.glyph ?? c.symbol.slice(0, 1)}
                       </div>
                       <div>
-                        <span className="text-sm font-extrabold text-black block leading-none">{c.symbol}</span>
-                        <span className="text-xs text-slate-400 font-medium block mt-0.5">{c.name}</span>
+                        {/* Nombre arriba y símbolo abajo, como en *Bitcoin & Crypto*. */}
+                        <span className="text-sm font-extrabold text-black block leading-none">{c.name}</span>
+                        <span className="text-xs font-mono font-bold text-slate-400 block mt-1">{c.symbol}</span>
                       </div>
                     </div>
-                    <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
+                    <div className="text-right shrink-0">
+                      {/* Valor en dólares arriba y cantidad abajo, como en las
+                          otras pantallas. Antes esta fila no mostraba ninguna
+                          cifra: sólo el chevron. */}
+                      {part !== null ? (
+                        <BalancePieceRow part={part} hideLabel />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5] ml-auto" />
+                      )}
+                    </div>
                   </div>
                 );
               })}

@@ -4,7 +4,11 @@ import {
   Search,
 } from 'lucide-react';
 import { CryptoAssetDetailModal } from './CryptoAssetDetailModal';
+import { BalancePieceRow } from './BalancePieceRow';
 import { unreadableChainMessage } from '../../services/portfolio';
+import { BALANCE_UNREADABLE_NOTE, byUsdValueDesc } from '../../services/walletBalance';
+import type { WalletBalancePart } from '../../services/walletBalance';
+import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import type { PortfolioView } from '../../hooks/usePortfolio';
 import type { CryptoAssetData } from './CryptoAssetDetailModal';
 
@@ -14,12 +18,20 @@ import type { CryptoAssetData } from './CryptoAssetDetailModal';
  * Antes esta interfaz declaraba `totalUsd` y `change24h` con números escritos a
  * mano —`U$4,15`, `+2,45%`— y no venían de ningún lado. Ahora el tipo dice lo que
  * la pantalla **realmente** tiene: la cantidad, su unidad, sus redes y su
- * dirección. No hay campo de valor en dólares porque `/api/portfolio` no trae
- * precios, y un campo vacío se llenaba con un número inventado.
+ * dirección.
+ *
+ * El valor en dólares que se muestra en cada fila **no** viene de acá: sale de
+ * la cubeta `cryptoValue` del backend, como una pieza más. Esta lista no valora
+ * nada y no tiene un solo precio.
  */
 type CryptoAsset = CryptoAssetData & {
   /** Redes donde vive ese saldo, con la dirección para depositar. */
   readonly networks: readonly { readonly label: string; readonly address: string | null }[];
+  /**
+   * La pieza del backend que explica esta fila: el valor ya valuado y el estado
+   * de su lectura. `null` sólo si el backend no la envió.
+   */
+  readonly part: WalletBalancePart | null;
 };
 
 interface CryptoAssetsListViewProps {
@@ -27,21 +39,53 @@ interface CryptoAssetsListViewProps {
   userTag?: string;
   /** Saldos de la cadena, leídos una vez por sesión en el `App`. */
   portfolio?: PortfolioView;
+  /**
+   * El balance, leído una vez por sesión en el `App`.
+   *
+   * De acá sale todo número de esta pantalla: el total de arriba y el valor de
+   * cada fila. El portfolio sólo aporta identidad y direcciones.
+   */
+  balance?: WalletBalanceScreenView;
 }
 
 /** El texto de la card superior cuando **no** hay un total que mostrar. */
 const SIN_VALOR = '—';
 
-/** El total cuando sí se sabe que no hay nada: cero por cualquier precio es cero. */
-const VALOR_CERO = 'U$0,00';
-
 export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
   onBack,
   userTag,
   portfolio,
+  balance,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedAsset, setSelectedAsset] = useState<CryptoAsset | null>(null);
+
+  /*
+   * LA CUBETA DE CRIPTO, tal como la compuso el backend.
+   *
+   * Antes esta pantalla pintaba un guion y la frase "sin precio de mercado", que
+   * ya era falso: el backend precio todo lo que no es un dólar digital. Y las
+   * filas venían del portfolio, que trae cantidades pero no valores.
+   *
+   * Ahora el total y el valor de cada fila son los de `cryptoValue`; las filas
+   * conservan la identidad y las direcciones del portfolio, que es lo único que
+   * el portfolio sí sabe.
+   *
+   * ── Por qué acá no hay filtro de USDC ────────────────────────────────────
+   *
+   * Porque no hace falta: `cryptoValue` **no contiene ninguna pieza pegada al
+   * dólar**. La tabla del peg es del backend, y el USDC de cada cadena vive bajo
+   * `digitalDollarsValue`, que es la pantalla de al lado. Filtrar en el navegador
+   * sería una segunda copia de esa tabla, capaz de contradecir al servidor —y la
+   * lista tampoco podría explicar por qué una fila no está.
+   */
+  const cryptoValue = balance?.balance?.cryptoValue ?? null;
+
+  const partsByKey = useMemo(() => {
+    const index = new Map<string, WalletBalancePart>();
+    for (const part of cryptoValue?.parts ?? []) index.set(part.key, part);
+    return index;
+  }, [cryptoValue?.parts]);
 
   /*
    * Los activos son los que la cadena reportó, y sólo esos.
@@ -73,8 +117,17 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
           label: network.label,
           address: network.address,
         })),
+        /* La pieza del backend para esta fila, si la envió.
+
+           La clave se arma con `chain` y `symbol` del holding, NO con
+           `holding.id`. `holding.id` es `${chain}:${symbol}` — dos puntos —
+           mientras que la clave del backend es `crypto.${chain}.${symbol}` —
+           punto. Con `holding.id` la búsqueda nunca encontraba nada, `part`
+           daba `null` en todas las filas y cada activo caía al fallback que
+           pinta sólo la cantidad, sin el valor en dólares. Ese fue el bug. */
+        part: partsByKey.get(`crypto.${holding.chain}.${holding.symbol}`) ?? null,
       })),
-    [portfolio?.cryptoHoldings],
+    [portfolio?.cryptoHoldings, partsByKey],
   );
 
   const filteredAssets = useMemo(
@@ -87,23 +140,31 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
     [assets, search],
   );
 
+  /*
+   * De mayor valor en dólares a menor.
+   *
+   * El orden vive en `byUsdValueDesc` (`services/walletBalance.ts`) porque hace
+   * falta en tres pantallas y la aritmética de escalas mezcladas no es algo que
+   * deba estar copiado en un componente: se escribió una vez aquí y después otra
+   * vez en el modal de depósito, y dos copias de un cálculo de dinero divergen.
+   */
+  const sortedAssets = useMemo(
+    () => [...filteredAssets].sort((a, b) => byUsdValueDesc(a.part, b.part)),
+    [filteredAssets],
+  );
+
   /* Las cadenas que no se pudieron leer, o donde no hay billetera. */
   const unreadableChains = portfolio?.unreadableChains ?? [];
 
   /*
-   * El total en dólares, y por qué puede ser cero.
+   * El total de la cubeta de cripto, y cuándo se puede pintar.
    *
-   * `—` dice "no lo sé" y `U$0,00` dice "lo sé". Sólo se puede pintar el cero
-   * cuando la lectura llegó entera y lo que llegó fue cero: cero por cualquier
-   * precio es cero, así que acá no hace falta un feed de precios para afirmarlo,
-   * y una billetera vacía tiene que poder parecer vacía.
-   *
-   * Lo que **no** habilita el cero: que haya cripto sin precio —ahí el total es
-   * incómputo y el guion va con la frase que ya estaba— ni que una cadena haya
-   * caído. `cryptoBalanceIsZero` ya viene con esas dos condiciones resueltas.
+   * Sale de `cryptoValue.total`, que el backend sumando con las piezas que sí se
+   * pudieron leer. Un total parcial se muestra **con** la frase que nombra lo
+   * que falta, y un cero real se muestra como cero: una billetera vacía tiene que
+   * poder parecer vacía.
    */
-  const cryptoBalanceIsZero =
-    portfolio?.status === 'ready' && portfolio.cryptoBalanceIsZero === true;
+  const cryptoUsd = cryptoValue?.total?.formatted ?? null;
 
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans">
@@ -131,7 +192,7 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
           CONTENIDO: RESUMEN + LISTADO DE LOS ACTIVOS QUE LEÍ LA CADENA
          ========================================================================= */}
       <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-4">
-        {/* CARD SUPERIOR: SUMATORIA TOTAL DE TODAS LAS CRYPTO INVERTIDAS */}
+        {/* CARD SUPERIOR: EL TOTAL DE LA CUBETA DE CRIPTO */}
         <div className="bg-white rounded-[32px] p-6 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 font-display">
@@ -139,30 +200,35 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
             </span>
             {/*
               La píldora de la derecha antes decía `+4,28% hoy`, con flecha verde y
-              todo: una variación que nadie calculó. Ahora dice lo que pasa en
-              realidad, que es que no hay precio de mercado para calcularla.
+              todo: una variación que nadie calculó. Ahora dice la unidad en la que
+              está el número, que es un dato del backend y no una variante.
             */}
             <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-              sin precio de mercado
+              {cryptoValue?.unit ?? 'USD'}
             </span>
           </div>
 
           <div className="flex items-baseline font-display">
             <span className="text-4xl sm:text-5xl font-extrabold text-black tracking-tight">
-              {cryptoBalanceIsZero ? VALOR_CERO : SIN_VALOR}
+              {cryptoUsd === null ? SIN_VALOR : `U$${cryptoUsd}`}
             </span>
           </div>
 
+          {/*
+            Un total parcial conserva el número y dice qué le falta; nunca se
+            presenta como entero. Un total entero dice lo que es: la cripto que
+            está libre, sin lo que dejaste en los pools.
+          */}
           <p className="text-xs font-semibold text-slate-400 font-mono tracking-tight pt-0.5">
-            {portfolio?.status === 'loading'
+            {balance === undefined || balance.status === 'idle' || balance.status === 'loading'
               ? 'Leyendo la cadena…'
-              : portfolio?.status === 'error'
+              : balance.status === 'error'
                 ? 'No pudimos leer tus saldos.'
-                : cryptoBalanceIsZero
-                  ? /* Leímos todo y no hay nada. El cero es el dato, no una falla. */
-                    'No tenés criptoactivos en tus billeteras.'
-                  : /* Hay saldo y no hay precio: el total no existe. */
-                    'Sin precio de mercado, sin total en dólares.'}
+                : cryptoValue?.complete === false
+                  ? cryptoValue.incompletenessNote
+                  : cryptoUsd === null
+                    ? BALANCE_UNREADABLE_NOTE
+                    : 'Es lo que tenés libre en tus billeteras y no está pegado al dólar. Tus dólares digitales van en la tarjeta de Dólares digitales.'}
           </p>
         </div>
 
@@ -207,12 +273,12 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
               Criptoactivos ({filteredAssets.length})
             </span>
             <span className="text-[11px] font-bold text-slate-400">
-              Saldo
+              Valor y saldo
             </span>
           </div>
 
           <div className="bg-white rounded-[32px] border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
-            {filteredAssets.map((asset) => (
+            {sortedAssets.map((asset) => (
               <div
                 key={asset.id}
                 onClick={() => setSelectedAsset(asset)}
@@ -231,25 +297,31 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
                       {asset.name}
                     </span>
                     <span className="text-xs font-mono font-bold text-slate-400 block mt-1">
-                      {asset.ticker} · {asset.networks[0]?.label ?? ''}
+                      {asset.ticker}
                     </span>
                   </div>
                 </div>
 
-                {/* DERECHA: el saldo real y su unidad.
+                {/* DERECHA: el valor en dólares y, debajo, la cantidad real.
 
-                    Antes la línea de arriba era un total en dólares escrito a
-                    mano y la de abajo una cantidad inventada. Ahora hay una sola
-                    línea, y es la que vino de la cadena. */}
-                <div className="text-right">
-                  <span className="text-sm font-extrabold font-display text-black block leading-none">
-                    {asset.totalCrypto}
-                  </span>
+                    La fila completa la pinta `BalancePieceRow` cuando el backend
+                    envió la pieza: el valor arriba, la cantidad abajo, y el motivo
+                    —en vez de un número— cuando la pieza no se pudo leer. Sin
+                    pieza, la fila cae a la cantidad de la cadena, que es un dato
+                    verdadero aunque no tenga valor. */}
+                <div className="text-right shrink-0">
+                  {asset.part === null ? (
+                    <span className="text-sm font-extrabold font-display text-black block leading-none">
+                      {asset.totalCrypto}
+                    </span>
+                  ) : (
+                    <BalancePieceRow part={asset.part} hideLabel />
+                  )}
                 </div>
               </div>
             ))}
 
-            {filteredAssets.length === 0 && (
+            {sortedAssets.length === 0 && (
               <div className="p-8 text-center text-slate-400 text-xs">
                 {portfolio?.status === 'loading'
                   ? 'Leyendo tus saldos…'

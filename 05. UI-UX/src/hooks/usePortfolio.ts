@@ -191,6 +191,17 @@ const holdingsFrom = (portfolio: Portfolio): readonly PortfolioHolding[] => {
       const identity = identityOf(asset.symbol);
       if (identity === null) continue;
 
+      /*
+       * Un activo ilegible **no entra en `holdings`**, porque `holdings` es la
+       * lista de cantidades y acá no hay cantidad.
+       *
+       * Ojo: descartarlo no es inocuo, y por eso `allBalancesAreZero` refuses to
+       * answer when an unreadable asset exists. La ausencia acá significa "no lo
+       * supimos leer", y las pantallas que pide un saldo sin hallarlo muestran
+       * "—" en vez de un cero.
+       */
+      if (asset.status !== 'ok' || asset.amount === null) continue;
+
       const networks: PortfolioNetwork[] = readable
         .filter((other) => other.assets.some((entry) => entry.symbol === asset.symbol))
         .map((other) => ({
@@ -307,7 +318,8 @@ export const usePortfolio = (enabled: boolean): PortfolioView => {
               ? []
               : chain.assets
                   .filter((asset) => asset.symbol === DIGITAL_DOLLAR_TICKER)
-                  .map((asset) => ({ amount: asset.amount, decimals: asset.decimals })),
+                  .filter((asset) => asset.status === 'ok' && asset.amount !== null)
+                  .map((asset) => ({ amount: asset.amount as string, decimals: asset.decimals })),
           );
 
     const isUsdc = (symbol: string): boolean => symbol === DIGITAL_DOLLAR_TICKER;

@@ -8,13 +8,24 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { splitUsdDisplay } from '../../services/portfolio';
-import type { PortfolioView } from '../../hooks/usePortfolio';
+import { formatPercent } from '../../services/pool';
+import { BALANCE_UNREADABLE_NOTE } from '../../services/walletBalance';
+import type { WalletBalanceBucketView } from '../../services/walletBalance';
+import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
+import type { PoolScreenView } from '../../hooks/usePool';
 import { UserProfileData } from '../../types';
 
 interface InvestmentsViewProps {
   profile: UserProfileData | null;
-  /** Saldos de la cadena, leídos una vez por sesión en el `App`. */
-  portfolio?: PortfolioView;
+  /** El pool de Aave en Monad, leído una vez por sesión en el `App`. */
+  pool?: PoolScreenView;
+  /**
+   * El balance completo, leído una vez por sesión en el `App`.
+   *
+   * Trae las dos cubetas ya valuadas y el total ya compuesto. Esta pantalla
+   * **no** suma nada y **no** filtra nada: pinta lo que llegó.
+   */
+  balance?: WalletBalanceScreenView;
   onOpenProfile?: () => void;
   onNavigateToWallet?: () => void;
   onOpenSearch?: () => void;
@@ -33,7 +44,8 @@ interface InvestmentsViewProps {
 
 export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
   profile,
-  portfolio,
+  pool,
+  balance,
   onOpenProfile,
   onNavigateToWallet,
   onOpenSearch,
@@ -46,35 +58,60 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
   const [showBalance, setShowBalance] = useState<boolean>(true);
 
   /*
-   * Los saldos de esta pantalla.
+   * EL BALANCE: tres cifras del backend y ninguna suma del navegador.
    *
-   * Los dólares digitales son un saldo real y se muestran. El total de
-   * inversiones y el total de *Bitcoin & Crypto* **no**: `/api/portfolio` trae
-   * cantidades y no trae precios, así que un total en dólares exigiría un precio
-   * de mercado que esta tarea no tiene. Las dos cifras que estaban acá
-   * (`U$20,15` y su `≈ $31.640,71`) eran números escritos a mano, y una
-   * invertidora ve más que nada cuando ve un total: se quedan con ese número.
-   * Sin precio, se dice que no hay precio.
+   * El titular es `total`, que el backend compuso como `cryptoValue +
+   * digitalDollarsValue` en enteros y sin redondear. Las dos tarjetas de abajo son
+   * sus dos mitades, cada una con **su propio** total:
    *
-   * ── El cero que sí se sabe ────────────────────────────────────────────────
+   *  - `cryptoValue` → **Bitcoin & Crypto**: la cripto libre que **no** está
+   *    pegada al dólar (MON, ETH, SOL, BTC).
+   *  - `digitalDollarsValue` → **Dólares digitales**: todo lo que sí lo está, el
+   *    USDC libre de cada cadena más lo que está en los pools.
    *
-   * `—` significa "no lo sé" y `U$0,00` significa "lo sé". Con todo leído y todo
-   * en cero, el total en dólares también es cero —cero por cualquier precio es
-   * cero—, así que ahí el total se muestra, y una billetera vacía tiene que poder
-   * parecer vacía. Con saldo pero sin precio, el total sigue siendo `—` con la
-   * frase de siempre: no hay feed, y no se inventa.
+   * El backend ya sacó el USDC de la primera cubeta usando la tabla del peg, así
+   * que acá no hay filtro ninguno: un filtro en el navegador sería una segunda
+   * copia de esa tabla, capaz de contradecir al servidor.
    *
-   * Son dos signals distintos a propósito: alcanza con que **uno** de los dos
-   * tenga saldo para que el balance total deje de ser un cero.
+   * Son signals distintos a propósito: `—` es "no lo sé" y `U$0,00` es "lo sé".
+   * Con todo leído y todo en cero, el total es cero y se muestra —una billetera
+   * vacía tiene que poder parecer vacía—; con saldo pero sin precio, se dice que
+   * no hay precio y no se inventa.
    */
-  const usd = useMemo(
-    () => splitUsdDisplay(portfolio?.usdcTotal ?? null, 'U$'),
-    [portfolio?.usdcTotal],
+  const total = useMemo(
+    () => splitUsdDisplay(balance?.balance?.total?.usd?.formatted ?? null, 'U$'),
+    [balance?.balance?.total?.usd],
   );
 
-  const balanceIsZero = portfolio?.status === 'ready' && portfolio.balanceIsZero === true;
-  const cryptoBalanceIsZero =
-    portfolio?.status === 'ready' && portfolio.cryptoBalanceIsZero === true;
+  const cryptoValue: WalletBalanceBucketView | null = balance?.balance?.cryptoValue ?? null;
+  const digitalDollarsValue: WalletBalanceBucketView | null = balance?.balance?.digitalDollarsValue ?? null;
+
+  const cryptoTotal = useMemo(
+    () => splitUsdDisplay(cryptoValue?.total?.formatted ?? null, 'U$'),
+    [cryptoValue?.total],
+  );
+  const dollarsTotal = useMemo(
+    () => splitUsdDisplay(digitalDollarsValue?.total?.formatted ?? null, 'U$'),
+    [digitalDollarsValue?.total],
+  );
+
+  /*
+   * El titular es parcial o no llegó: en los dos casos se dice, y nunca se
+   * muestra un cero de reemplazo.
+   */
+  const totalNote = useMemo(() => {
+    if (balance === undefined) return null;
+    if (balance.status === 'error') return BALANCE_UNREADABLE_NOTE;
+    return balance.note;
+  }, [balance]);
+
+  /*
+   * La píldora de rendimiento sale de la reserva leída en la cadena. Antes decía
+   * `3,46%` escrito a mano en el JSX: una tasa que la app no había leído de
+   * ningún lado. Cuando la lectura no llegó, no hay tasa —y no se pone un `0%`,
+   * que sería afirmar que el pool no rinde.
+   */
+  const aprLabel = useMemo(() => formatPercent(pool?.pool?.displayableSupplyApr ?? null), [pool?.pool?.displayableSupplyApr]);
 
   const userTag = profile?.nombre
     ? '$' + profile.nombre.toLowerCase().replace(/\s+/g, '').slice(0, 10)
@@ -184,23 +221,25 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             </button>
           </div>
 
-          {/* Importe U$20,15 */}
+          {/* EL TOTAL DEL BACKEND, TAL CUAL LLEGÓ */}
           <div className="flex items-baseline font-display">
             <span className="text-4xl font-extrabold text-black tracking-tight">
-              {showBalance ? (balanceIsZero ? 'U$0,00' : '—') : '••••'}
+              {!showBalance ? '••••' : total === null ? '—' : total.whole}
+            </span>
+            <span className="text-2xl font-bold text-slate-300 ml-0.5">
+              {!showBalance || total === null ? '' : total.cents}
             </span>
           </div>
 
-          {/* Sin precio de mercado no hay total en dólares. La frase va donde
-              estaba el equivalente en pesos, que tampoco se puede calcular.
-              Con todo en cero sí hay total —cero— y se dice otro motivo. */}
-          <p className="text-xs font-semibold text-slate-400 font-mono tracking-tight pt-1">
-            {showBalance
-              ? balanceIsZero
-                ? 'No tenés saldos en ninguna billetera.'
-                : 'Sin precio de mercado, sin total'
-              : '≈ ••••••••'}
-          </p>
+          {/*
+            Un total parcial se muestra **con** la frase que nombra lo que falta,
+            y la frase no depende de que el número se esté mirando. Un total
+            entero, en cambio, se dice entero: acá abajo, en las dos tarjetas, está
+            de qué está hecho.
+          */}
+          {showBalance && totalNote !== null && (
+            <p className="text-xs font-medium text-amber-600 leading-snug pt-1">{totalNote}</p>
+          )}
         </div>
       </div>
 
@@ -208,6 +247,11 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
           ACTIVAS EN INVERSIONES:
           1. Bitcoin & Crypto (Abre layout 3er nivel CryptoAssetsListView)
           2. Dólares digitales (Abre layout 3er nivel DigitalDollarsView)
+
+          Las dos tarjetas, en dos columnas, con sus títulos y su drill-down de
+          siempre. Lo que cambió no fue el diseño: fue de dónde sale cada
+          número. `cryptoValue` ya no trae USDC, y `digitalDollarsValue` trae
+          el USDC libre de cada cadena junto con lo depositado en los pools.
          ========================================================================= */}
       <div className="grid grid-cols-2 gap-3">
         {/* TARJETA 1: Bitcoin & Crypto -> Abre 3er nivel */}
@@ -228,9 +272,22 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 block">Bitcoin & Crypto</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
-                {showBalance ? (cryptoBalanceIsZero ? 'U$0,00' : '—') : '••'}
+                {!showBalance ? '••' : cryptoTotal === null ? '—' : cryptoTotal.whole}
+              </span>
+              <span className="text-sm font-bold text-slate-300 ml-0.5">
+                {!showBalance || cryptoTotal === null ? '' : cryptoTotal.cents}
               </span>
             </div>
+            {/*
+              Una cubeta incompleta conserva lo que sí se pudo leer y **dice qué
+              le falta**. Un cero real no dice nada: cero por cualquier precio es
+              cero, y una billetera vacía tiene que poder parecer vacía.
+            */}
+            {showBalance && cryptoValue?.complete === false && cryptoValue.incompletenessNote !== null && (
+              <p className="text-[11px] font-medium text-amber-600 leading-snug mt-0.5">
+                {cryptoValue.incompletenessNote}
+              </p>
+            )}
           </div>
         </div>
 
@@ -245,11 +302,13 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
               U$
             </div>
 
-            {/* Píldora 3,46% con flecha */}
+            {/* Píldora de la tasa real del pool, o nada si no se pudo leer */}
             <div className="flex items-center gap-1">
-              <span className="px-2 py-0.5 rounded-full bg-[#ccff00] text-black font-extrabold text-[11px]">
-                3,46%
-              </span>
+              {aprLabel !== null && (
+                <span className="px-2 py-0.5 rounded-full bg-[#ccff00] text-black font-extrabold text-[11px]">
+                  {aprLabel}
+                </span>
+              )}
               <ChevronRight className="w-4 h-4 text-slate-300 stroke-[2.5]" />
             </div>
           </div>
@@ -258,12 +317,17 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 block">Dólares digitales</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
-                {!showBalance || usd === null ? '••' : usd.whole}
+                {!showBalance ? '••' : dollarsTotal === null ? '—' : dollarsTotal.whole}
               </span>
               <span className="text-sm font-bold text-slate-300 ml-0.5">
-                {!showBalance || usd === null ? '' : usd.cents}
+                {!showBalance || dollarsTotal === null ? '' : dollarsTotal.cents}
               </span>
             </div>
+            {showBalance && digitalDollarsValue?.complete === false && digitalDollarsValue.incompletenessNote !== null && (
+              <p className="text-[11px] font-medium text-amber-600 leading-snug mt-0.5">
+                {digitalDollarsValue.incompletenessNote}
+              </p>
+            )}
           </div>
         </div>
       </div>

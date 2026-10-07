@@ -2,8 +2,10 @@ import React, { useMemo, useState } from 'react';
 
 import { splitUsdDisplay } from '../../services/portfolio';
 import { formatPercent } from '../../services/pool';
+import { BALANCE_UNREADABLE_NOTE } from '../../services/walletBalance';
 import type { PoolScreenView } from '../../hooks/usePool';
 import { usePortfolio, type PortfolioView } from '../../hooks/usePortfolio';
+import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import {
   Bug,
   Bell,
@@ -26,6 +28,15 @@ interface WalletViewProps {
   portfolio?: PortfolioView;
   /** El pool de Aave en Monad, leído una vez por sesión en el `App`. */
   pool?: PoolScreenView;
+  /**
+   * El balance, leído una vez por sesión en el `App`.
+   *
+   * Es **un** número y ya está compuesto: la cripto libre más lo invertido en
+   * los pools. Antes esta pantalla mostraba el USDC libre de la billetera y la
+   * posición se veía en otra pantalla, y la persona tenía que sumar dos números
+   * en su cabeza para saber cuánto tenía.
+   */
+  balance?: WalletBalanceScreenView;
   onOpenProfile?: () => void;
   onNavigateToInvestments?: () => void;
   onNavigateToActivity?: () => void;
@@ -48,6 +59,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
   profile,
   portfolio,
   pool,
+  balance,
   onOpenProfile,
   onNavigateToInvestments,
   onOpenAction,
@@ -61,22 +73,40 @@ export const WalletView: React.FC<WalletViewProps> = ({
   const [showBalance, setShowBalance] = useState<boolean>(true);
 
   /*
-   * El saldo grande es el de los dólares digitales, leído de la cadena.
+   * El saldo grande: **un solo número**, y es el `total` que compuso el backend
+   * en `GET /api/wallet-balance`.
    *
-   * Antes esta línea escribía `'$0'` y `',00'` en el JSX: un cero escrito a mano
-   * que se veía exactamente igual que un cero real. La diferencia entre "no
-   * tenés nada" y "no lo sabemos" es el `null`, y por eso el hook devuelve
-   * `null` cuando ninguna cadena se pudo leer.
+   * Acá no hay suma: ni `cryptoValue + investedValue`, ni el USDC libre más
+   * "algo". Un operador aritmético entre dos números del servidor en el navegador
+   * es exactamente el defecto que esta pantalla vino a matar, y además lo haría
+   * con coma flotante y con un redondeo que el servidor nunca aplica. El número
+   * se imprime tal cual llegó.
    *
-   * El cero de verdad se muestra: `"0,00"`. Es un saldo, no una ausencia.
+   * La diferencia entre "no lo sé" y "lo sé y es cero" sigue siendo el `null`:
+   * un cero que se leyó se muestra como cero (`u$0,00`), y una lectura que no
+   * llegó se muestra como puntos con la frase que lo dice. Un `0,00` sobre una
+   * lectura fallida es una billetera vacía que no existe.
    */
-  const usd = useMemo(() => splitUsdDisplay(portfolio?.usdcTotal ?? null), [portfolio?.usdcTotal]);
+  const usd = useMemo(() => splitUsdDisplay(balance?.total ?? null), [balance?.total]);
 
   /*
-   * La etiqueta de la moneda también viene del dato: dice "Dólares digitales"
-   * porque lo que se está mostrando son dólares digitales.
+   * Dos frases y ningún término medio: o el total es entero, o es parcial y se
+   * nombra lo que falta. `note` sale del servicio ya en castellano; la otra es la
+   * lectura que no llegó.
    */
-  const balanceLabel = usd === null ? 'Sin lectura' : 'Dólares digitales';
+  const balanceNote = useMemo(() => {
+    if (balance === undefined) return portfolio?.usdcNote ?? null;
+    if (balance.status === 'error' || balance.status === 'ready') {
+      return balance.note ?? (balance.status === 'error' ? BALANCE_UNREADABLE_NOTE : null);
+    }
+    return portfolio?.usdcNote ?? null;
+  }, [balance, portfolio?.usdcNote]);
+
+  /*
+   * La etiqueta acompaña al dato: dice "Balance total" porque lo que se muestra
+   * es el total de las dos cubetas, no un tipo de moneda suelto.
+   */
+  const balanceLabel = usd === null ? 'Sin lectura' : 'Balance total';
 
   // Derivar el handle de usuario como $joadata o $nombre
   const userTag = profile?.nombre
@@ -210,9 +240,21 @@ export const WalletView: React.FC<WalletViewProps> = ({
              * sesión que todavía no terminó de leer: por eso la línea sólo
              * aparece cuando hay una frase que decir.
              */}
-            {usd === null && portfolio?.usdcNote !== null && portfolio?.usdcNote !== undefined && (
+            {usd === null && balanceNote !== null && (
               <p className="text-xs font-medium text-amber-600 leading-snug">
-                {showBalance ? portfolio.usdcNote : 'Saldo oculto'}
+                {showBalance ? balanceNote : 'Saldo oculto'}
+              </p>
+            )}
+
+            {/*
+              El total se leyó pero le **falta** una parte. El número queda, y
+              la frase lo aclara: un total parcial nunca se presenta como entero,
+              y por eso la advertencia no depende de que el número se esté
+              mirando — aparece siempre que `complete` es `false`.
+            */}
+            {showBalance && balance?.complete === false && balance?.note !== null && balance?.note !== undefined && (
+              <p className="text-xs font-medium text-amber-600 leading-snug">
+                {balance.note}
               </p>
             )}
 

@@ -6,8 +6,10 @@ import React, { useMemo, useState } from 'react';
  * es una promesa de rendimiento. Cuando T5 exista, la tasa entra desde el pool.
  */
 import { splitUsdDisplay } from '../../services/portfolio';
-import type { PortfolioView } from '../../hooks/usePortfolio';
-import { formatAmount, formatPercent, projectYearlyGain } from '../../services/pool';
+import { BALANCE_UNREADABLE_NOTE } from '../../services/walletBalance';
+import { BalancePieceRow } from './BalancePieceRow';
+import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
+import { formatPercent, projectYearlyGain } from '../../services/pool';
 import type { PoolScreenView } from '../../hooks/usePool';
 import {
   ArrowLeft,
@@ -22,37 +24,47 @@ interface DigitalDollarsViewProps {
   onOpenAavePools?: () => void;
   onOpenDeposit?: () => void;
   onOpenSend?: () => void;
-  /** Saldos de la cadena, leídos una vez por sesión en el `App`. */
-  portfolio?: PortfolioView;
   /** El pool de Aave, leído una vez por sesión en el `App`. */
   pool?: PoolScreenView;
+  /**
+   * El balance completo, leído una vez por sesión en el `App`.
+   *
+   * Esta pantalla es donde los dólares digitales se explican: el número de arriba
+   * es `digitalDollarsValue.total` —el mismo que ve la persona en la tarjeta de
+   * Dólares digitales— y las filas de abajo son de dónde sale.
+   */
+  balance?: WalletBalanceScreenView;
 }
 
 export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
   onBack,
   onOpenAavePools,
-  portfolio,
   pool,
+  balance,
 }) => {
   const [showInfoModal, setShowInfoModal] = useState(false);
 
   /*
-   * El saldo de dólares, de la cadena.
+   * UN número, y es el mismo que ve la persona en la tarjeta de Dólares digitales.
    *
-   * Antes esta tarjeta escribía `U$0,82` en el JSX: una cantidad inventada con
-   * forma de saldo. Ahora sale de `portfolio.usdcTotal`, y cuando no se pudo leer
-   * no muestra un cero: dice que no se pudo leer.
+   * Es `digitalDollarsValue.total`: todo lo que está pegado al dólar, libre o
+   * depositado. El USDC de cada cadena y el USDC de los pools son la misma unidad
+   * valuada a 1 por definición, así que el backend los suma en un solo número —
+   * y esta pantalla lo pinta como llegó, sin sumar nada.
    *
-   * Y al revés: un cero que **sí** se sabe se muestra como cero, `U$0,00`. El
-   * hook ya trae `"0,00"` en los dos casos honestos —el activo reportado con
-   * saldo cero, y ninguna cadena con dólares, siempre que ninguna haya caído—,
-   * así que acá no hay decisión que tomar: `null` es "no lo sé" y cualquier otra
-   * cosa es una cifra. Los puntos son sólo para el caso que no lo sabemos.
+   * Y el total no se muestra solo: `complete` viaja con él. Un total parcial se
+   * muestra **con** la advertencia que nombra lo que falta, nunca como si fuera
+   * todo. Un cero real, en cambio, se muestra como cero: una billetera vacía
+   * tiene que poder parecer vacía.
    */
+  const dollars = balance?.balance?.digitalDollarsValue ?? null;
   const usd = useMemo(
-    () => splitUsdDisplay(portfolio?.usdcTotal ?? null, 'U$'),
-    [portfolio?.usdcTotal],
+    () => splitUsdDisplay(dollars?.total?.formatted ?? null, 'U$'),
+    [dollars?.total],
   );
+
+  const parts = dollars?.parts ?? [];
+  const note = balance?.note ?? (balance?.status === 'error' ? BALANCE_UNREADABLE_NOTE : null);
 
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans">
@@ -88,23 +100,34 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
          ========================================================================= */}
       <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-3.5">
         {/* =====================================================================
-            CARD 1: DÓLARES DIGITALES — USDC
+            CARD 1: DÓLARES DIGITALES — USDC, libre y depositado
            ===================================================================== */}
         <div className="bg-white rounded-[32px] p-6 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80">
           <div className="space-y-1">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 font-display block">
-              DÓLARES DIGITALES — USDC
+              DÓLARES DIGITALES — {dollars?.unit ?? 'USD'}
             </span>
             <div className="text-4xl sm:text-5xl font-extrabold font-display text-black tracking-tight">
               {usd === null ? '••••' : `${usd.whole}${usd.cents}`}
             </div>
             {/*
-              Una cadena que no se pudo leer se dice. Un cero acá sería una billetera
-              vacía, y no es lo que pasó: no lo sabemos.
+              El total es parcial. El número queda porque lo que sí se pudo leer
+              también es cierto —tirar la suma parcial sería tirar lo que
+              sabemos— pero la frase dice cuál es la parte que falta, para que
+              nadie lea ese número como su saldo completo.
             */}
-            {usd === null && portfolio?.usdcNote && (
+            {dollars?.complete === false && dollars.incompletenessNote !== null && (
+              <div className="bg-amber-50 rounded-2xl p-3 mt-3 text-[11px] text-amber-700 leading-relaxed font-medium">
+                {dollars.incompletenessNote}
+              </div>
+            )}
+            {/*
+              Una lectura que no llegó no muestra un cero: dice que no se pudo
+              leer.
+            */}
+            {usd === null && note !== null && (
               <p className="text-xs font-medium text-amber-600 leading-snug pt-1">
-                {portfolio.usdcNote}
+                {note}
               </p>
             )}
           </div>
@@ -180,15 +203,23 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
 
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400 font-medium">Tu dinero en el pool</span>
-                    {positionRaw === null ? (
-                      <span className="font-extrabold text-amber-600">No se pudo leer</span>
-                    ) : positionRaw === 0n ? (
-                      <span className="font-extrabold text-black">No depositás nada</span>
-                    ) : (
-                      <span className="font-extrabold text-black">
-                        {formatAmount(positionRaw, position?.value?.decimals ?? 6, 'U$')}
-                      </span>
-                    )}
+                    {/*
+                      La posición sale del **mismo** total, no de otra lectura: es
+                      la fila de Aave de la tarjeta "de dónde sale". Una sola
+                      fuente para la misma plata, así que no puede contradecirse
+                      con el número de arriba.
+                    */}
+                    {(() => {
+                      const position = parts.find((part) => part.source === 'pool_position');
+                      if (position === undefined || position.status !== 'ok') {
+                        return <span className="font-extrabold text-amber-600">No se pudo leer</span>;
+                      }
+                      return position.value.isZero ? (
+                        <span className="font-extrabold text-black">No depositás nada</span>
+                      ) : (
+                        <span className="font-extrabold text-black">{`U$${position.value.formatted}`}</span>
+                      );
+                    })()}
                   </div>
 
                   <div className="flex items-center justify-between">

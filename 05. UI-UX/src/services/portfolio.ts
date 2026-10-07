@@ -247,7 +247,14 @@ export const formatScaledTrimmed = (
  * la decisión de redondear le corresponde.
  */
 export const formatAssetAmount = (asset: PortfolioAsset): string =>
-  formatScaledTrimmed(toScaled(asset.amount, asset.decimals, asset.decimals), asset.decimals);
+  /*
+   * Un activo que no se pudo leer no tiene saldo que formatear. Devolver un
+   * texto vacío es correcto: quien lo pide lo muestra como "no lo sé", y
+   * devolver `0` sería decir que la persona no tiene nada.
+   */
+  asset.status !== 'ok' || asset.amount === null
+    ? ''
+    : formatScaledTrimmed(toScaled(asset.amount, asset.decimals, asset.decimals), asset.decimals);
 
 /**
  * El saldo de dólares de la billetera partido como lo pinta esa pantalla: la
@@ -349,9 +356,20 @@ export const allBalancesAreZero = (
     chain.status === 'ok' ? chain.assets.filter((asset) => accept(asset.symbol)) : [],
   );
 
-  const scale = assets.reduce((max, asset) => Math.max(max, asset.decimals), 0);
-  const total = assets.reduce(
-    (sum, asset) => sum + toScaled(asset.amount, asset.decimals, scale),
+  /*
+   * Si hay un activo que no se pudo leer, esta pregunta **no tiene respuesta**.
+   *
+   * Antes el normalizador descartaba el activo ilegible, así que nunca llegaba
+   * acá y la suma de lo que quedaba daba cero: una billetera con USDC de Solana
+   * que no supimos leer se anunciaba como vacía. **"No lo sé"接班ando de "no
+   * tenés",** que es la confusión máscara que este producto puede tener.
+   */
+  if (assets.some((asset) => asset.status !== 'ok')) return false;
+
+  const readable = assets.filter((asset) => asset.status === 'ok' && asset.amount !== null);
+  const scale = readable.reduce((max, asset) => Math.max(max, asset.decimals), 0);
+  const total = readable.reduce(
+    (sum, asset) => sum + toScaled(asset.amount as string, asset.decimals, scale),
     0n,
   );
 
@@ -376,16 +394,42 @@ export const normalizePortfolio = (body: unknown): Portfolio => {
     if (chain === null || !isKnownChainId(chain.chain)) continue;
 
     if (chain.status === 'ok') {
+      /*
+       * Un activo ilegible **se conserva**, con `status: 'unreadable'`. Antes el
+       * filtro loBOTABA por no tener `amount` en texto, y `allBalancesAreZero`
+       * suma lo que sobrevive: el activo descartado contaba como cero y una
+       * billetera con plata no leída se anunciaba como vacía. Descartar no es
+       * neutral — es afirmar que no hay nada.
+       */
       const assets = Array.isArray(chain.assets)
-        ? chain.assets.filter(
-            (asset): asset is PortfolioAsset =>
-              asset !== null &&
-              typeof asset.symbol === 'string' &&
-              asset.symbol.length > 0 &&
-              typeof asset.amount === 'string' &&
-              Number.isInteger(asset.decimals) &&
-              (asset.decimals as number) >= 0,
-          )
+        ? chain.assets
+            .filter(
+              (asset): asset is Partial<PortfolioAsset> =>
+                asset !== null &&
+                asset !== undefined &&
+                typeof asset.symbol === 'string' &&
+                asset.symbol.length > 0 &&
+                Number.isInteger(asset.decimals) &&
+                (asset.decimals as number) >= 0,
+            )
+            .map(
+              (asset): PortfolioAsset => {
+                const symbol = typeof asset.symbol === 'string' ? asset.symbol : '';
+                const unit = typeof asset.unit === 'string' && asset.unit.length > 0 ? asset.unit : symbol;
+                const decimals = asset.decimals as number;
+                const readable =
+                  asset.status !== 'unreadable' && typeof asset.amount === 'string';
+                return {
+                  symbol,
+                  unit,
+                  decimals,
+                  status: readable ? 'ok' : 'unreadable',
+                  raw: readable && typeof asset.raw === 'string' ? asset.raw : null,
+                  amount: readable ? (asset.amount as string) : null,
+                  reason: readable ? null : typeof asset.reason === 'string' ? asset.reason : null,
+                };
+              },
+            )
         : [];
 
       chains.push({

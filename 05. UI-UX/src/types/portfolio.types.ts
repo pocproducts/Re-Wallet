@@ -31,6 +31,21 @@ export type PortfolioChainId = 'monad' | 'ethereum' | 'solana';
 export type PortfolioChainStatus = 'ok' | 'error' | 'no_wallet';
 
 /** Un activo dentro de una cadena leída. */
+/**
+ * Un activo de una cadena que sí respondió.
+ *
+ * `status` distingue **cero** de **no lo sé**: los dos se ven igual en la
+ * pantalla, pero no son la misma verdad. Un activo con `status: 'unreadable'`
+ * no trae `amount`: no hay número que pintar, ni un cero, ni un guion que se
+ * lea como cero.
+ *
+ * Antes el backend no podía enviar un activo ilegible por separado —la cadena
+ * entera fallaba o nada— y el normalizador **descartaba** el que no tenía
+ * `amount` en texto. Ese descarte era invisible y peligroso: `allBalancesAreZero`
+ * suma lo que sobrevive, así que un activo ilegible descartado se contabilizaba
+ * como cero, y una billetera con plata que no supimos leer se anunciaba como
+ * billetera vacía. **Eso es exactamente el bug que esta unión viene a quitar.**
+ */
 export interface PortfolioAsset {
   /** `MON`, `USDC`, `SOL`. Es la clave con la que se lo busca. */
   readonly symbol: string;
@@ -38,10 +53,13 @@ export interface PortfolioAsset {
   readonly unit: string;
   /** Cuántos decimales tiene el importe. La pantalla no lo adivina. */
   readonly decimals: number;
-  /** El entero exacto que reportó la cadena, en la unidad mínima. */
-  readonly raw: string;
-  /** El mismo valor en su unidad, como texto decimal, sin redondear. */
-  readonly amount: string;
+  readonly status: 'ok' | 'unreadable';
+  /** El entero exacto que reportó la cadena, en la unidad mínima. `null` si no se pudo leer. */
+  readonly raw: string | null;
+  /** El mismo valor en su unidad, como texto decimal, sin redondear. `null` si no se pudo leer. */
+  readonly amount: string | null;
+  /** Por qué no se pudo leer. Nunca texto del proveedor. */
+  readonly reason: string | null;
 }
 
 /** Por qué no se pudo leer la cadena. */

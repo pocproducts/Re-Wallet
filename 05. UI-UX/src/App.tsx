@@ -21,6 +21,7 @@ import { useNotifications } from './hooks/useNotifications';
 import { usePortfolio } from './hooks/usePortfolio';
 import { useDepositInfo } from './hooks/useDepositInfo';
 import { usePool } from './hooks/usePool';
+import { useWalletBalance } from './hooks/useWalletBalance';
 import { useUserWallets } from './hooks/useUserWallets';
 import { ChargeQrModal, type ChargeReceiveAddress } from './components/Charge/ChargeQrModal';
 import { CreateChargeView } from './components/Wallet/CreateChargeView';
@@ -114,6 +115,24 @@ export default function App() {
    * pantalla tiene que salir de la cadena, no del hecho de que la persona firmó.
    */
   const pool = usePool(sessionStatus === 'authenticated');
+
+  /*
+   * EL BALANCE DE LA BILLETERA — UN solo número, leído UNA vez por sesión.
+   *
+   * `GET /api/wallet-balance` es la composición que hace el backend: las dos
+   * cubetas (cripto libre e invertida) y el total, sumado en `bigint` y sin
+   * redondeo. Vive acá y no en cada pantalla por la misma razón que `usePool`:
+   * son lecturas de cadena, y una por navegación serían viajes extra a la red.
+   *
+   * Antes esta línea usaba `GET /api/digital-dollars`, que **no** es el balance:
+   * esa ruta abarca las dos cubetas sin ser ninguna de las dos. Todas las
+   * pantallas que mostraban dólares salían de ahí, así que ninguna pintaba el
+   * balance real. La ruta sigue montada en el backend —la pregunta por dólares
+   * digitales sigue teniendo respuesta— pero esta app ya no la llama.
+   *
+   * Y el total **no** se arma acá: se imprime el que llegó.
+   */
+  const balance = useWalletBalance(sessionStatus === 'authenticated');
 
   /*
    * Los avisos de la cuenta también se leen UNA vez por sesión, con el mismo
@@ -414,6 +433,7 @@ export default function App() {
                         profile={profile}
                         portfolio={portfolio}
                         pool={pool}
+                        balance={balance}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToInvestments={() => setCurrentTab('investments')}
                         onNavigateToActivity={() => setCurrentTab('activity')}
@@ -433,7 +453,8 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <InvestmentsView
                         profile={profile}
-                        portfolio={portfolio}
+                        pool={pool}
+                        balance={balance}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToWallet={() => setCurrentTab('wallet')}
                         onOpenSearch={() => setIsSearchOpen(true)}
@@ -510,6 +531,7 @@ export default function App() {
           userTag={userTag}
           depositInfo={depositInfo}
           holdings={portfolio.holdings}
+          balance={balance}
         />
 
         {/* =========================================================================
@@ -529,8 +551,8 @@ export default function App() {
         {isDigitalDollarsOpen && (
           <DigitalDollarsView
             onBack={() => setIsDigitalDollarsOpen(false)}
-            portfolio={portfolio}
             pool={pool}
+            balance={balance}
             onOpenAavePools={() => {
               setIsDigitalDollarsOpen(false);
               setIsAavePoolsOpen(true);
@@ -544,6 +566,7 @@ export default function App() {
             onBack={() => setIsCryptoListOpen(false)}
             userTag={userTag}
             portfolio={portfolio}
+            balance={balance}
           />
         )}
 

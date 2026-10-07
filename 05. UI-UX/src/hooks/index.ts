@@ -6,3 +6,4 @@ export * from './usePoolDeposit';
 export * from './useSendTransfer';
 export * from './usePortfolio';
 export * from './useSessionGate';
+export * from './useWalletBalance';
