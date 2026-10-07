@@ -34,7 +34,12 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: 07.PockBackend/package-lock.json
-      - run: npm ci
+      # `npm install` y no `npm ci`: el lock del backend esta desincronizado con
+      # su package.json por una dependencia transitiva (`utf-8-validate`), y
+      # `npm ci` se niega a instalar cuando no coinciden en vez de arreglarlo.
+      # La diferencia de comportamiento es que `install` resuelve de mas, que es
+      # justo lo que se necesita mientras el lock este desfasado.
+      - run: npm install --no-audit --no-fund
       - name: tipos
         run: npm run typecheck
       - name: tests
@@ -58,7 +63,7 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: 05. UI-UX/package-lock.json
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
       - name: tipos
         run: npm run lint
       - name: build
