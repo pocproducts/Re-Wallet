@@ -209,9 +209,11 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
         // El mint del USDC de Solana, y no el contrato de otra red: tres
         // direcciones distintas para el mismo símbolo.
         token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-        // La fila aparece con su red y su dirección; la cifra no, porque no hay
-        // lector verificado de SPL para la pantalla de cobro.
-        balanceReadable: false,
+        // El USDC de Solana, con la cifra que ahora sí se puede leer: el lector
+        // de SPL existe (`getTokenAccountsByOwner` filtrado por el mint), así
+        // que `false` pasó a ser una afirmación falsa sobre una capacidad que
+        // ya tenemos.
+        balanceReadable: true,
       },
     ]);
   });

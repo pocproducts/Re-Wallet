@@ -72,6 +72,7 @@ const evm: EvmBalanceReader = {
 const solana: SolanaBalanceReader = {
   lamports: async () => 4_000_000_000n,
   tokenAmount: async () => 10_000_000n,
+  mintBalance: async () => 10_000_000n,
 };
 
 /**

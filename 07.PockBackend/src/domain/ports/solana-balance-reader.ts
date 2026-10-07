@@ -46,5 +46,36 @@ export interface SolanaBalanceReader {
    * the bug this catalog exists to prevent.
    */
   tokenAmount(owner: string, mint: string): Promise<bigint>;
+
+  /**
+   * Everything an owner holds of **one catalogued mint**, in base units, summed
+   * over every token account they hold of it.
+   *
+   * ── Why this is a second method and not the one above ─────────────────────
+   *
+   * `tokenAmount` asks about the **associated** token account: the one address
+   * the Token Program derives for this owner and this mint. That is the right
+   * question for a transfer, which moves out of exactly that account.
+   *
+   * It is not the right question for a portfolio. A wallet can hold more than
+   * one account of the same mint, and money in a non-associated account is money
+   * the person holds. Reading only the canonical account reports **less than the
+   * truth**, quietly, and a portfolio that under-reports is as wrong as one that
+   * reports a zero it invented.
+   *
+   * ── Why the mint is always one the catalog declares ────────────────────────
+   *
+   * This method asks for **one** mint, and the caller only ever asks for mints
+   * its own catalog declares. That is what keeps the portfolio bounded: the
+   * alternative — every token the wallet holds — is not our portfolio, and it
+   * makes the screen as long as somebody's dust.
+   *
+   * ── Why the answer is in base units and never an amount ───────────────────
+   *
+   * The exponent is a fact about the mint, and the mint's exponent is declared
+   * in our catalog, next to everything else that is a fact about it. An adapter
+   * that returned a formatted amount would be returning a scale nobody chose.
+   */
+  mintBalance(owner: string, mint: string): Promise<bigint>;
 }
 

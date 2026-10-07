@@ -120,6 +120,11 @@ const readers = (reads: Reads = {}) => {
       if (fail === 'token') throw new Error('rpc 503');
       return reads.token ?? 10_000_000n;
     },
+    async mintBalance(address, mint) {
+      asked.push(`mint:${mint}:${address}`);
+      if (fail === 'token') throw new Error('rpc 503');
+      return reads.token ?? 10_000_000n;
+    },
   };
 
   return { evm, solana, asked };
@@ -472,7 +477,7 @@ describe('a valid Solana send', () => {
     const build = prepareSend({
       wallets,
       evm: { nativeBalance: async () => 0n, erc20Balance: async () => 0n },
-      solana: { lamports: async () => 4_000_000_000n, tokenAmount: async () => 0n },
+      solana: { lamports: async () => 4_000_000_000n, tokenAmount: async () => 0n, mintBalance: async () => 0n },
       solanaTransfers: devnetPreparer,
       movements: { createPending: async () => ({ id: 'm1', status: 'pending' }) },
       idempotency: {
