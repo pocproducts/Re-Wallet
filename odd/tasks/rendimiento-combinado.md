@@ -46,3 +46,14 @@ redondear ni componer frases nuevas: solo pasa lo que el servicio ya decidió.
 
 - Ninguna cifra en pantalla que no venga de una lectura real.
 - Sin número combinado cuando falta un venue: la nota nombra cuál.
+
+---
+
+## Descartado 2026-10-07 · NO se tocó la lectura de Solana
+
+Llegamos a cambiar el adaptador SPL para leer el ATA en vez de usar el índice, y
+el owner lo rechazó: **la lectura funcionaba como estaba** y el problema nunca
+fue la cadena. Ese trabajo quedó revertido y no existe en el árbol.
+
+Lo único pedido: **si una pieza no se pudo leer, no se muestra en la UI**, y
+cuando vuelva a poder leerse, se muestra sola.

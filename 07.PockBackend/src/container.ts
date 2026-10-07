@@ -133,6 +133,11 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
     ...required,
     monadRpcUrl: readEnv(env, 'MONAD_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.monad),
     ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.ethereum),
+    // The escape hatch, and it wins: set `SOLANA_RPC_URL` and this line never
+    // reaches the default. The default is the official public Solana RPC
+    // (`api.mainnet-beta.solana.com`), free and aggressively rate-limited, which
+    // answers the indexed account reads the SPL balances are made of — the
+    // previous default answered those with HTTP 403 and no balances at all.
     solanaRpcUrl: readEnv(env, 'SOLANA_RPC_URL') || DEFAULT_SOLANA_RPC_URL,
     monadPoolRpcUrl: readEnv(env, 'MONAD_POOL_RPC_URL') || firstCandidate(DEFAULT_POOL_ENDPOINTS),
     kaminoApiUrl: readEnv(env, 'KAMINO_API_URL') || DEFAULT_KAMINO_API_URL,
