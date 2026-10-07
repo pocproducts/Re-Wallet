@@ -1,0 +1,47 @@
+flowchart LR
+    subgraph F1["FASE 1 · 13 tablas"]
+        direction TB
+        F1A[users]
+        F1B[wallets]
+        F1C[movements]
+        F1D[contacts]
+        F1E[sessions]
+        F1F[idempotency_keys]
+        F1G[payment_requests]
+        F1H[yield_positions]
+        F1I[yield_accruals]
+        F1J[policy_rules]
+        F1K[policy_decisions]
+        F1L[gas_sponsorships]
+        F1M[webhook_events]
+    end
+
+    subgraph F2["FASE 2 · +5 tablas"]
+        direction TB
+        F2A[assets]
+        F2B[wallet_positions]
+        F2C[swap_quotes]
+        F2D[swap_executions]
+        F2E[user_preferences]
+    end
+
+    subgraph F3["FASE 3 · +9 tablas"]
+        direction TB
+        F3A[chains]
+        F3B[bridge_quotes]
+        F3C[bridge_executions]
+        F3D[cards]
+        F3E[card_transactions]
+        F3F[merchants]
+        F3G[merchant_api_keys]
+        F3H[payment_intents]
+        F3I[kyc_records]
+        F3J[aml_alerts]
+    end
+
+    F1 -->|"crecimiento<br/>2-3 meses"| F2
+    F2 -->|"escala<br/>3-6 meses"| F3
+
+    style F1 fill:#5B4DFF,color:#fff
+    style F2 fill:#7A6EFF,color:#fff
+    style F3 fill:#A56BFF,color:#fff

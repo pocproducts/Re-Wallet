@@ -1,0 +1,72 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Which EVM network a person is operating on.
+--
+-- ── Why this is a COLUMN and not a row ────────────────────────────────────────
+--
+-- `rewallet.wallets` has `wallets_address_key UNIQUE(address)` and one row per
+-- person and chain. Privy's embedded wallets are chain-agnostic EVM accounts: the
+-- SAME EVM address is valid on every configured EVM network. Adding a
+-- `chain_type = 'monad'` row would therefore (a) be refused by `wallets_address_key`,
+-- because there is no second address to put in it, and (b) require inventing a
+-- wallet the person does not have and cannot sign for. Monad is deliberately not
+-- in `WALLET_CHAIN_ORDER` either: it is a network an EVM address operates on, not
+-- a second wallet.
+--
+-- So the network in use is a recorded fact ON the existing row. One column, one
+-- default, no constraint changed, and no row added or removed.
+--
+-- ── Why CAIP-2 ────────────────────────────────────────────────────────────────
+--
+-- The value is `eip155:<chain id>` (CAIP-2, the chain-agnostic identifier
+-- standard; `eip155` is the EVM namespace and the reference is the chain id). It
+-- is self-describing: `1` alone is a number somebody has to look up, and the
+-- bare integer also collides with other namespaces. Chain ids below were verified
+-- on chain, not copied from memory: Monad mainnet answers `eth_chainId = 0x8f`
+-- (= 143) at `https://rpc.monad.xyz`, and Ethereum mainnet is 1.
+--
+-- ── Why the default is Ethereum mainnet ───────────────────────────────────────
+--
+-- The owner decided it: Monad is ADDED as a supported network, Ethereum is NOT
+-- replaced. Every row that exists today was written operating on Ethereum, so
+-- `eip155:1` is the value that describes it — and the value a brand-new row gets
+-- until a person chooses another network. Sending a transaction to the wrong
+-- chain is not recoverable for them, so the safe answer is the one the product
+-- has always meant.
+--
+-- ── Existing rows keep working with no data step ──────────────────────────────
+--
+-- Postgres 11+ fills existing rows with the default when a column is added with
+-- `DEFAULT ... NOT NULL`, so `ALTER TABLE ... ADD COLUMN` is the whole migration:
+-- there is no `UPDATE`, no backfill, and no window in which a row has no value.
+--
+-- The column is intentionally NOT constrained to the two supported ids. A CHECK
+-- here would make a future network require a migration to add, and the rule the
+-- product actually needs — refuse to operate on an unsupported network — belongs
+-- to the application (`src/domain/wallet/evmNetwork.ts` returns `null` and the
+-- caller refuses), not to a constraint that would break the write instead of the
+-- operation.
+--
+-- ── Safe to run twice ─────────────────────────────────────────────────────────
+--
+-- `ADD COLUMN IF NOT EXISTS` is a no-op when the column is already there, so this
+-- file is idempotent. Check first with:
+--
+--   SELECT column_name, data_type, column_default, is_nullable
+--     FROM information_schema.columns
+--    WHERE table_schema = 'rewallet' AND table_name = 'wallets'
+--      AND column_name = 'evm_network';
+--
+-- ── How to apply ──────────────────────────────────────────────────────────────
+--
+-- Two statements, applied in order. The Neon HTTP driver (`neon()` from
+-- `@neondatabase/serverless`) rejects several commands in one prepared statement
+-- (`42601 cannot insert multiple commands into a prepared statement`), so send
+-- this file one statement at a time — or run it through `psql`, which takes the
+-- whole file. Running it twice is safe: `ADD COLUMN IF NOT EXISTS` is a no-op.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE rewallet.wallets
+  ADD COLUMN IF NOT EXISTS evm_network text NOT NULL DEFAULT 'eip155:1';
+
+COMMENT ON COLUMN rewallet.wallets.evm_network IS
+  'EVM network this person operates on, CAIP-2 (eip155:<chain id>). One EVM address serves every EVM network, so this is a column and not a row: a second row would collide with wallets_address_key. Default eip155:1 (Ethereum mainnet) because Ethereum stays the default and Monad is added.';

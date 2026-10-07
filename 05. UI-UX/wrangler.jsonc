@@ -1,0 +1,20 @@
+{
+  // Un solo Worker: sirve el front estático y nada más.
+  //
+  // El backend NO entra acá. Sigue corriendo en local detrás del túnel, y eso
+  // está bien a propósito: **la URL del backend no necesita ser un dominio
+  // registrable**, solo la del front, porque es donde vive la passkey. Un
+  // `trycloudflare.com` serviría para el backend y no serviría para el front.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rewallet-app-dev",
+  "compatibility_date": "2026-10-02",
+  "main": "worker.js",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    { "pattern": "app-dev.rewallet.win", "custom_domain": true }
+  ],
+  "observability": { "enabled": false }
+}

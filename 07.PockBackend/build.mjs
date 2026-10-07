@@ -58,6 +58,71 @@ const nodeBuiltins = [
   'node:zlib',
 ];
 
+/**
+ * `@solana/web3.js`, pointed at its **browser** entry.
+ *
+ * ── Why this exists ──────────────────────────────────────────────────────────
+ *
+ * `@solana/web3.js` publishes no `exports` map. With `platform: 'neutral'` esbuild
+ * takes its `module` entry — `lib/index.esm.js` — which imports the Node builtins
+ * `util`, `http` and `https` and pulls `node-fetch` behind it.
+ * `@solana/spl-token` depends on that same package and therefore the same entry,
+ * and additionally reaches `bindings` through `bigint-buffer`. None of that exists
+ * in a Worker, so the build failed outright.
+ *
+ * ── Why the alias is on `@solana/web3.js` and not on `@solana/spl-token` ─────
+ *
+ * Because the `browser` entry is the one that exists to be bundled: it drops the
+ * Node transports. `@solana/spl-token` ships **no** browser entry — its `exports`
+ * map only exposes `.` — so there is nothing to alias it to, and its ESM build is
+ * already the one a bundler is meant to read.
+ *
+ * The alias matches **every** import of `@solana/web3.js`, including the one inside
+ * `@solana/spl-token`, which is the part that actually fixes that package: a
+ * source-level deep import would leave its internal bare import on the Node entry.
+ *
+ * ── Why an `alias` and not `platform: 'browser'` ─────────────────────────────
+ *
+ * `platform: 'browser'` is a switch for the **whole** bundle: it would change how
+ * every other dependency resolves, including the EVM paths that build correctly
+ * today. An alias changes exactly one resolution and leaves everything else alone,
+ * which is the property worth having in a bundle that already works.
+ *
+ * `mainFields: ['browser', …]` does **not** work for this package: its `browser`
+ * field is a *remap* of an already-resolved path, not an entry-point hint.
+ *
+ * ── Why the path is absolute ─────────────────────────────────────────────────
+ *
+ * Because the package has no `exports` map, esbuild cannot resolve a deep import
+ * written as a bare specifier; an absolute file path is the one form that means
+ * the same thing in every resolution mode.
+ *
+ * ── `bigint-buffer`, and why it is here too ─────────────────────────────────
+ *
+ * The same Node-first reach, one level deeper: `@solana/spl-token` loads
+ * `@solana/spl-token-group` and `@solana/spl-token-metadata`, which load
+ * `@solana/buffer-layout-utils`, which loads `bigint-buffer`. Its default entry is
+ * `dist/node.js`, and that file does `require('bindings')` — the **native** addon
+ * loader, which reaches `fs` and `path` and does not exist in a Worker. Its
+ * `browser` field points at `dist/browser.js`, which is the same buffer maths
+ * without the addon, and that is what this alias selects.
+ *
+ * `bindings` itself is not aliased: it is imported by exactly one file in the tree,
+ * `bigint-buffer/dist/node.js`, and aliasing it would paper over *what* is being
+ * loaded rather than selecting the right variant of the package that loads it.
+ *
+ * ── Why this is not `npm audit fix --force` ──────────────────────────────────
+ *
+ * Because that wants `@solana/web3.js@3.0.0`, a breaking major that changes these
+ * very APIs. The two moderates it would clear (`stream-json`, `uuid`, both via
+ * `jayson`) are documented in the README and stand until that major is taken on
+ * deliberately. See "Known dependency advisories".
+ */
+const alias = {
+  '@solana/web3.js': fileURLToPath(new URL('./node_modules/@solana/web3.js/lib/index.browser.esm.js', import.meta.url)),
+  'bigint-buffer': fileURLToPath(new URL('./node_modules/bigint-buffer/dist/browser.js', import.meta.url)),
+};
+
 const result = await build({
   absWorkingDir: projectRoot,
   entryPoints: ['src/index.ts'],
@@ -70,6 +135,7 @@ const result = await build({
   platform: 'neutral',
   mainFields: ['module', 'main'],
   conditions: ['workerd', 'worker', 'browser', 'import', 'default'],
+  alias,
   external: nodeBuiltins,
   sourcemap: false,
   minify: false,

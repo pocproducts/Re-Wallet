@@ -1,0 +1,49 @@
+flowchart TB
+    subgraph NEW2["🆕 NUEVO EN FASE 2"]
+        direction TB
+        N1["USDT en Monad<br/>(segundo asset)"]
+        N2["Privy Swap API<br/>(Uniswap interno)"]
+        N3["PimlicoSponsor<br/>(User pays USDC)"]
+        N4["Payment links<br/>con tracking"]
+        N5["Trust Policy<br/>completa"]
+        N6["Historial de política<br/>visible en UI"]
+        N7["Auto-compound<br/>en Aave"]
+    end
+
+    subgraph ASSETS["🪙 CAPA DE ASSETS"]
+        direction TB
+        A1["Asset Registry<br/>(USDC, USDT)"]
+        A2["Wallet Positions<br/>(balance por asset)"]
+        A3["Swap Orchestrator<br/>(decide ruta óptima)"]
+        A4["Balance Composer<br/>(suma todo a USD)"]
+    end
+
+    subgraph GAS2["⛽ GAS LAYER"]
+        direction TB
+        G1["GasService<br/>(interfaz única)"]
+        G2["PrivySponsor<br/>(fallback)"]
+        G3["PimlicoSponsor<br/>(default)"]
+        G1 --> G2
+        G1 --> G3
+    end
+
+    subgraph USERVIS["👤 LO QUE VE EL USUARIO"]
+        direction TB
+        UV1["Balance total en USD"]
+        UV2["Sin selector de assets"]
+        UV3["Sin saber que hubo swap"]
+        UV4["Gas pagado con USDC<br/>(nunca ve MON)"]
+    end
+
+    N1 --> A1
+    N2 --> A3
+    N3 --> G3
+    N4 --> A4
+    N5 --> A4
+    N6 --> UV1
+    N7 --> A2
+
+    A1 --> A2 --> A4
+    A3 --> A2
+    A4 --> UV1
+    UV1 --> UV2 --> UV3 --> UV4

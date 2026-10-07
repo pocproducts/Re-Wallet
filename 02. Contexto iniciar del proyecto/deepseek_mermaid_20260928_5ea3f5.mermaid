@@ -1,0 +1,19 @@
+flowchart TB
+    RULE1["🎯 Regla 1<br/>El usuario ve dólares,<br/>no tokens"]
+    RULE2["🎯 Regla 2<br/>El usuario nunca elige red"]
+    RULE3["🎯 Regla 3<br/>El usuario nunca ve gas"]
+    RULE4["🎯 Regla 4<br/>El usuario nunca ve una seed"]
+    RULE5["🎯 Regla 5<br/>El backend compone el saldo"]
+    RULE6["🎯 Regla 6<br/>Swaps y bridges son invisibles"]
+    RULE7["🎯 Regla 7<br/>La política decide, el modelo propone"]
+    RULE8["🎯 Regla 8<br/>Todo se audita"]
+    RULE9["🎯 Regla 9<br/>Cada fase agrega, no reescribe"]
+    RULE10["🎯 Regla 10<br/>El frontend no sabe de chains"]
+
+    RULE1 --> RULE2 --> RULE3 --> RULE4
+    RULE5 --> RULE6 --> RULE7 --> RULE8
+    RULE9 --> RULE10
+
+    style RULE1 fill:#34C759,color:#fff
+    style RULE5 fill:#34C759,color:#fff
+    style RULE9 fill:#FFB020,color:#000

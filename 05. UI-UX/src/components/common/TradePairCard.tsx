@@ -19,7 +19,17 @@ export interface TradePairCardProps {
   sourceTicker: string;
   sourceAmount: string;
   sourceBalance: string;
-  onSourceMax: () => void;
+  /**
+   * Qué hace el botón MAX del origen.
+   *
+   * Y **si se muestra**, porque antes no había forma de saberlo: el botón se
+   * dibujaba siempre y, cuando el saldo no se había podido leer, pulsarlo no
+   * completaba nada. Un control que parece completar el monto y no lo completa
+   * es la misma clase de mentira que un botón de "comprar" que no compra, sólo
+   * que más chica y más difícil de notar. Se esconde cuando no hay nada que
+   * poner, y cuando lo hay pone el saldo real.
+   */
+  onSourceMax?: () => void;
   /** Abre el selector de activo del origen. Si no viene, el ticker no es táctil. */
   onSelectSourceAsset?: () => void;
   /** Si la hoja del origen está abierta, para el `aria-expanded`. */
@@ -167,13 +177,20 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
           <span className="text-[11px] text-slate-400 font-medium">
             Saldo: {sourceBalance}
           </span>
-          <button
-            type="button"
-            onClick={onSourceMax}
-            className="text-xs font-black text-black uppercase hover:opacity-70 active:scale-95 transition-all cursor-pointer"
-          >
-            MAX
-          </button>
+          {/*
+            Sin MAX no queda nada a la derecha del saldo, y eso está bien: la
+            fila se queda con su texto y el peso se va al otro lado. Antes se
+            dibujaba el botón siempre y, sin saldo leído, no completaba nada.
+          */}
+          {onSourceMax && (
+            <button
+              type="button"
+              onClick={onSourceMax}
+              className="text-xs font-black text-black uppercase hover:opacity-70 active:scale-95 transition-all cursor-pointer"
+            >
+              MAX
+            </button>
+          )}
         </div>
 
         {sourceAssetSheet}

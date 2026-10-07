@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BottomNavbar } from './components/Navigation/BottomNavbar';
 import { WalletView } from './components/Wallet/WalletView';
 import { InvestmentsView } from './components/Wallet/InvestmentsView';
@@ -17,17 +17,44 @@ import { DigitalDollarsView } from './components/Investments/DigitalDollarsView'
 import { CryptoAssetsListView } from './components/Investments/CryptoAssetsListView';
 import { LoginGate } from './components/Auth/LoginGate';
 import { useSessionGate } from './hooks/useSessionGate';
+import { useNotifications } from './hooks/useNotifications';
+import { usePortfolio } from './hooks/usePortfolio';
+import { useDepositInfo } from './hooks/useDepositInfo';
+import { usePool } from './hooks/usePool';
+import { useWalletBalance } from './hooks/useWalletBalance';
 import { useUserWallets } from './hooks/useUserWallets';
-import { ChargeQrModal } from './components/Charge/ChargeQrModal';
+import { ChargeQrModal, type ChargeReceiveAddress } from './components/Charge/ChargeQrModal';
+import { CreateChargeView } from './components/Wallet/CreateChargeView';
+import { PayChargeView } from './components/Wallet/PayChargeView';
+import { useIncomingPaymentRequest } from './hooks/useIncomingPaymentRequest';
 import { NavTab, TransactionItem } from './types';
+import { relativeTimeLabel, treatmentFor, NOTIFICATIONS_UNAVAILABLE_CODE } from './services/notifications';
 import {
   X,
   Search,
   Bell,
   Loader2,
+  RefreshCw,
+  User,
+  ShieldCheck,
+  Wallet,
+  Link2,
 } from 'lucide-react';
 
 const TRANSACTIONS_STORAGE_KEY = 'rewallet_transactions_data';
+
+/*
+ * El ícono de cada categoría. Es el **único** mapa de categoría→pintura que
+ * existe: si mañana el backend emite otra, cae en `other` (`Bell`) y se muestra
+ * igual, con su frase, en vez de romper la fila.
+ */
+const CATEGORY_ICONS = {
+  user: User,
+  shield: ShieldCheck,
+  wallet: Wallet,
+  link: Link2,
+  bell: Bell,
+} as const;
 
 export default function App() {
   /*
@@ -53,6 +80,55 @@ export default function App() {
    * que se muestra, no un muro. Lo único que cambia es el aviso de abajo.
    */
   const { status: walletsStatus } = useUserWallets(sessionStatus === 'authenticated');
+
+  /*
+   * Los saldos se leen UNA vez por sesión, acá y no en cada pantalla.
+   *
+   * `GET /api/portfolio` va a la blockchain por request —el backend no cachea a
+   * propósito—, así que un hook por pantalla sería una lectura por cada
+   * navegación. El `App` lee una vez y le pasa el resultado a las tres vistas.
+   *
+   * Corre únicamente con la sesión abierta: la cookie es lo que prueba que hay
+   * sesión, y antes de eso la lectura no sirve.
+   */
+  const portfolio = usePortfolio(sessionStatus === 'authenticated');
+
+  /*
+   * Dónde se puede recibir y con qué dirección.
+   *
+   * Es una lectura distinta de la del portfolio, y por una razón concreta: el
+   * catálogo dice **qué se puede recibir** —incluido un activo que todavía no
+   * podemos leer, que igual es recibible— y el portfolio dice **cuánto** hay. La
+   * pantalla de depósito necesita las dos, y usa el saldo del portfolio: el
+   * catálogo no trae cifras y no puede inventar un `0`.
+   */
+  const depositInfo = useDepositInfo(sessionStatus === 'authenticated');
+
+  /*
+   * EL BALANCE DE LA BILLETERA — UN solo número, leído UNA vez por sesión.
+   *
+   * `GET /api/wallet-balance` es la composición que hace el backend: las dos
+   * cubetas (cripto libre e invertida) y el total, sumado en `bigint` y sin
+   * redondeo. Vive acá y no en cada pantalla por la misma razón que `usePool`:
+   * son lecturas de cadena, y una por navegación serían viajes extra a la red.
+   *
+   * Antes esta línea usaba `GET /api/digital-dollars`, que **no** es el balance:
+   * esa ruta abarca las dos cubetas sin ser ninguna de las dos. Todas las
+   * pantallas que mostraban dólares salían de ahí, así que ninguna pintaba el
+   * balance real. La ruta sigue montada en el backend —la pregunta por dólares
+   * digitales sigue teniendo respuesta— pero esta app ya no la llama.
+   *
+   * Y el total **no** se arma acá: se imprime el que llegó.
+   */
+  const balance = useWalletBalance(sessionStatus === 'authenticated');
+
+  /*
+   * Los avisos de la cuenta también se leen UNA vez por sesión, con el mismo
+   * corte que `usePortfolio`: `GET /api/notifications` es un `GET` con cookie, no
+   * hay push ni canal en vivo, así que se lee al cargar y cuando la persona
+   * recarga a mano.
+   */
+  const notifications = useNotifications(sessionStatus === 'authenticated');
   const [walletsWarningDismissed, setWalletsWarningDismissed] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<NavTab>('wallet');
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
@@ -63,73 +139,77 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeActionModal, setActiveActionModal] = useState<ActionModalType>(null);
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
+  /** La pantalla de cobrar por link, de tercer nivel como las de pool. */
+  const [isCreateChargeOpen, setIsCreateChargeOpen] = useState<boolean>(false);
+
+  /*
+   * EL LINK DE COBRO, LEÍDO AL ARRANCAR.
+   *
+   * Es la única parte de la app que mira dónde entró la persona, y vive **arriba**
+   * de la puerta de ingreso a propósito: alguien que abre un link de cobro sin
+   * sesión tiene que ver primero la puerta, entrar, y recién entonces el cobro. Si
+   * el id viviera dentro de la rama autenticada, se perdería al reiniciar la
+   * sesión y el link se abriría en la billetera de siempre sin decir nada.
+   *
+   * Y `clear()` borra la ruta cuando se cierra, así que una recarga no vuelve a
+   * abrir un cobro ya pagado: un link es de un solo uso y la barra de direcciones
+   * no tiene por qué seguir siendo el portador.
+   */
+  const incomingCharge = useIncomingPaymentRequest();
 
   // Estados de layout de 3er nivel
   const [isAavePoolsOpen, setIsAavePoolsOpen] = useState(false);
   const [isDigitalDollarsOpen, setIsDigitalDollarsOpen] = useState(false);
   const [isCryptoListOpen, setIsCryptoListOpen] = useState(false);
 
-  // Saldo mock de Bitcoin
-  const [btcBalance, setBtcBalance] = useState<number>(() => {
-    try {
-      const stored = localStorage.getItem('rewallet_btc_balance');
-      return stored ? parseFloat(stored) : 0.000186;
-    } catch {
-      return 0.000186;
-    }
-  });
+  /*
+   * EL POOL DE AAVE — se lee sólo mientras una pantalla abierta lo necesita.
+   *
+   * Antes este hook estaba montado siempre, con la sesión abierta: eso pedía
+   * `GET /api/pool` en **cada** carga de página, y `/api/pool` va a la cadena
+   * por pedido. Peor: `GET /api/wallet-balance` ya compone esa misma lectura de
+   * Aave, así que la app preguntaba dos veces lo mismo desde una sola carga. El
+   * memo del backend lo hacía barato por unos segundos, que es un parche y no una
+   * razón.
+   *
+   * Ahora el corte es la **pantalla abierta**, no la sesión:
+   *
+   *  - "Tu dinero" (`AavePoolsView`, con `DepositToPoolModal` adentro) y "Dólares
+   *    digitales" (`DigitalDollarsView`) son las únicas que piden el detalle de
+   *    la reserva: totales del pool, tasa de préstamo, saldos, gas,
+   *    reconciliación y la posición en `aMonUSDC`.
+   *  - La billetera y las inversiones **ya no** lo piden: sus píldoras de tasa
+   *    salen de la tasa del venue de Aave dentro del balance, que es el mismo
+   *    número con la misma guarda de reconciliación.
+   *
+   * Una pantalla cerrada no puede ser la razón de una lectura, y por eso el
+   * booleano se arma acá y no dentro de cada vista.
+   *
+   * Y `reload()` sigue siendo lo que se llama después de un depósito firmado: el
+   * número de pantalla tiene que salir de la cadena, no del hecho de que la
+   * persona firmó. Eso pasa en "Tu dinero", que es una de las pantallas que
+   * mantienen el corte abierto.
+   */
+  const pool = usePool(
+    sessionStatus === 'authenticated' && (isAavePoolsOpen || isDigitalDollarsOpen),
+  );
 
-  const handleUpdateBtcBalance = (newVal: number) => {
-    setBtcBalance(newVal);
-    try {
-      localStorage.setItem('rewallet_btc_balance', newVal.toString());
-    } catch (e) {
-      console.warn('Error saving btc balance:', e);
-    }
-  };
+  /*
+   * Actividad arranca **vacía**.
+   *
+   * Antes el estado inicial eran cuatro movimientos escritos a mano —cuatro
+   * “Compra de Cryptos”, con fecha de septiembre, `- 4.000,00 ARS`,
+   * `+ 7,193689 TRX`, `+ 18,93880759 DOGE`— y se guardaban en `localStorage`, así
+   * que seguían ahí después de cada recarga. Eran la prueba visible de que
+   * aquella persona había movido plata que nunca movió.
+   *
+   * Hoy la lista es exactamente lo que el backend conoce: nada. El array sigue
+   * viviendo acá porque los cobros que la persona **crea** en la app sí son un
+   * hecho —uno lo generó ella y lo puede ver—, pero ya no se siembra con
+   * ejemplos.
+   */
+  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
 
-  // Lista de transacciones en actividad con persistencia
-  const [transactions, setTransactions] = useState<TransactionItem[]>([
-    {
-      id: 'tx-1',
-      title: 'Compra de Cryptos',
-      date: '25 de Septiembre',
-      amount: '- 4.000,00 ARS',
-      isPositive: false,
-      type: 'ars',
-      section: 'Hoy',
-    },
-    {
-      id: 'tx-2',
-      title: 'Compra de Cryptos',
-      date: '25 de Septiembre',
-      amount: '+ 7,193689 TRX',
-      isPositive: true,
-      type: 'trx',
-      section: 'Hoy',
-    },
-    {
-      id: 'tx-3',
-      title: 'Compra de Cryptos',
-      date: '24 de Septiembre',
-      amount: '+ 18,93880759 DOGE',
-      isPositive: true,
-      type: 'doge',
-      section: 'Anteriores',
-    },
-    {
-      id: 'tx-4',
-      title: 'Compra de Cryptos',
-      date: '24 de Septiembre',
-      amount: '- 3.000,00 ARS',
-      isPositive: false,
-      type: 'ars',
-      section: 'Anteriores',
-    },
-  ]);
-
-  // Cargar las transacciones mock guardadas. El perfil **no** se carga de acá:
-  // viene de Privy.
   useEffect(() => {
     try {
       const storedTx = localStorage.getItem(TRANSACTIONS_STORAGE_KEY);
@@ -158,9 +238,23 @@ export default function App() {
   };
 
   /*
+   * La dirección de cobro: la primera red real que el backend reportó.
+   *
+   * Antes el modal de cobrar usaba un saldo de Bitcoin escrito a mano y un
+   * `@user` como destino. Ahora usa la dirección que devolvió
+   * `GET /api/portfolio`, y si no hay ninguna no genera el cobro: es preferible
+   * no poder cobrar antes que mostrar un QR que no lleva a ninguna parte.
+   */
+  const receiveAddress = useMemo<ChargeReceiveAddress | null>(() => {
+    const first = portfolio.receiveAddresses[0];
+    return first ? { label: first.label, address: first.address } : null;
+  }, [portfolio.receiveAddresses]);
+
+  /*
    * Cerrar sesión: primero el backend (borra la cookie) y después la de Privy.
-   * Lo que se mantiene es lo mismo que estaba antes —transacciones, saldo y
-   * posición en las pestañas— porque nada de eso es identidad.
+   * Lo que se mantiene es lo mismo que estaba antes —transacciones y posición
+   * en las pestañas— porque nada de eso es identidad. El saldo mock que
+   * también se mantenía acá ya no existe.
    */
   const handleSignOut = () => {
     void signOut().then(() => {
@@ -169,10 +263,53 @@ export default function App() {
       setIsDigitalDollarsOpen(false);
       setIsCryptoListOpen(false);
       setIsScannerOpen(false);
+      setIsCreateChargeOpen(false);
       setActiveActionModal(null);
       setCurrentTab('wallet');
     });
   };
+
+  /*
+   * Un 401 en el feed de avisos significa que esta persona **ya no tiene
+   * sesión** —la cookie era la que autorizaba la lectura—, no que los avisos
+   * estuvieran rotos. La salida es la misma de siempre: cerrar sesión. Abrir un
+   * modal para alguien que ya está afuera sería mostrarle avisos de una cuenta a
+   * la que no tiene acceso.
+   */
+  const signedOutHandled = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (!notifications.signedOut) {
+      signedOutHandled.current = false;
+      return;
+    }
+
+    // Una sola vez por episode: si no, el efecto vuelve a cerrar sesión cada
+    // render mientras el 401 siga en pantalla.
+    if (signedOutHandled.current) return;
+    signedOutHandled.current = true;
+
+    void signOut();
+  }, [notifications.signedOut, signOut]);
+
+  /*
+   * Abrir el modal ES la visita: desde acá en adelante lo más reciente se
+   * cuenta como visto. Sin esto el punto de la campana no se apagaría nunca.
+   *
+   * las dependencias son las dos cosas que realmente cambian —que el modal esté
+   * abierto y la identidad de `markSeen`, que sólo cambia cuando llegó un feed
+   * nuevo—. Depender del objeto entero de avisos volvería a disparar el efecto
+   * cada vez que el marcador local cambia, o sea siempre.
+   */
+  const notificationsStatus = notifications.status;
+  const markNotificationsSeen = notifications.markSeen;
+
+  useEffect(() => {
+    if (!isNotificationsOpen) return;
+    if (notificationsStatus !== 'ready') return;
+
+    markNotificationsSeen();
+  }, [isNotificationsOpen, notificationsStatus, markNotificationsSeen]);
 
   // Handle visual del usuario ($joaquin / $joadata)
   const userTag = profile?.nombre
@@ -180,7 +317,7 @@ export default function App() {
     : '$joadata';
 
   const isAnyThirdLevelOpen =
-    isAavePoolsOpen || isDigitalDollarsOpen || isCryptoListOpen;
+    isAavePoolsOpen || isDigitalDollarsOpen || isCryptoListOpen || isCreateChargeOpen;
 
   /*
    * El botón de "volver a empezar" del fallo de intercambio se deshabilita
@@ -314,6 +451,8 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <WalletView
                         profile={profile}
+                        portfolio={portfolio}
+                        balance={balance}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToInvestments={() => setCurrentTab('investments')}
                         onNavigateToActivity={() => setCurrentTab('activity')}
@@ -322,6 +461,7 @@ export default function App() {
                         onOpenScanner={() => setIsScannerOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
+                        hasUnreadNotifications={notifications.hasUnread}
                         onOpenAavePools={() => setIsAavePoolsOpen(true)}
                       />
                     </div>
@@ -332,11 +472,13 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <InvestmentsView
                         profile={profile}
+                        balance={balance}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToWallet={() => setCurrentTab('wallet')}
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
+                        hasUnreadNotifications={notifications.hasUnread}
                         onOpenDigitalDollars={() => setIsDigitalDollarsOpen(true)}
                         onOpenCryptoList={() => setIsCryptoListOpen(true)}
                       />
@@ -353,6 +495,7 @@ export default function App() {
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
+                        hasUnreadNotifications={notifications.hasUnread}
                       />
                     </div>
                   )}
@@ -382,9 +525,13 @@ export default function App() {
         <ChargeQrModal
           isOpen={isChargeModalOpen}
           onClose={() => setIsChargeModalOpen(false)}
-          userTag={userTag}
-          btcBalance={btcBalance}
-          onUpdateBtcBalance={handleUpdateBtcBalance}
+          receiveAddress={receiveAddress}
+          /*
+           * El mismo origen que recibe `CreateChargeView`, y por el mismo
+           * motivo: el link del cobro se arma en el navegador, no con una
+           * constante escrita a mano acá.
+           */
+          origin={typeof window === 'undefined' ? '' : window.location.origin}
           onAddTransaction={handleAddTransaction}
           onNavigateToActivity={() => {
             setIsChargeModalOpen(false);
@@ -392,24 +539,33 @@ export default function App() {
           }}
         />
 
-        {/* =========================================================================
-            MODAL DE ACCIÓN PANTALLA COMPLETA VERDE LIMA (DEPOSITAR, USAR, ENVIAR)
-            CUBRE TODA LA PANTALLA
-           ========================================================================= */}
+        {/*
+          MODAL DE ACCIÓN A PANTALLA COMPLETA VERDE LIMA (DEPOSITAR, ENVIAR).
+
+          'usar' ya no se puede pasar: se sacó su único llamador —el botón
+          "Usar" de la billetera— porque su menú era compra y venta, y no hay
+          motor de swap.
+        */}
         <ActionFullscreenModal
           action={activeActionModal}
           onClose={() => setActiveActionModal(null)}
           userTag={userTag}
+          depositInfo={depositInfo}
+          holdings={portfolio.holdings}
+          balance={balance}
         />
 
         {/* =========================================================================
             LAYOUTS DE 3ER NIVEL (PANTALLA COMPLETA SIN HEADER SUPERIOR NI BOTTOM NAVBAR)
            ========================================================================= */}
 
-        {/* 1. Rendimientos Pools de Aave V3 (3er nivel desde píldora 20.77% anual o ver más) */}
+        {/* 1. Rendimientos Pools de Aave V3 (3er nivel desde Inversiones -> Ver más) */}
         {isAavePoolsOpen && (
           <AavePoolsView
             onBack={() => setIsAavePoolsOpen(false)}
+            pool={pool}
+            balance={balance}
+            onReload={pool.reload}
           />
         )}
 
@@ -417,6 +573,8 @@ export default function App() {
         {isDigitalDollarsOpen && (
           <DigitalDollarsView
             onBack={() => setIsDigitalDollarsOpen(false)}
+            pool={pool}
+            balance={balance}
             onOpenAavePools={() => {
               setIsDigitalDollarsOpen(false);
               setIsAavePoolsOpen(true);
@@ -429,7 +587,39 @@ export default function App() {
           <CryptoAssetsListView
             onBack={() => setIsCryptoListOpen(false)}
             userTag={userTag}
+            portfolio={portfolio}
+            balance={balance}
+            /*
+              La misma lectura que usa el modal de acciones. Entra por props
+              porque ya está leída en esta sesión: pedirla otra vez desde la lista
+              sería una segunda respuesta del servidor para la misma pregunta.
+            */
+            depositInfo={depositInfo}
           />
+        )}
+
+        {/* 4. Cobrar por link (3er nivel desde Billetera -> Cobrar) */}
+        {isCreateChargeOpen && (
+          <CreateChargeView
+            /*
+             * El origen sale de `location` **acá**, en el `App`, y no dentro de la
+             * pantalla: esta no sabe de dónde vino la app, y el único que lo sabe
+             * es el que la montó. Un link armado con un origen escrito a mano sería
+             * un link que no abre la app en producción.
+             */
+            origin={typeof window === 'undefined' ? '' : window.location.origin}
+            onClose={() => setIsCreateChargeOpen(false)}
+          />
+        )}
+
+        {/* =========================================================================
+            EL COBRO QUE LLEGÓ POR EL LINK — pantalla de tercer nivel, como las de
+            Inversiones. Se abre arriba de todo porque es lo que esa persona vino a
+            hacer: si una persona abre un link de cobro y aterriza en la billetera,
+            el cobro se perdió sin ningún error que lo diga.
+           ========================================================================= */}
+        {incomingCharge.id !== null && sessionStatus === 'authenticated' && (
+          <PayChargeView id={incomingCharge.id} onClose={incomingCharge.clear} />
         )}
 
         {/* Modal de Feedback & Reportar Bugs (Botón BUG Flotante) */}
@@ -511,8 +701,20 @@ export default function App() {
           </div>
         )}
 
-        {/* Modal de Notificaciones */}
-        {isNotificationsOpen && (
+        {/*
+         * MODAL DE NOTIFICACIONES — lo que pasó en esta cuenta, y nada más.
+         *
+         * Cada fila dice **exactamente** lo que dice el backend: `message`
+         * verbatim, la hora derivada de `createdAt` y el ícono de la categoría.
+         * No hay texto de esta pantalla que se parezca a un aviso, porque un
+         * aviso escrito a mano es un hecho que no pasó.
+         *
+         * Y los cuatro estados se distinguen como en los saldos: no hay nada
+         * (`empty`), no se pudo leer (`unavailable`), todavía se lee
+         * (`idle`/`loading`) y hay (`ready`). "No hay noticias" y "no pudimos
+         * leer las noticias" son hechos distintos y se ven distintos.
+         */}
+        {isNotificationsOpen && !notifications.signedOut && (
           <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center px-4 pb-4 safe-top-12 animate-in fade-in duration-200">
             <div className="w-full max-w-sm bg-white rounded-[32px] p-5 shadow-2xl relative space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -524,41 +726,128 @@ export default function App() {
                     Notificaciones
                   </h3>
                 </div>
-                <button
-                  onClick={() => setIsNotificationsOpen(false)}
-                  type="button"
-                  className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-black hover:bg-slate-200 transition-colors"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              {/*
-               * "Face ID Activo" se fue de acá.
-               *
-               * Decía, con un tilde verde, que la sesión biométrica estaba
-               * protegida — y no había **nada** detrás: era un texto fijo que se
-               * mostrara que la passkey existiera o no. La Hoja 1 prohibe que la
-               * persona vea un estado que el sistema no comprobó, y una
-               * notificación con tilde verde es la forma más cara de mentir:
-               * nadie la cuestiona.
-               *
-               * No se reemplaza con otro avisofixed: se deja de avisar. Cuando
-               * el flujo de Privy esté probado y sepamos leer del usuario si
-               * tiene una passkey, se vuelve a mostrar **derivado de ese dato**.
-               */}
-              <div className="space-y-2.5 text-xs">
-
-                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-2.5">
-                  <div className="w-4 h-4 rounded-full bg-[#ccff00] text-black font-bold flex items-center justify-center text-[11px] shrink-0 mt-0.5">
-                    $
-                  </div>
-                  <div>
-                    <span className="font-bold text-black block">Rendimiento Activo (20.77%)</span>
-                    <span className="text-slate-500 text-[11px]">Tus fondos en pesos están generando rendimiento anual diario.</span>
-                  </div>
+                <div className="flex items-center gap-1">
+                  {/*
+                   * Recargar a mano. No hay push: el feed se lee al abrir la app
+                   * y cuando la persona lo pide. Sin este botón, un aviso nuevo
+                   * sólo aparecería recargando la página entera.
+                   */}
+                  <button
+                    onClick={notifications.reload}
+                    type="button"
+                    aria-label="Volver a leer tus notificaciones"
+                    title="Actualizar"
+                    disabled={notifications.status === 'loading'}
+                    className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-black hover:bg-slate-200 transition-colors disabled:opacity-60 cursor-pointer"
+                  >
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 ${
+                        notifications.status === 'loading' ? 'animate-spin' : ''
+                      }`}
+                    />
+                  </button>
+                  <button
+                    onClick={() => setIsNotificationsOpen(false)}
+                    type="button"
+                    aria-label="Cerrar notificaciones"
+                    className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-black hover:bg-slate-200 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
+
+              {/* Leyendo: el mismo tratamiento neutro de la puerta de ingreso. */}
+              {(notifications.status === 'idle' || notifications.status === 'loading') && (
+                <div className="flex flex-col items-center justify-center gap-3 py-6 font-sans">
+                  <Loader2 className="w-5 h-5 text-black animate-spin" />
+                  <p className="text-xs font-medium text-slate-500">Cargando…</p>
+                </div>
+              )}
+
+              {/*
+               * NO SE PUDO LEER. Deliberadamente **no** es la lista vacía: acá
+               * puede haber eventos que no llegamos a leer, y mostrar "no tenés
+               * nada" sería afirmar lo contrario. Es el mismo ámbar de la nota de
+               * saldo ilegible (`usdcNote`): una convención, no dos.
+               */}
+              {notifications.status === 'unavailable' && (
+                <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-start gap-2.5">
+                  <div className="w-5 h-5 shrink-0 mt-0.5 text-amber-600 font-black flex items-center justify-center text-[13px]">
+                    !
+                  </div>
+                  <div>
+                    <span className="font-bold text-amber-900 block">
+                      No pudimos leer tus avisos
+                    </span>
+                    <span className="text-amber-700 text-[11px] leading-snug block mt-0.5">
+                      {notifications.failureCode === NOTIFICATIONS_UNAVAILABLE_CODE
+                        ? 'Los eventos de tu cuenta no se pudieron leer. No es que no haya pasado nada: probá de nuevo en un rato.'
+                        : 'No pudimos conectarnos para leer los eventos de tu cuenta. Probá de nuevo en un rato.'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* No hay eventos. Un hecho, dicho como un hecho. */}
+              {notifications.status === 'empty' && (
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-2.5">
+                  <div className="w-5 h-5 shrink-0 mt-0.5 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center">
+                    <Bell className="w-3 h-3 stroke-[2.2]" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-700 block">Nada nuevo</span>
+                    <span className="text-slate-400 text-[11px] leading-snug block mt-0.5">
+                      Cuando algo pase en tu cuenta —que entres, que se cree una
+                      billetera, que conectes un método de acceso— te avisamos acá.
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* El feed, tal cual. */}
+              {notifications.status === 'ready' && (
+                <div className="space-y-2.5 text-xs max-h-[60vh] overflow-y-auto">
+                  {notifications.notifications.map((item) => {
+                    const treatment = treatmentFor(item.category);
+                    const Icon = CATEGORY_ICONS[treatment.icon];
+                    const when = relativeTimeLabel(item.createdAt);
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-2.5"
+                      >
+                        <div
+                          className={`w-5 h-5 shrink-0 mt-0.5 rounded-full flex items-center justify-center ${treatment.badgeBg} ${treatment.badgeText}`}
+                        >
+                          <Icon className="w-3 h-3 stroke-[2.2]" />
+                        </div>
+                        <div className="min-w-0">
+                          {/*
+                           * `message` va **verbatim**. No se reescribe, no se
+                           * resume, no se le agrega el `eventType`: la frase es del
+                           * backend y acá sólo se la muestra.
+                           */}
+                          <span className="font-bold text-slate-700 block leading-snug">
+                            {item.message}
+                          </span>
+                          <span className="text-slate-400 text-[11px] flex items-center gap-1.5 mt-0.5">
+                            <span>{treatment.label}</span>
+                            {/* Sin `createdAt` legible no hay hora: no se inventa. */}
+                            {when !== null && (
+                              <>
+                                <span aria-hidden="true">&middot;</span>
+                                <span>{when}</span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
