@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ArrowLeft, ShieldCheck, Loader2 } from 'lucide-react';
 
 import { DepositToPoolModal } from './DepositToPoolModal';
 import { formatAmount, formatPercent, projectYearlyGain } from '../../services/pool';
+import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import type { PoolScreenView } from '../../hooks/usePool';
 import type { PoolAmount, PoolField } from '../../services/pool';
 import { usePoolDeposit, type PoolDeposit } from '../../hooks/usePoolDeposit';
@@ -11,6 +12,12 @@ interface AavePoolsViewProps {
   onBack: () => void;
   /** La lectura del pool, hecha una vez por sesión en el `App`. */
   pool: PoolScreenView;
+  /**
+   * El balance completo, también leído una vez por sesión en el `App`. Trae una
+   * fila por lugar donde el dinero rinde: sin él, esta tarjeta sólo puede hablar
+   * de Aave y fingir que es todo.
+   */
+  balance: WalletBalanceScreenView;
   /** Vuelve a leer el pool: lo que se llama después de un depósito firmado. */
   onReload: () => void;
 }
@@ -32,10 +39,14 @@ interface AavePoolsViewProps {
  *
  * ── Lo que sigue sin-catching ────────────────────────────────────────────────
  *
- * - Una reserva ilegible **no** muestra `0%`: dice que no se pudo leer. Un `0%`
- *   de rendimiento es una afirmación sobre plata que la persona no tiene.
- * - La proyección anual lleva la palabra "estimación" y la frase de que el ritmo
+ * - Una reserva ilegible **no** muestra `0%`: deja el hueco con su guion. Un
+ *   `0%` de rendimiento es una afirmación sobre plata que la persona no tiene.
+ * - La proyección anual lleva la palabra "estimación", dice **en Aave** —porque
+ *   es la proyección de Aave, no de toda la billetera— y la frase de que el ritmo
  *   cambia. No es una promesa: es aritmética sobre el APR de este momento.
+ * - La posición se lista **por lugar**: una fila por cada venue legible del
+ *   balance, con su nombre y su cifra exacta. Un cero se muestra como cero; un
+ *   lugar que no se pudo leer no se dibuja.
  * - El frontend **no** conoce ninguna dirección de contrato. Lo que firma son
  *   transacciones que el servidor construyó.
  */
@@ -56,7 +67,7 @@ const PoolAmountCell: React.FC<{
   );
 };
 
-export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, onReload }) => {
+export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, balance, onReload }) => {
   const [isDepositOpen, setIsDepositOpen] = useState(false);
   const flow: PoolDeposit = usePoolDeposit(onReload);
 
@@ -64,6 +75,25 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, onRe
   const supplyApr = view?.displayableSupplyApr ?? null;
   const borrowApr = view?.apr.borrow.status === 'ok' ? view.apr.borrow.value ?? null : null;
   const position = view?.position.aTokenBalance;
+
+  /*
+   * TU POSICIÓN ES DE TODOS LOS LUGARES, NO DE UNO.
+   *
+   * Esta tarjeta se llama "Tu dinero" y antes listaba una sola fila: lo depositado
+   * en Aave. El detalle de Aave tiene su propia lectura, y esa fila se queda como
+   * respaldo para cuando todavía no llegó el balance —sin él, la tarjeta se
+   * dibujaría vacía por culpa de otra lectura que aún no terminó, y eso no es
+   * verdad sobre el dinero de nadie.
+   *
+   * El filtro deja pasar sólo lo que se pudo leer: un lugar ilegible no se
+   * dibuja, como en el resto de la app. Un lugar que se leyó y tiene **cero** sí
+   * se dibuja, porque el cero es un hecho verdadero y esconderlo haría creer que
+   * el dinero se perdió entre venues.
+   */
+  const readableVenues = useMemo(
+    () => (balance?.yield?.venues ?? []).filter((venue) => venue.status === 'ok'),
+    [balance],
+  );
 
   /*
    * Lo que el depósito de esta persona rendería en un año, al ritmo de este
@@ -104,17 +134,15 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, onRe
               Leyendo el pool…
             </div>
           ) : supplyApr === null ? (
-            <>
-              <div className="flex items-baseline">
-                <span className="text-4xl sm:text-[42px] font-black font-display tracking-tight text-slate-300">—</span>
-                <span className="text-sm font-semibold text-slate-500 ml-2">sin cifra legible</span>
-              </div>
-              <div className="bg-amber-50 rounded-2xl p-3 text-[11px] text-amber-700 leading-relaxed">
-                No pudimos leer la reserva de USDC del pool. No te mostramos un 0%
-                porque un 0% de rendimiento se lee como plata perdida, y no es lo
-                que pasó: es que la lectura falló.
-              </div>
-            </>
+            /*
+             * La reserva no se pudo leer: no hay cifra y no hay cartel que lo
+             * explique. Un `0%` sería una afirmación sobre plata que la persona
+             * no tiene, así que se deja el hueco con su guion y se sigue. La
+             * lectura vuelve sola en la próxima.
+             */
+            <div className="flex items-baseline">
+              <span className="text-4xl sm:text-[42px] font-black font-display tracking-tight text-slate-300">—</span>
+            </div>
           ) : (
             <>
               <div className="flex items-baseline">
@@ -136,14 +164,16 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, onRe
             </>
           )}
 
-          {/* El depósito, o la frase de por qué no se puede hacer todavía. */}
+          {/*
+            El depósito, o su ausencia.
+
+            Si la posición no se pudo leer, el botón **no** aparece: depositar
+            sobre un saldo que no conocemos no es una acción que vaya a
+            funcionar. Esa guarda queda —es un hecho sobre la acción— pero deja
+            de gritar como si la pantalla entera estuviera rota.
+          */}
           {view !== null &&
-            (position?.status === 'unreadable' ? (
-              <div className="bg-amber-50 rounded-2xl p-3 text-[11px] text-amber-700 leading-relaxed">
-                No pudimos leer tu posición en el pool. No podés depositar sobre un
-                saldo que no conocemos.
-              </div>
-            ) : (
+            (position?.status === 'unreadable' ? null : (
               <button
                 onClick={() => setIsDepositOpen(true)}
                 type="button"
@@ -161,15 +191,37 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, onRe
             TU POSICIÓN
           </span>
 
-          <div className="flex items-center justify-between py-1">
-            <span className="text-xs font-medium text-slate-700">Depositado (aMonUSDC)</span>
-            <PoolAmountCell field={position ?? { status: 'unreadable', reason: 'UNREADABLE' }} prefix="U$" fallback="No se pudo leer" />
-          </div>
+          {readableVenues.length > 0 ? (
+            readableVenues.map((venue) => (
+              <div key={venue.key} className="flex items-center justify-between py-1">
+                <span className="text-xs font-medium text-slate-700">{venue.label}</span>
+                {/*
+                  El cero se pinta como cero, en el gris de las cifras que no
+                  están reclamando nada. Es un hecho verdadero: se leyó el lugar
+                  y ahí no hay nada.
+                */}
+                <span
+                  className={`text-xs font-bold ${
+                    venue.balance.isZero ? 'text-slate-400' : 'text-slate-800'
+                  }`}
+                >
+                  {`U$${venue.balance.formatted}`}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="flex items-center justify-between py-1">
+              <span className="text-xs font-medium text-slate-700">Depositado (aMonUSDC)</span>
+              <PoolAmountCell field={position ?? { status: 'unreadable', reason: 'UNREADABLE' }} prefix="U$" fallback="No se pudo leer" />
+            </div>
+          )}
 
           <div className="border-t border-slate-100" />
 
           <div className="flex items-center justify-between py-1">
-            <span className="text-xs font-medium text-slate-700">En un año (estimación)</span>
+            <span className="text-xs font-medium text-slate-700">
+              En un año en Aave (estimación)
+            </span>
             {yearly === null ? (
               <span className="text-xs font-bold text-amber-600">Sin dato</span>
             ) : (
@@ -178,8 +230,9 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, onRe
           </div>
 
           <p className="text-[11px] text-slate-500 leading-relaxed font-normal pt-1">
-            La estimación multiplica tu depósito por el ritmo de este momento. El
-            ritmo cambia con el uso del pool: no es una promesa de rendimiento.
+            La estimación multiplica tu depósito en Aave por el ritmo de este
+            momento. El ritmo cambia con el uso del pool: no es una promesa de
+            rendimiento, ni de toda tu billetera.
           </p>
         </div>
 

@@ -19,9 +19,11 @@ import { DEPOSIT_FAILURE_TEXT, type PoolDeposit } from '../../hooks/usePoolDepos
  *
  * ── Por qué los estados van antes de la firma ────────────────────────────────
  *
- * "No tenés USDC", "no tenés MON para el gas" y "no pudimos leer tu saldo" se
- * dicen **antes** de que la persona firme nada. Después de firmar, un cartel de
- * error es un problema; antes, es una frase.
+ * "No tenés USDC" y "no tenés MON para el gas" se dicen **antes** de que la
+ * persona firme nada. Después de firmar, un cartel de error es un problema;
+ * antes, es una frase. Lo que no se pudo leer ya no se anuncia con una caja: la
+ * acción que dependía de esa cifra simplemente no se habilita, y el rótulo
+ * deshabilitado ya lo dice.
  *
  * ── Por qué el gas es un estado y no un detalle ───────────────────────────────
  *
@@ -132,16 +134,20 @@ export const DepositToPoolModal: React.FC<DepositToPoolModalProps> = ({ pool, fl
             <span className="text-sm font-semibold text-slate-500">USDC</span>
           </div>
 
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Tenés disponible</span>
-            {available.status === 'ok' ? (
+          {/*
+            "Tenés disponible" existe para pintar una cifra que se pudo leer. Si
+            no se leyó, la fila no se dibuja: un `No pudimos leerlo` al lado de
+            un número que no está es ruido, y la fila ya estaba honestamente
+            ausente.
+          */}
+          {available.status === 'ok' && (
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 font-medium">Tenés disponible</span>
               <span className="font-bold text-slate-800">
                 {formatAmount(BigInt(available.value?.raw ?? '0'), decimals, 'U$')}
               </span>
-            ) : (
-              <span className="font-bold text-amber-600">No pudimos leerlo</span>
-            )}
-          </div>
+            </div>
+          )}
 
           {/*
             "Depositar todo" con la cifra exacta que dijo la cadena: sin centavos
@@ -169,26 +175,22 @@ export const DepositToPoolModal: React.FC<DepositToPoolModalProps> = ({ pool, fl
             </div>
           )}
 
-          {available.status === 'unreadable' && (
-            <div className="bg-amber-50 rounded-2xl p-3 text-[11px] text-amber-700 leading-relaxed">
-              No pudimos leer tu saldo de USDC. No vamos a construir un depósito
-              sin saber cuánto tenés, así que queda deshabilitado hasta que la
-              lectura vuelva.
-            </div>
-          )}
+          {/*
+            El botón de abajo sigue deshabilitado sin la cifra —eso es un hecho
+            sobre la acción—, pero acá ya no se lo anuncia: el rótulo deshabilitado
+            alcanza y no hace falta repetir el motivo en una caja aparte.
+          */}
         </div>
 
         {/* El gas, dicho antes de firmar y no después. */}
-        {gas.status === 'unreadable' && (
-          <div className="bg-amber-50 rounded-[24px] p-4 flex gap-3 items-start">
-            <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-amber-700 leading-relaxed">
-              No pudimos leer cuánto MON tenés. El depósito es en la red principal
-              de Monad y paga gas, así que sin MON no se puede firmar.
-            </p>
-          </div>
-        )}
+        {/*
+          El gas.
 
+          Cero MON es un hecho verdadero y se dice: sin gas no hay transacción,
+          y eso hay que explicarlo. Si lo que no se pudo leer es la cifra, en
+          cambio, el botón de abajo ya queda deshabilitado —guarda real— y el
+          motivo se alcanza a leer en el rótulo: no se abre otra caja de aviso.
+        */}
         {gas.status === 'ok' && !hasGas && (
           <div className="bg-amber-50 rounded-[24px] p-4 flex gap-3 items-start">
             <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -207,8 +209,12 @@ export const DepositToPoolModal: React.FC<DepositToPoolModalProps> = ({ pool, fl
         <div className="bg-white rounded-[24px] p-4 border border-slate-100">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500">Rendimiento actual del pool</span>
-            <span className="text-sm font-extrabold text-slate-900">
-              {supplyApr === null ? 'No se pudo leer' : formatPercent(supplyApr)}
+            <span
+              className={`text-sm font-extrabold ${
+                supplyApr === null ? 'text-slate-300' : 'text-slate-900'
+              }`}
+            >
+              {supplyApr === null ? '—' : formatPercent(supplyApr)}
             </span>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed mt-2">
