@@ -34,7 +34,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { readRewalletWalletBalance, type WalletBalanceView } from '../services/walletBalance';
+import {
+  readRewalletWalletBalance,
+  type WalletBalanceView,
+  type WalletBalanceYieldView,
+} from '../services/walletBalance';
 import { ApiError } from '../services/api';
 
 export type WalletBalanceStatus =
@@ -59,6 +63,18 @@ export interface WalletBalanceScreenView {
   readonly complete: boolean;
   /** The sentence for a partial headline, or `null` when it is whole. */
   readonly note: string | null;
+  /**
+   * The **combined** annual figure of every yield venue, as the service read it:
+   * the exact ratio, the per-venue rows and the sentence when it is incomplete.
+   *
+   * Published whole, not summarized. `rate` is `null` exactly when the reads
+   * were not whole, and `incompletenessNote` is the only sentence this hook ever
+   * shows about the yield: a partial weighted mean is not published anywhere
+   * between the backend and the screen, so there is nothing for a card to fall
+   * back to. `null` when nothing arrived at all — which is a failed read, never
+   * a yield of zero.
+   */
+  readonly yield: WalletBalanceYieldView | null;
   /** Re-reads. Decided by the person or by a signed deposit, never by a render. */
   readonly reload: () => void;
 }
@@ -143,6 +159,9 @@ export const useWalletBalance = (enabled: boolean): WalletBalanceScreenView => {
       total: balance === null ? null : (balance.total.usd?.formatted ?? null),
       complete: balance !== null && balance.total.complete,
       note: balance === null ? null : balance.total.incompletenessNote,
+      // Passed through untouched: no rounding, no sentence, no re-reading of the
+      // payload. The only bucket that carries a yield is the invested one.
+      yield: balance === null ? null : balance.investedValue.yield,
       reload: load,
     }),
     [status, failureCode, balance, load],

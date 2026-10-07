@@ -6,8 +6,13 @@ import React, { useMemo, useState } from 'react';
  * es una promesa de rendimiento. Cuando T5 exista, la tasa entra desde el pool.
  */
 import { splitUsdDisplay } from '../../services/portfolio';
-import { BALANCE_UNREADABLE_NOTE } from '../../services/walletBalance';
+import {
+  BALANCE_UNREADABLE_NOTE,
+  YIELD_UNREADABLE_NOTE,
+  formatYieldRate,
+} from '../../services/walletBalance';
 import { BalancePieceRow } from './BalancePieceRow';
+import { YieldVenueRow } from './YieldVenueRow';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import { formatPercent, projectYearlyGain } from '../../services/pool';
 import type { PoolScreenView } from '../../hooks/usePool';
@@ -65,6 +70,32 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
 
   const parts = dollars?.parts ?? [];
   const note = balance?.note ?? (balance?.status === 'error' ? BALANCE_UNREADABLE_NOTE : null);
+
+  /*
+   * EL RENDIMIENTO COMBINADO, y nada más.
+   *
+   * El titular de esta tarjeta dejó de ser el APR de Aave: el dinero de la
+   * persona rinde en más de un lugar, así que el número que la representa es la
+   * media ponderada que ya compuso el backend, con su desglose debajo. El APR del
+   * pool no desaparece —sigue siendo una de las filas y el detalle de "Conectado
+   * a Aave"—, pero deja de vestirse de número único.
+   *
+   * Esta línea no redondea ni arma frases: pasa lo que el servicio ya decidió.
+   */
+  const yieldView = balance?.yield ?? null;
+  const combinedRate = yieldView === null ? null : formatYieldRate(yieldView);
+  /*
+   * La frase que acompaña a un titular que no existe. La del servicio cuando el
+   * rendimiento se leyó incompleto —y nombra qué falta—, la misma del balance
+   * cuando la lectura entera no llegó. Nunca un `0,00%`: un cero sería una
+   * afirmación sobre plata que nadie verificó.
+   */
+  const yieldNote =
+    yieldView === null
+      ? balance !== undefined && (balance.status === 'idle' || balance.status === 'loading')
+        ? 'Estamos leyendo dónde rinde tu plata.'
+        : YIELD_UNREADABLE_NOTE
+      : yieldView.incompletenessNote;
 
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans">
@@ -134,7 +165,7 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
         </div>
 
         {/* =====================================================================
-            CARD 2: RENDIMIENTO (la tasa del pool)
+            CARD 2: RENDIMIENTO (la tasa combinada de todos los lugares)
            ===================================================================== */}
         <div className="bg-white rounded-[32px] p-6 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80 space-y-4">
           <div className="flex items-center justify-between">
@@ -153,16 +184,18 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
           </div>
 
           {/*
-            LA TARJETA DE RENDIMIENTO, CON LOS NÚMEROS DE LA CADENA.
+            LA TARSA COMBINADA, Y SU DESGLOSE.
 
-            Antes ponía `3,90%` y dos cifras más escritas a mano, y después de eso
-            un guion con la palabra "sin cifra todavía". Ahora hay una sola fuente
-            —`GET /api/pool`— y cuatro estados distintos que antes no existían: la
-            tasa real, la tasa que no se pudo leer, la posición que no se pudo
-            leer, y el caso de que no haya nada depositado.
+            Antes ponía `3,90%` —el APR de un solo lugar— como si todo el dinero
+            de la persona rindiera ahí, y dos cifras más escritas a mano. Ahora el
+            titular es la media ponderada que ya compuso el backend y debajo está
+            la fila de cada lugar con su propia tasa, leída de la misma fuente.
 
-            Un guion acá no es estilo: es la diferencia entre "el pool no paga" y
-            "no lo sabemos", y con plata de por medio esa diferencia importa.
+            El titular tiene tres estados y ninguno de ellos es un cero: la tasa
+            real, la frase que nombra el lugar que no se pudo leer, o la frase de
+            que no se pudo leer el rendimiento. Un guion acá no es estilo: es la
+            diferencia entre "no rinde" y "no lo sabemos", y con plata de por
+            medio esa diferencia importa.
           */}
           {(() => {
             const view = pool?.pool;
@@ -178,18 +211,37 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
               <>
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl sm:text-4xl font-black font-display text-slate-900 tracking-tight">
-                    {supplyApr === null ? '—' : formatPercent(supplyApr)}
+                    {combinedRate ?? '—'}
                   </span>
-                  {supplyApr !== null && (
+                  {combinedRate !== null && (
                     <span className="text-sm font-semibold text-slate-500">anual</span>
                   )}
                 </div>
 
-                {supplyApr === null && (
+                {combinedRate === null && (
                   <div className="bg-amber-50 rounded-2xl p-3 text-[11px] text-amber-700 leading-relaxed">
-                    {pool === undefined || pool.status === 'idle' || pool.status === 'loading'
-                      ? 'Estamos leyendo el pool.'
-                      : 'No pudimos leer la tasa del pool, así que no te mostramos un número. No es que el pool no rinda: es que no lo supimos leer.'}
+                    {yieldNote}
+                  </div>
+                )}
+
+                {/*
+                  EL DESGLOSE, una fila por lugar.
+
+                  Se pinta aunque el titular no exista: las filas son hechos
+                  propios y ya se leyeron. Y cada fila decide sola qué muestra —
+                  una tasa, un "sin saldo depositado" o un "no se pudo leer"—
+                  porque un lugar que no tiene nada y un lugar que no supimos
+                  leer son dos verdades distintas, no dos versiones de la misma
+                  fila vacía.
+                */}
+                {yieldView !== null && yieldView.venues.length > 0 && (
+                  <div className="space-y-3 pt-4 border-t border-slate-100">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 font-display block">
+                      En cada lugar
+                    </span>
+                    {yieldView.venues.map((venue) => (
+                      <YieldVenueRow key={venue.key} venue={venue} />
+                    ))}
                   </div>
                 )}
 
@@ -198,6 +250,18 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
                     <span className="text-slate-400 font-medium">Conectado a Aave</span>
                     <span className="font-extrabold text-black">
                       {view === null ? 'No todavía' : 'Sí, en lectura'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-medium">APR de Aave</span>
+                    {/*
+                      La tasa del pool, con su propio nombre. Sigue siendo el
+                      detalle de la conexión con Aave —no el titular— porque el
+                      titular ya es la media de todos los lugares.
+                    */}
+                    <span className="font-extrabold text-black">
+                      {supplyApr === null ? '—' : formatPercent(supplyApr)}
                     </span>
                   </div>
 
@@ -223,7 +287,13 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400 font-medium">En un año (estimación)</span>
+                    {/*
+                      La estimación dice de qué lugar habla. Multiplicar el
+                      depósito por el ritmo de Aave y llamarlo "en un año" sin
+                      más sería volver a presentar un solo venue como si fuera
+                      todo.
+                    */}
+                    <span className="text-slate-400 font-medium">En un año en Aave (estimación)</span>
                     {yearly === null ? (
                       <span className="font-extrabold text-slate-400">—</span>
                     ) : (
@@ -268,8 +338,10 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
             TEXTO LEGAL / EXPLICATIVO AL PIE
            ===================================================================== */}
         <p className="text-center text-[11px] text-slate-400 leading-relaxed px-4 pt-2 font-medium">
-          La tasa sale del pool de Aave en Monad, leído de la cadena. Depositar
-          requiere USDC y MON para el gas: es la red principal.
+          El rendimiento combinado es la media ponderada de las tasas de cada
+          lugar donde está depositada tu plata, leídas de la cadena. En Aave, eso
+          sale del pool de Aave V3 en Monad. Depositar requiere USDC y MON para el
+          gas: es la red principal.
         </p>
       </div>
 
