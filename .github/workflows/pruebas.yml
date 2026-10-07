@@ -1,0 +1,76 @@
+name: pruebas
+
+# ── Por qué existe ──────────────────────────────────────────────────────────
+#
+# Porque hasta ahora los 768 tests del backend corrían solo cuando alguien se
+# acordaba, en una máquina, antes de un deploy. Ese es el motivo real por el que
+# main estuvo una semana sin la app sin que nadie lo notara: no habia nada que
+# dijera "esto se rompió".
+#
+# Es una red de seguridad, no una puerta: corre en cada push y en cada PR, y no
+# bloquea el merge por si sola. La decisión de mergear sigue siendo de una
+# persona.
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**', 'perf/**', 'chore/**']
+  pull_request:
+
+concurrency:
+  group: pruebas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend — tipos y tests
+    # Estas guardas aterrizan en `main` ANTES que la app: `main` todavia no tiene
+    # `07.PockBackend`, y un job que corre sobre un directorio inexistente falla
+    # siempre, o sea un rojo falso en el primer push. La guarda lo salta y recien
+    # empieza a trabajar cuando la app llega, sin que nadie tenga que acordarse.
+    if: ${{ hashFiles('07.PockBackend/package.json') != '' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 07.PockBackend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: 07.PockBackend/package-lock.json
+      # `npm install` y no `npm ci`: el lock del backend esta desincronizado con
+      # su package.json por una dependencia transitiva (`utf-8-validate`), y
+      # `npm ci` se niega a instalar cuando no coinciden en vez de arreglarlo.
+      # La diferencia de comportamiento es que `install` resuelve de mas, que es
+      # justo lo que se necesita mientras el lock este desfasado.
+      - run: npm install --no-audit --no-fund
+      - name: tipos
+        run: npm run typecheck
+      - name: tests
+        run: npm test
+        env:
+          # La suite tiene tests que comparten una base. Sin esto, un push puede
+          # escribir contra la base real de alguien.
+          NODE_ENV: test
+          CI: 'true'
+
+  front:
+    name: front — tipos y build
+    if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 05. UI-UX
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: 05. UI-UX/package-lock.json
+      - run: npm install --no-audit --no-fund
+      - name: tipos
+        run: npm run lint
+      - name: build
+        run: npm run build
