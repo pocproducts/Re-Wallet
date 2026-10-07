@@ -7,3 +7,35 @@
 # Wrangler: cache y tokens de la cuenta, estado local de la maquina
 .wrangler/
 .codegraph/
+
+# ── Dependencias y artefactos de build ────────────────────────────────────────
+#
+# No es una cuestion de prolijidad. Estas carpetas son las que hicieron que
+# `git ls-files --others` devolviera 196.193 entradas y reventara el limite de
+# inventario de la revision, dejando el PR entero sin poder revisarse. En una
+# rama donde el `.gitignore` era minimo, `node_modules/` estaba entero sin
+# ignorar.
+#
+# `dist/`, `out/` y `.next/` son salidas de build; `dist-worker.js` es el bundle
+# que `npm run build` genera antes de cada deploy. Ninguno se versiona.
+node_modules/
+dist/
+out/
+.next/
+dist-worker.js
+*.tsbuildinfo
+next-env.d.ts
+.turbo/
+
+# Archivos de entorno: viven en la maquina y en los secrets del Worker.
+# Un `.env` commiteado es la forma mas rapida de filtrar una llave.
+.env
+.env.*
+!.env.example
+
+# Logs y ruido de herramientas
+*.log
+npm-debug.log*
+yarn-error.log*
+coverage/
+.DS_Store

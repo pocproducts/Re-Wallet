@@ -1,0 +1,65 @@
+name: pruebas
+
+# ── Por qué existe ──────────────────────────────────────────────────────────
+#
+# Porque hasta ahora los 768 tests del backend corrían solo cuando alguien se
+# acordaba, en una máquina, antes de un deploy. Ese es el motivo real por el que
+# main estuvo una semana sin la app sin que nadie lo notara: no habia nada que
+# dijera "esto se rompió".
+#
+# Es una red de seguridad, no una puerta: corre en cada push y en cada PR, y no
+# bloquea el merge por si sola. La decisión de mergear sigue siendo de una
+# persona.
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**', 'perf/**', 'chore/**']
+  pull_request:
+
+concurrency:
+  group: pruebas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend — tipos y tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 07.PockBackend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: 07.PockBackend/package-lock.json
+      - run: npm ci
+      - name: tipos
+        run: npm run typecheck
+      - name: tests
+        run: npm test
+        env:
+          # La suite tiene tests que comparten una base. Sin esto, un push puede
+          # escribir contra la base real de alguien.
+          NODE_ENV: test
+          CI: 'true'
+
+  front:
+    name: front — tipos y build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 05. UI-UX
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: 05. UI-UX/package-lock.json
+      - run: npm ci
+      - name: tipos
+        run: npm run lint
+      - name: build
+        run: npm run build
