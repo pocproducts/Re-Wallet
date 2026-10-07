@@ -46,9 +46,7 @@ import type { RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Check } from 'lucide-react';
 
-import { ASSETS } from '../../config/assets';
-import { balanceLabel } from '../../config/markets';
-import type { Asset } from '../../config/assets';
+import type { TradeAssetRow } from '../../types/trade.types';
 
 /**
  * El título de la hoja.
@@ -82,32 +80,43 @@ const COLLAPSED_HEIGHT = 56 + VISIBLE_ROWS * 66;
 interface AssetSheetProps {
   /** Si la hoja está abierta. El padre la controla, no este componente. */
   readonly open: boolean;
-  /** Los activos que se pueden elegir. Por defecto, todo el catálogo. */
-  readonly assets?: readonly Asset[];
-  /** Ticker del activo elegido. */
+  /**
+   * Las filas que se pueden elegir, ya con lo que se leyó de cada una.
+   *
+   * **Obligatoria y sin valor por defecto**, y esa es la parte importante: antes
+   * esta hoja caía en `config/assets`, una lista de ocho activos escrita a mano de
+   * la que cuatro ni siquiera existen en el backend. Un default que parece un
+   * catálogo es la forma más cara de tener un catálogo falso: la pantalla no
+   * dice que no sabe, dice que sabe. Quien no tiene filas que pasar, no muestra
+   * ninguna.
+   */
+  readonly assets: readonly TradeAssetRow[];
+  /** Clave de la fila elegida (`"monad:USDC"`), no el ticker suelto. */
   readonly selected: string;
   /** Se eligió un activo. */
   readonly onSelect: (ticker: string) => void;
   /** Se pidió cerrar, con `Escape` o con un toque fuera. */
   readonly onClose: () => void;
   /**
-   * Tickers que no se pueden elegir, normalmente el que ya está en el otro lado.
+   * Filas que no se pueden elegir, normalmente la que ya está en el otro lado.
    *
-   * Convertir un activo en sí mismo no es una operación que tenga sentido, así
-   * que la fila sale deshabilitada en vez de elegirla y avisar después.
+   * Son claves —red y símbolo— y no tickers, porque con USDC en tres redes el
+   * ticker no dice cuál de las tres es la otra mitad del par. Convertir un
+   * activo en sí mismo no tiene sentido, así que la fila sale deshabilitada en
+   * vez de elegirla y avisar después.
    */
-  readonly disabledTickers?: readonly string[];
+  readonly disabledKeys?: readonly string[];
   /** El botón que abrió la hoja, para devolverle el foco al cerrar. */
   readonly triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
 export function AssetSheet({
   open,
-  assets = ASSETS,
+  assets,
   selected,
   onSelect,
   onClose,
-  disabledTickers = [],
+  disabledKeys = [],
   triggerRef,
 }: AssetSheetProps) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -178,6 +187,23 @@ export function AssetSheet({
         </h2>
 
         {/*
+          Una hoja sin filas es una hoja que no sabe qué hay. Antes esta lista
+          se llenaba sola con un catálogo escrito a mano, así que siempre había
+          ocho filas; hoy la lista es la que el backend devolvió y puede estar
+          vacía —catálogo cargando, red que todavía no respondió, o una
+          billetera sin nada que se pueda cambiar—. Se dice eso en vez de
+          rellenar con algo.
+
+          Va **fuera** del `listbox` a propósito: los hijos de una lista por
+          opciones son opciones, y un párrafo dentro no es una.
+        */}
+        {assets.length === 0 && (
+          <p className="px-7 pb-2 text-sm font-medium leading-relaxed text-slate-400">
+            Todavía no hay activos para mostrar.
+          </p>
+        )}
+
+        {/*
           `overscroll-contain` evita el rebote de scroll al llegar al final de la
           lista: sin eso, seguir bajando con el dedo sobre el último activo mueve
           la página que está detrás.
@@ -192,19 +218,19 @@ export function AssetSheet({
           className="flex-1 min-h-0 px-4 pb-6 overflow-y-auto overscroll-contain"
         >
           {assets.map((asset) => {
-            const isSelected = asset.ticker === selected;
-            const isDisabled = disabledTickers.includes(asset.ticker);
+            const isSelected = asset.key === selected;
+            const isDisabled = disabledKeys.includes(asset.key);
 
             return (
               <button
-                key={asset.ticker}
+                key={asset.key}
                 type="button"
                 role="option"
                 aria-selected={isSelected}
                 disabled={isDisabled}
                 onClick={() => {
                   if (isDisabled) return;
-                  onSelect(asset.ticker);
+                  onSelect(asset.key);
                   onClose();
                   triggerRef?.current?.focus();
                 }}
@@ -229,13 +255,38 @@ export function AssetSheet({
                   <span className="block truncate text-[15px] font-bold leading-tight text-black">
                     {asset.name}
                   </span>
+                  {/*
+                    La fila nombra su red, siempre.
+
+                    USDC vive en tres redes y una persona puede tenerlo en más de
+                    una: una fila que dice sólo "USDC" no dice cuál, así que no
+                    es una verdad. Cuando la fila no tiene red —el respaldo sin
+                    catálogo— se muestra sólo el símbolo, porque ahí tampoco hay
+                    una red que pueda mentir.
+                  */}
                   <span className="block text-xs font-medium leading-tight text-slate-400">
-                    {asset.ticker}
+                    {asset.chainLabel === null ? asset.ticker : `${asset.ticker} · ${asset.chainLabel}`}
                   </span>
                 </span>
 
-                <span className="shrink-0 font-mono text-xs font-semibold text-slate-400">
-                  {balanceLabel(asset.ticker)}
+                {/*
+                  El precio y el saldo se muestran sólo si se leyeron.
+
+                  No hay default: sin lectura, la celda queda vacía. Un `0` o un
+                  guion se leen como "no tenés", y acá no sabemos eso — sabemos
+                  que no lo supimos.
+                */}
+                <span className="shrink-0 text-right">
+                  {asset.priceText !== null && (
+                    <span className="block font-mono text-xs font-semibold text-slate-600">
+                      {asset.priceText} USD
+                    </span>
+                  )}
+                  {asset.balanceText !== null && (
+                    <span className="block font-mono text-xs font-semibold text-slate-400">
+                      {asset.balanceText}
+                    </span>
+                  )}
                 </span>
 
                 <span className="w-5 shrink-0 flex justify-end">

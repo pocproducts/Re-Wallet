@@ -4,12 +4,7 @@ import {
   Heart,
   ArrowDown,
   ArrowUp,
-  RotateCw,
-  CreditCard,
   ChevronRight,
-  ChevronDown,
-  Plus,
-  Minus,
   QrCode,
   Copy,
   Check,
@@ -19,11 +14,17 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
 import { AssetTradeCard } from '../common';
 import { defaultDisplayCurrency } from '../../config/displayCurrency';
-import { useAssetTrade } from '../../hooks/useAssetTrade';
+import {
+  TRADE_UNAVAILABLE_TEXT,
+  useAssetTrade,
+  useTradeCatalog,
+} from '../../hooks/useAssetTrade';
 import { assetOrDefault } from '../../config/markets';
+import type { PortfolioHolding } from '../../services/portfolio';
+import type { DepositInfoView } from '../../hooks/useDepositInfo';
+import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 
 /**
  * Una dirección acortada para que entre en la fila: `"0x4613…9e50ba"`.
@@ -32,6 +33,31 @@ import { assetOrDefault } from '../../config/markets';
  * quepa. El texto completo va al portapapeles, y el botón de copiar copia la
  * entera.
  */
+/**
+ * Lo que dicen las dos pantallas de envío de este modal.
+ *
+ * Misma decisión y misma voz que el aviso de trade, y por el mismo motivo: acá
+ * no hay envío. El flujo "Usar" sí lo tiene —prepara, firma y muestra el hash—
+ * pero este modal no llama a nada: la dirección del segundo paso está escrita a
+ * mano en el código y el botón anunciaba "¡Transferencia enviada!" sin que
+ * existiera una transacción.
+ *
+ * El texto habla de envío y no de trade a propósito: decir acá que "el cambio
+ * entre activos no está disponible" sería una verdad sobre otra cosa, y una
+ * verdad en la pantalla equivocada es tan mentira como la que se estaba
+ * borrando. El aviso vuelve a ser un botón cuando este flujo use el mismo
+ * `useSendTransfer` que el resto de la app.
+ */
+const SEND_UNAVAILABLE_TEXT =
+  'Todavía no podés enviar desde acá: el envío todavía no está disponible en ReWALLET.';
+
+/** El aviso ya formateado, porque se repite en dos pasos de este modal. */
+const SEND_NOT_AVAILABLE = (
+  <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
+    {SEND_UNAVAILABLE_TEXT}
+  </p>
+);
+
 const abbreviateAddress = (address: string): string => {
   if (address.length <= 14) return address;
   return `${address.slice(0, 6)}…${address.slice(-5)}`;
@@ -68,14 +94,39 @@ interface CryptoAssetDetailModalProps {
   asset: CryptoAssetData | null;
   onClose: () => void;
   userTag: string;
+  /**
+   * El catálogo de redes y activos: `GET /api/deposit-info`.
+   *
+   * Antes este modal no tenía ninguna lectura y por eso sus hojas de activos
+   * offerscían una lista escrita a mano —con cuatro activos que el backend
+   * rechaza— y sus balances salían de una tabla de precios inventada. Ahora
+   * arma la lista con el mismo constructor que el flujo "Usar".
+   */
+  depositInfo: DepositInfoView | null;
+  /** Los saldos por cadena: `GET /api/portfolio`. */
+  holdings: readonly PortfolioHolding[];
+  /** El precio por pieza: `GET /api/wallet-balance`. */
+  balance: WalletBalanceScreenView | null;
 }
 
+/**
+ * Los pasos que esta pantalla todavía sabe mostrar.
+ *
+ * `compraventa_sheet` se fue con su botón: la hoja que abría era el menú de
+ * Comprar y Vender, y `isCompraventaOpen` era el único estado que la alcanzaba.
+ *
+ * `buy_keypad`, `sell_keypad` y `swap` **se quedan**, aunque hoy nada los
+ * escriba. Son la base terminada de la Fase 2 (mismo `useTradeCatalog`, mismos
+ * saldos, misma `AssetTradeCard`) y el motor de swap todavía no existe: sin
+ * él, un botón de compra, venta o cambio sería una acción que no se puede
+ * ejecutar, y una acción así no se ofrece. Cuando el motor llegue, estas
+ * pantallas son las que lo reciben.
+ */
 type ModalView =
   | 'overview'
   | 'deposit_network'
   | 'deposit_lemon'
   | 'deposit_qr'
-  | 'compraventa_sheet'
   | 'buy_keypad'
   | 'sell_keypad'
   | 'swap'
@@ -88,6 +139,9 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
   asset,
   onClose,
   userTag,
+  depositInfo,
+  holdings,
+  balance,
 }) => {
   const [currentView, setCurrentView] = useState<ModalView>('overview');
   /*
@@ -109,8 +163,6 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
   } | null>(null);
   const [destinationAddress, setDestinationAddress] = useState('');
   const [copied, setCopied] = useState(false);
-  const [operationSuccess, setOperationSuccess] = useState(false);
-  const [isCompraventaOpen, setIsCompraventaOpen] = useState(false);
 
   /*
    * El par de conversión de las dos pantallas de teclado.
@@ -130,30 +182,44 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
    * no se ve nunca; está para que el orden de hooks sea válido.
    */
   const assetForTrade = assetOrDefault(asset?.ticker ?? 'USDC');
+
+  /*
+   * La lista real de activos, la misma que ve el flujo "Usar".
+   *
+   * Antes esta pantalla abría su hoja con una lista de ocho activos escrita a
+   * mano, cuatro de los cuales el backend rechaza con `ASSET_NOT_ON_CHAIN`, y
+   * con saldos y precios de una tabla inventada. Ahora usa el constructor
+   * compartido: mismo catálogo, mismos saldos, mismos precios, y las mismas
+   * filas que no se pudieron leer sin cifra en vez de un cero.
+   */
+  const tradeCatalog = useTradeCatalog({ depositInfo, holdings, balance });
+
+  /*
+   * Comprar sale de los Dólares Digitales y llega al activo que se está viendo;
+   * vender y cambiar salen de ese activo y llegan a los dólares.
+   *
+   * La identidad que se pasa acá es sólo el **nombre** del activo de la
+   * pantalla: el hook la busca en el catálogo y usa la fila real —con su red, su
+   * saldo y su precio— si existe. Si no existe, el activo no se ofrece.
+   */
   const buyTrade = useAssetTrade({
     amountText: keypadAmount,
     setAmountText: setKeypadAmount,
+    catalog: tradeCatalog,
     initialSource: assetOrDefault('USDC'),
     initialDestination: assetForTrade,
   });
-  /*
-   * El par de la pantalla Cambiar.
-   *
-   * Arranca en la cripto desde la que se entró —`asset.ticker`— y llega a los
-   * Dólares Digitales. USDT es un destino de verdad: vive en el catálogo con
-   * precio 1 porque es una dollar stablecoin, y con saldo 0 porque la cuenta no
-   * tiene. Esa asimetría es la honesta: la opción existe y se puede elegir, y
-   * si no tenés USDT la pantalla te lo dice con un cero, no lo esconde.
-   */
   const swapTrade = useAssetTrade({
     amountText: keypadAmount,
     setAmountText: setKeypadAmount,
+    catalog: tradeCatalog,
     initialSource: assetForTrade,
     initialDestination: assetOrDefault('USDC'),
   });
   const sellTrade = useAssetTrade({
     amountText: keypadAmount,
     setAmountText: setKeypadAmount,
+    catalog: tradeCatalog,
     initialSource: assetForTrade,
     initialDestination: assetOrDefault('USDC'),
   });
@@ -281,10 +347,12 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 <div className="flex items-baseline font-display">
                   <span className="text-3xl font-black text-black tracking-tight">
                     {/*
-                      La cantidad real, con su unidad. Antes caía en
-                      `balanceLabel(asset.ticker)`, que devuelve el saldo de la
-                      tabla de `config/markets` — un `0` para cualquier ticker que
-                      no esté en ella, o sea un cero inventado para MON.
+                      La cantidad real, con su unidad, tal como la trajo
+                      `/api/portfolio`. Antes caía en la tabla de saldos de
+                      `config/markets`, que devolvía `0` para cualquier ticker que
+                      no estuviera en ella: un cero inventado, y además
+                      contradicción con el catálogo, porque MON no estaba en esa
+                      tabla y sí se podía tener.
                     */}
                     {asset.totalCrypto}
                   </span>
@@ -298,7 +366,23 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
             </div>
 
             {/* 4 Botones de Acción Circulares (Negro con icono blanco) */}
-            <div className="grid grid-cols-4 gap-2 pt-2">
+            {/*
+              Dos acciones, no cuatro.
+
+              "Compraventa" (que abría el menú Comprar/Vender) y "Cambiar" se
+              sacaron: las dos son cambio de activo, y no hay motor de swap que
+              las ejecute. Depositar y Enviar quedan, que es lo que la app sabe
+              hacer.
+
+              Las grillas quedan en dos columnas porque es lo que hay. La fila se
+              sigue leyendo igual —círculo negro, glifo, rótulo— y no se
+              rediseña: sólo se le saca la mitad que no tenía a quién llevar.
+
+              Las pantallas `buy_keypad`, `sell_keypad` y `swap` de más abajo NO
+              se tocan: están terminadas y son la Fase 2. Lo que se cerró fue la
+              puerta.
+            */}
+            <div className="grid grid-cols-2 gap-2 pt-2">
               {/* 1. Depositar */}
               <div className="flex flex-col items-center">
                 <button
@@ -313,38 +397,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 </span>
               </div>
 
-              {/* 2. Compraventa (Abre popup que se encima por la pantalla) */}
-              <div className="flex flex-col items-center">
-                <button
-                  type="button"
-                  onClick={() => setIsCompraventaOpen(true)}
-                  className="w-14 h-14 rounded-full bg-black flex items-center justify-center text-white shadow-md hover:bg-slate-900 active:scale-90 transition-transform cursor-pointer"
-                >
-                  <span className="text-lg font-black font-display">$</span>
-                </button>
-                <span className="text-xs font-bold text-black mt-2">
-                  Compraventa
-                </span>
-              </div>
-
-              {/* 3. Cambiar */}
-              <div className="flex flex-col items-center">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setKeypadAmount('0');
-                    setCurrentView('swap');
-                  }}
-                  className="w-14 h-14 rounded-full bg-black flex items-center justify-center text-white shadow-md hover:bg-slate-900 active:scale-90 transition-transform cursor-pointer"
-                >
-                  <RotateCw className="w-5 h-5 stroke-[2.5]" />
-                </button>
-                <span className="text-xs font-bold text-black mt-2">
-                  Cambiar
-                </span>
-              </div>
-
-              {/* 4. Enviar */}
+              {/* 2. Enviar */}
               <div className="flex flex-col items-center">
                 <button
                   type="button"
@@ -466,68 +519,17 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
             </div>
           </div>
 
-          {/* =========================================================================
-              POPUP DE COMPRAVENTA QUE SE ENCIMA POR LA PANTALLA (IMAGEN 3)
-             ========================================================================= */}
-          {isCompraventaOpen && (
-            <div className="absolute inset-0 z-50 flex flex-col justify-end bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
-              {/* Fondo clickeable para cerrar */}
-              <div
-                onClick={() => setIsCompraventaOpen(false)}
-                className="flex-1 w-full cursor-pointer"
-              />
+          {/*
+            ACÁ ESTABA LA HOJA DE COMPRAVENTA: "Comprá" y "Vendé".
 
-              {/* Tarjeta Blanca Inferior que se encima con barra de arrastre */}
-              <div className="w-full bg-white rounded-t-[36px] p-6 safe-bottom-10 shadow-2xl space-y-4 animate-in slide-in-from-bottom duration-200">
-                {/* Barra tirador / handle */}
-                <div className="w-12 h-1 bg-slate-300 rounded-full mx-auto mb-2" />
-
-                {/* Opción 1: Comprá */}
-                <div
-                  onClick={() => {
-                    setIsCompraventaOpen(false);
-                    setKeypadAmount('0');
-                    setCurrentView('buy_keypad');
-                  }}
-                  className="p-4 flex items-center gap-4 hover:bg-slate-50 rounded-2xl cursor-pointer active:scale-99 transition-all"
-                >
-                  <div className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-emerald-500 font-black text-xl shrink-0">
-                    <Plus className="w-6 h-6 stroke-[3]" />
-                  </div>
-                  <div>
-                    <span className="text-base font-extrabold font-display text-black block leading-none">
-                      Comprá
-                    </span>
-                    <span className="text-xs text-slate-500 font-medium block mt-1 leading-snug">
-                      Comprá criptomonedas usando tus Dólares USDC.
-                    </span>
-                  </div>
-                </div>
-
-                {/* Opción 2: Vendé */}
-                <div
-                  onClick={() => {
-                    setIsCompraventaOpen(false);
-                    setKeypadAmount('0');
-                    setCurrentView('sell_keypad');
-                  }}
-                  className="p-4 flex items-center gap-4 hover:bg-slate-50 rounded-2xl cursor-pointer active:scale-99 transition-all"
-                >
-                  <div className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-emerald-500 font-black text-xl shrink-0">
-                    <Minus className="w-6 h-6 stroke-[3]" />
-                  </div>
-                  <div>
-                    <span className="text-base font-extrabold font-display text-black block leading-none">
-                      Vendé
-                    </span>
-                    <span className="text-xs text-slate-500 font-medium block mt-1 leading-snug">
-                      Vendé criptomonedas y recibí Dólares USDC.
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+            Es el mismo menú que "Usar" tenía en la billetera, y se va por la
+            misma razón: las dos opciones son cambio de activo y no hay motor
+            de swap que las ejecute. Una acción que no se puede hacer no se
+            ofrece. Las dos pantallas que abría —`buy_keypad` y `sell_keypad`—
+            quedan más abajo, estacionadas a propósito: son la Fase 2 ya
+            decidida, con el catálogo real y los saldos reales ya resueltos.
+            Falta el motor, no la pantalla.
+          */}
         </div>
       )}
 
@@ -818,6 +820,14 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
 
       {/* =========================================================================
           SUB-VISTA: TECLADO COMPRA (BUY) - ESTILO EXACTO A CAMBIAR SIN INVERTIR
+
+          ESTACIONADA A PROPOSITO. Nada la abre hoy: la única puerta era el
+          botón "Compraventa" y la hoja "Comprá/Vendé", y las dos se sacaron
+          porque no hay motor de swap que ejecute la conversión. No es código
+          muerto: es la Fase 2 de `odd/tasks/comprar-o-vender.md`, ya decidida,
+          y esta pantalla ya está terminada del lado de la lista real —el mismo
+          `useTradeCatalog`, la misma `AssetTradeCard`, los mismos saldos del
+          backend—. Falta el motor, no la pantalla.
          ========================================================================= */}
       {currentView === 'buy_keypad' && (
         /* Mismo reparto que en el flujo `usar`: sin `justify-between` (que empujaba
@@ -852,23 +862,15 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
           </div>
 
           <div className="flex-1 flex flex-col px-5 pt-3 pb-6 space-y-3 max-w-sm mx-auto w-full">
-            {/* BOTÓN CONTINUAR */}
-            <button
-              type="button"
-              disabled={keypadAmount === '0'}
-              onClick={() => {
-                if (keypadAmount === '0') return;
-                confetti({ particleCount: 50, spread: 60 });
-                setOperationSuccess(true);
-                setTimeout(() => {
-                  setOperationSuccess(false);
-                  setCurrentView('overview');
-                }, 1500);
-              }}
-              className="w-full py-4 rounded-2xl bg-black hover:bg-slate-900 text-white font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {operationSuccess ? '✓ ¡Compra completada!' : 'Continuar'}
-            </button>
+            {/*
+              Sin botón, y por la misma decisión del flujo "Usar": no hay motor,
+              así que la acción no existe y no se ofrece. El texto es el mismo de
+              las otras pantallas —vive en `useAssetTrade`— porque cinco pantallas
+              diciendo la verdad con cinco palabras distintas vuelven a mentir.
+            */}
+            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
+              {TRADE_UNAVAILABLE_TEXT}
+            </p>
 
             {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
             <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] auto-rows-fr">
@@ -889,6 +891,9 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
 
       {/* =========================================================================
           SUB-VISTA: TECLADO VENTA (SELL) - ESTILO EXACTO A CAMBIAR SIN INVERTIR
+
+          ESTACIONADA A PROPOSITO, por lo mismo que la de compra: sin motor de
+          swap la venta no se ofrece, y la pantalla queda como base de la Fase 2.
          ========================================================================= */}
       {currentView === 'sell_keypad' && (
         /* Mismo reparto que en `buy_keypad`. */
@@ -919,23 +924,15 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
           </div>
 
           <div className="flex-1 flex flex-col px-5 pt-3 pb-6 space-y-3 max-w-sm mx-auto w-full">
-            {/* BOTÓN CONTINUAR */}
-            <button
-              type="button"
-              disabled={keypadAmount === '0'}
-              onClick={() => {
-                if (keypadAmount === '0') return;
-                confetti({ particleCount: 50, spread: 60 });
-                setOperationSuccess(true);
-                setTimeout(() => {
-                  setOperationSuccess(false);
-                  setCurrentView('overview');
-                }, 1500);
-              }}
-              className="w-full py-4 rounded-2xl bg-black hover:bg-slate-900 text-white font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {operationSuccess ? '✓ ¡Venta completada!' : 'Continuar'}
-            </button>
+            {/*
+              Sin botón, y por la misma decisión del flujo "Usar": no hay motor,
+              así que la acción no existe y no se ofrece. El texto es el mismo de
+              las otras pantallas —vive en `useAssetTrade`— porque cinco pantallas
+              diciendo la verdad con cinco palabras distintas vuelven a mentir.
+            */}
+            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
+              {TRADE_UNAVAILABLE_TEXT}
+            </p>
 
             {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
             <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] auto-rows-fr">
@@ -956,6 +953,9 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
 
       {/* =========================================================================
           VISTA 4: CAMBIAR / SWAP (IMAGEN 4)
+
+          ESTACIONADA A PROPOSITO: su única puerta era el botón "Cambiar", que
+          se sacó junto con "Compraventa". Mismo motivo, misma Fase 2.
          ========================================================================= */}
       {currentView === 'swap' && (
         /*
@@ -1002,23 +1002,15 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
           </div>
 
           <div className="flex-1 flex flex-col px-5 pt-3 pb-6 space-y-3 max-w-sm mx-auto w-full">
-            <button
-              type="button"
-              onClick={() => {
-                if (keypadAmount === '0') return;
-                confetti({ particleCount: 30, spread: 50 });
-                alert(`¡Cambio de ${swapTrade.destination.ticker} completado exitosamente!`);
-                setOperationSuccess(true);
-                setTimeout(() => {
-                  setOperationSuccess(false);
-                  setCurrentView('overview');
-                }, 1500);
-              }}
-              disabled={keypadAmount === '0'}
-              className="w-full py-4 rounded-2xl bg-black hover:bg-slate-900 text-white font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {operationSuccess ? '✓ ¡Cambio completado!' : 'Continuar'}
-            </button>
+            {/*
+              Sin botón, y por la misma decisión del flujo "Usar": no hay motor,
+              así que la acción no existe y no se ofrece. El texto es el mismo de
+              las otras pantallas —vive en `useAssetTrade`— porque cinco pantallas
+              diciendo la verdad con cinco palabras distintas vuelven a mentir.
+            */}
+            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
+              {TRADE_UNAVAILABLE_TEXT}
+            </p>
 
             {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
             <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] auto-rows-fr">
@@ -1274,21 +1266,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               ))}
             </div>
 
-            <button
-              onClick={() => {
-                if (keypadAmount === '0') return;
-                confetti({ particleCount: 50, spread: 60 });
-                setOperationSuccess(true);
-                setTimeout(() => {
-                  setOperationSuccess(false);
-                  setCurrentView('overview');
-                }, 1500);
-              }}
-              type="button"
-              className="w-full py-4 rounded-2xl bg-[#ccff00] hover:bg-[#b8e600] text-black font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer"
-            >
-              {operationSuccess ? '✓ ¡Transferencia enviada!' : `Enviar ${keypadAmount} ${asset.ticker}`}
-            </button>
+            {SEND_NOT_AVAILABLE}
           </div>
           <div className="pb-4" />
         </div>
@@ -1354,20 +1332,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </div>
             </div>
 
-            <button
-              onClick={() => {
-                confetti({ particleCount: 30, spread: 50 });
-                setOperationSuccess(true);
-                setTimeout(() => {
-                  setOperationSuccess(false);
-                  setCurrentView('overview');
-                }, 1500);
-              }}
-              type="button"
-              className="w-full py-4 rounded-full bg-[#ccff00] text-black font-extrabold text-sm shadow-md active:scale-95 transition-transform mt-4 cursor-pointer"
-            >
-              {operationSuccess ? '✓ ¡Envío programado!' : 'Continuar al envío'}
-            </button>
+            <div className="mt-4">{SEND_NOT_AVAILABLE}</div>
           </div>
         </div>
       )}
