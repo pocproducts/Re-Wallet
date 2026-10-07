@@ -27,7 +27,7 @@ import { byUsdValueDesc } from '../../services/walletBalance';
 import type { WalletBalancePart } from '../../services/walletBalance';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import { QrScannerModal } from './QrScannerModal';
-import { useAssetTrade } from '../../hooks/useAssetTrade';
+import { TRADE_UNAVAILABLE_TEXT, useAssetTrade, useTradeCatalog } from '../../hooks/useAssetTrade';
 import type { DepositInfoView } from '../../hooks/useDepositInfo';
 import { assetOn, isEvmNetwork, truncateAddress, type DepositNetworkView } from '../../services/depositInfo';
 import type { DepositChainId } from '../../types/deposit.types';
@@ -48,7 +48,18 @@ import type { PortfolioHolding } from '../../services/portfolio';
 import { identityOf } from '../../services/portfolioIdentity';
 import { assetByTicker } from '../../config/assets';
 
-export type ActionModalType = 'depositar' | 'usar' | 'enviar' | null;
+/**
+ * Qué acción abre este modal.
+ *
+ * `'usar'` ya no es un valor posible: su menú tenía exactamente dos opciones,
+ * Comprar y Vender, que son las dos caras del cambio de activo. No hay motor de
+ * swap, así que la acción no se ofrece y no tiene por qué seguirEnumerada.
+ *
+ * Las pantallas de `use_buy` y `use_sell`, en cambio, **siguen en este archivo**
+ * a propósito: son la base terminada de la Fase 2. Quedan sin puerta de entrada,
+ * no muertas por accidente.
+ */
+export type ActionModalType = 'depositar' | 'enviar' | null;
 
 interface ActionFlowModalProps {
   action: ActionModalType;
@@ -123,6 +134,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
     }
     return index;
   }, [balance]);
+
   // Estado del flujo
   const [currentStep, setCurrentStep] = useState<string>('initial'); // 'initial' = pantalla lima
   const [selectedCoin, setSelectedCoin] = useState<string>('USDC');
@@ -185,20 +197,40 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
     onBalancesChanged?.();
   });
 
+  /** El saldo de esta persona para `chain:symbol`, si el portfolio lo leyó. */
+  const holdingOf = (chain: DepositChainId, symbol: string): PortfolioHolding | null =>
+    holdings.find((holding) => holding.chain === chain && holding.symbol === symbol) ?? null;
+
+  /**
+   * La lista real de "Comprar" y "Vender".
+   *
+   * No se construye acá: la construye `useTradeCatalog`, que es el mismo
+   * constructor que usa el detalle de un cripto. Copiarlo en dos pantallas es
+   * como las dos dejaron de decir lo mismo —una lista de activos y otra— sin que
+   * ninguna se quejara. Esta pantalla le pasa las tres lecturas que ya tiene.
+   */
+  const tradeCatalog = useTradeCatalog({ depositInfo, holdings, balance });
+
   /*
    * El par que se convierte en los dos sentidos.
    *
-   * Comprar sale de los Dólares Digitales, que es de dónde entra la plata en este
-   * producto, y llega a Bitcoin. Vender es al revés: sale de Bitcoin —lo primero
-   * que alguien vende— y llega a los Dólares Digitales.
+   * Los dos leen el mismo catálogo real, así que no pueden mostrar activos que
+   * el backend no conoce ni saldos inventados. El par inicial lo decide el
+   * catálogo —de los dólares a la primera cripto— y no dos constantes escritas a
+   * mano: el destino por defecto era Bitcoin, que esta billetera no puede
+   * mover. Esta pantalla no pasa identidades, y por eso el par lo elige el
+   * catálogo entero; el detalle de un cripto sí pasa el activo que se está
+   * viendo.
    */
   const buyTrade = useAssetTrade({
     amountText: keypadAmount,
     setAmountText: setKeypadAmount,
+    catalog: tradeCatalog,
   });
   const sellTrade = useAssetTrade({
     amountText: keypadAmount,
     setAmountText: setKeypadAmount,
+    catalog: tradeCatalog,
   });
   /** Qué desplegable está abierto, o ninguno. */
   const [sheetSide, setSheetSide] = useState<'source' | 'destination' | null>(null);
@@ -225,23 +257,13 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
     }
   }, [action, sendFlow.reset]);
 
-  /**
-   * Abrir un flujo es cambiar de paso y vaciar el monto.
-   *
-   * El par de cada uno ya sale de `buyTrade` y `sellTrade`, que nacen con sus
-   * activos por defecto —comprar desde los Dólares Digitales, vender desde
-   * Bitcoin—, así que acá no se tocan los activos. Antes sí se tocaban, y por eso
-   * al volver de Vender a Comprar el par se quedaba con lo último elegido.
+  /*
+   * `openBuy` y `openSell` se fueron con el menú de "Usar": eran sus únicas
+   * llamadoras y sin menú no hay a dónde abrir. Las pantallas `use_buy` y
+   * `use_sell` de más abajo quedan estacionadas — con su `buyTrade`, su
+   * `sellTrade` y su `AssetTradeCard` — a la espera del motor de swap de la
+   * Fase 2. Volver a armar el menú es una línea; no una reconstrucción.
    */
-  const openBuy = () => {
-    setKeypadAmount('0');
-    setCurrentStep('use_buy');
-  };
-
-  const openSell = () => {
-    setKeypadAmount('0');
-    setCurrentStep('use_sell');
-  };
 
   /* =========================================================================
      DEPÓSITO: TODO LO QUE VIENE DE `/api/deposit-info`
@@ -263,10 +285,6 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
    * repetir un chequeo que ya está hecho.
    */
   const depositAddress: string | null = depositNetwork === null ? null : depositNetwork.address;
-
-  /** El saldo de esta persona para `chain:symbol`, si el portfolio lo leyó. */
-  const holdingOf = (chain: DepositChainId, symbol: string): PortfolioHolding | null =>
-    holdings.find((holding) => holding.chain === chain && holding.symbol === symbol) ?? null;
 
   /**
    * El saldo de un activo en todas las redes donde se puede leer, exacto.
@@ -441,6 +459,19 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       .map((asset) => ({ asset, part: partForSymbol(asset.symbol) }))
       .sort((a, b) => byUsdValueDesc(a.part, b.part));
 
+  /*
+   * La pieza que se puede pedir como fila, o `null` si no lo es.
+   *
+   * `BalancePieceRow` conserva su rama de "no se pudo leer" —no se le borra—,
+   * pero acá no se le pide una: una pieza ilegible no es una fila, y la fila que
+   * se arma decide qué se muestra en su lugar. Lo que se muestra, si hay algo,
+   * es la cantidad que la cadena sí respondió (`assetBalanceLabel`), que es un
+   * hecho verdadero; si tampoco esa existe, la celda queda con el chevron solo
+   * y la fila conserva su lugar sin decir nada que nadie verificó.
+   */
+  const readablePart = (part: WalletBalancePart | null): WalletBalancePart | null =>
+    part !== null && part.status === 'ok' ? part : null;
+
   /**
    * Arranca el envío: convierte el monto a la unidad mínima y se lo pasa al hook.
    *
@@ -612,42 +643,18 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             </div>
           )}
 
-          {/* ACCIÓN: USAR (Comprar, Vender, Invertir, Pedir prestado) */}
-          {action === 'usar' && (
-            <div className="space-y-6">
-              <h2 className="text-3xl font-black font-display text-black tracking-tight mb-8">
-                ¿Qué querés hacer?
-              </h2>
+          {/*
+            ACÁ ESTABA EL MENÚ DE "USAR": "Comprar crypto" y "Vender crypto".
 
-              <div className="space-y-4 flex flex-col items-start">
-                <button
-                  type="button"
-                  onClick={openBuy}
-                  className="flex items-baseline gap-2.5 text-left hover:opacity-75 active:scale-95 transition-all cursor-pointer group"
-                >
-                  <span className="text-4xl sm:text-5xl font-black font-display text-black tracking-tight">
-                    Comprar
-                  </span>
-                  <span className="text-2xl sm:text-3xl font-medium text-black/80">
-                    crypto
-                  </span>
-                </button>
+            Sus dos opciones eran el mismo cambio de activo en dos direcciones, y
+            las dos Applican una conversión que hoy no tiene motor: no hay
+            backend que la cotice ni transacción que la ejecute. Un botón que no
+            puede hacer lo que promete no se pone en pantalla.
 
-                <button
-                  type="button"
-                  onClick={openSell}
-                  className="flex items-baseline gap-2.5 text-left hover:opacity-75 active:scale-95 transition-all cursor-pointer group"
-                >
-                  <span className="text-4xl sm:text-5xl font-black font-display text-black tracking-tight">
-                    Vender
-                  </span>
-                  <span className="text-2xl sm:text-3xl font-medium text-black/80">
-                    crypto
-                  </span>
-                </button>
-              </div>
-            </div>
-          )}
+            Las dos pantallas de compra y venta NO se borraron — están más abajo,
+            en `use_buy` y `use_sell`, y son la base de la Fase 2 ya decidida.
+            Lo que se cerró fue la puerta.
+          */}
         </div>
 
         {/* BOTÓN CIRCULAR NEGRO FLOTANTE CON X EN COLOR LIMA */}
@@ -1328,6 +1335,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             ).map(({ asset, part }) => {
                 const identity = identityOf(asset.symbol);
                 const balance = assetBalanceLabel(asset.symbol);
+                const readable = readablePart(part);
 
                 return (
                   <div
@@ -1370,16 +1378,25 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      {part !== null ? (
+                      {readable !== null ? (
                         /* El mismo renglón que las otras pantallas: valor arriba,
                            cantidad abajo. */
-                        <BalancePieceRow part={part} hideLabel />
+                        <BalancePieceRow part={readable} hideLabel />
                       ) : (
                         <>
-                          {/* `null` es "no lo sé": no se pinta un cero. */}
-                          <span className="text-sm font-extrabold text-black block leading-none">
-                            {balance === null ? '—' : balance}
-                          </span>
+                          {/*
+                            La pieza no se pudo leer: no va valor, ni motivo, ni un
+                            cero de reemplazo. Si la cadena sí respondió la
+                            cantidad, esa cantidad se muestra —es verdadera y no
+                            necesita precio— y si no, la celda queda con el
+                            chevron, que es lo único que la fila necesita para
+                            seguir siendo una fila.
+                          */}
+                          {balance !== null && (
+                            <span className="text-sm font-extrabold font-display text-black block leading-none">
+                              {balance}
+                            </span>
+                          )}
                           <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5] ml-auto mt-1" />
                         </>
                       )}
@@ -2197,6 +2214,8 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               {/* También del catálogo del servidor, no de una lista escrita a mano. */}
               {sortedByUsd(sendableAssetsOfKind('crypto')).map(({ asset: c, part }) => {
                 const known = assetByTicker(c.symbol);
+                const readable = readablePart(part);
+                const quantity = assetBalanceLabel(c.symbol);
                 return (
                   <div
                     key={c.symbol}
@@ -2224,10 +2243,24 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                       {/* Valor en dólares arriba y cantidad abajo, como en las
                           otras pantallas. Antes esta fila no mostraba ninguna
                           cifra: sólo el chevron. */}
-                      {part !== null ? (
-                        <BalancePieceRow part={part} hideLabel />
+                      {readable !== null ? (
+                        <BalancePieceRow part={readable} hideLabel />
                       ) : (
-                        <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5] ml-auto" />
+                        /*
+                          Una pieza ilegible no se pinta: ni valor, ni un `—` que
+                          alguien leería como saldo cero, ni una frase de fallo.
+                          Lo que sobrevive es la cantidad que la cadena sí
+                          contestó, cuando la contestó; el chevron queda siempre,
+                          así que la fila ni se rompe ni se vacía.
+                        */
+                        <div className="flex items-center justify-end gap-2">
+                          {quantity !== null && (
+                            <span className="text-sm font-extrabold font-display text-black leading-none">
+                              {quantity}
+                            </span>
+                          )}
+                          <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
+                        </div>
                       )}
                     </div>
                   </div>
@@ -2244,11 +2277,26 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       {/* =====================================================================
           FLUJO USAR: COMPRAR CRYPTO (ESTILO REUTILIZABLE A CAMBIAR SIN INVERTIR)
          ===================================================================== */}
+      {/*
+        FLUJO USAR: COMPRAR / VENDER — ESTACIONADO A PROPOSITO.
+
+        Esta pantalla y la de `use_sell` ya no tienen puerta de entrada: el botón
+        "Usar" de la billetera se sacó porque su menú era exactamente este
+        compraventa, y sin motor de swap una acción que no puede ejecutarse no se
+        ofrece.
+
+        No es código muerto por olvido: es la Fase 2 de
+        `odd/tasks/comprar-o-vender.md`, ya decidida —1inch para EVM, Jupiter
+        para Solana— y ya terminada del lado de la lista real (el mismo
+        `useTradeCatalog`, los mismos saldos, la misma `AssetTradeCard`). Lo que
+        falta es el motor. Cuando exista, la puerta vuelve y estas dos pantallas
+        son las que la reciben.
+      */}
       {currentStep === 'use_buy' && (
         /*
          * `justify-between` empujaba el bloque entero contra el borde inferior y dejaba
          * un hueco muerto entre el header y la tarjeta. Ahora la tarjeta vive pegada al
-         * header y el grupo botón + teclado va justo debajo: no queda espacio basura ni
+         * header y el grupo aviso + teclado va justo debajo: no queda espacio basura ni
          * arriba ni en el medio.
          *
          * Lo que sobra de la pantalla lo absorbe el TECLADO (`flex-1 auto-rows-fr`),
@@ -2283,18 +2331,18 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
           </div>
 
           <div className="flex-1 flex flex-col px-5 pt-3 pb-6 space-y-3 max-w-sm mx-auto w-full">
-            <button
-              onClick={() => {
-                confetti({ particleCount: 30, spread: 50 });
-                alert(`¡Compra de ${buyTrade.destination.ticker} completada exitosamente!`);
-                onClose();
-              }}
-              disabled={keypadAmount === '0'}
-              type="button"
-              className="w-full py-4 rounded-2xl bg-black hover:bg-slate-900 text-white font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Continuar
-            </button>
+            {/*
+              Sin botón, y a propósito.
+
+              El que estaba acá pintaba confeti y un `alert` de compra
+              completada sin haber hecho ninguna llamada. Un control que no
+              ejecuta nada no debe tener la forma de un control: se dice que la
+              operación no existe y la pantalla sigue sirviendo para elegir
+              activos y ver saldos, que eso sí es real.
+            */}
+            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
+              {TRADE_UNAVAILABLE_TEXT}
+            </p>
 
             {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
             <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] auto-rows-fr">
@@ -2343,18 +2391,13 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
           </div>
 
           <div className="flex-1 flex flex-col px-5 pt-3 pb-6 space-y-3 max-w-sm mx-auto w-full">
-            <button
-              onClick={() => {
-                confetti({ particleCount: 30, spread: 50 });
-                alert(`¡Venta de ${sellTrade.destination.ticker} completada exitosamente!`);
-                onClose();
-              }}
-              disabled={keypadAmount === '0'}
-              type="button"
-              className="w-full py-4 rounded-2xl bg-black hover:bg-slate-900 text-white font-extrabold text-sm shadow-md active:scale-95 transition-transform cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Continuar
-            </button>
+            {/*
+              Sin botón, y por lo mismo que en "Comprar": el de acá pintaba
+              confeti y anunciaba una venta completada que nadie ejecutó.
+            */}
+            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
+              {TRADE_UNAVAILABLE_TEXT}
+            </p>
 
             {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
             <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] auto-rows-fr">

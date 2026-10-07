@@ -7,12 +7,8 @@ import React, { useMemo, useState } from 'react';
  */
 import { splitUsdDisplay } from '../../services/portfolio';
 import {
-  BALANCE_UNREADABLE_NOTE,
-  YIELD_UNREADABLE_NOTE,
   formatYieldRate,
 } from '../../services/walletBalance';
-import { BalancePieceRow } from './BalancePieceRow';
-import { YieldVenueRow } from './YieldVenueRow';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import { formatPercent, projectYearlyGain } from '../../services/pool';
 import type { PoolScreenView } from '../../hooks/usePool';
@@ -29,7 +25,11 @@ interface DigitalDollarsViewProps {
   onOpenAavePools?: () => void;
   onOpenDeposit?: () => void;
   onOpenSend?: () => void;
-  /** El pool de Aave, leído una vez por sesión en el `App`. */
+  /**
+   * El pool de Aave, leído **mientras esta pantalla está abierta**: la tasa de
+   * Aave y la posición en `aMonUSDC` salen de la reserva, y esa lectura no se
+   * pide mientras nadie la está mirando.
+   */
   pool?: PoolScreenView;
   /**
    * El balance completo, leído una vez por sesión en el `App`.
@@ -57,10 +57,10 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
    * valuada a 1 por definición, así que el backend los suma en un solo número —
    * y esta pantalla lo pinta como llegó, sin sumar nada.
    *
-   * Y el total no se muestra solo: `complete` viaja con él. Un total parcial se
-   * muestra **con** la advertencia que nombra lo que falta, nunca como si fuera
-   * todo. Un cero real, en cambio, se muestra como cero: una billetera vacía
-   * tiene que poder parecer vacía.
+   * Y el total no se muestra solo: `complete` viaja con él. Lo que no se pudo
+   * leer no se nombra ni se avisa acá —la pieza desaparece y, cuando la lectura
+   * llega, vuelve sola—, y un cero real, en cambio, se muestra como cero: una
+   * billetera vacía tiene que poder parecer vacía.
    */
   const dollars = balance?.balance?.digitalDollarsValue ?? null;
   const usd = useMemo(
@@ -69,33 +69,35 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
   );
 
   const parts = dollars?.parts ?? [];
-  const note = balance?.note ?? (balance?.status === 'error' ? BALANCE_UNREADABLE_NOTE : null);
+
+  /*
+   * Lo que no se pudo leer no se pinta: ni la frase del balance entero, ni la
+   * del total parcial. Ninguna de las dos nombra nada que la tarjeta pueda
+   * mostrar, y las dos son un aviso permanente sobre una lectura que se
+   * arregló sola.
+   */
 
   /*
    * EL RENDIMIENTO COMBINADO, y nada más.
    *
    * El titular de esta tarjeta dejó de ser el APR de Aave: el dinero de la
    * persona rinde en más de un lugar, así que el número que la representa es la
-   * media ponderada que ya compuso el backend, con su desglose debajo. El APR del
-   * pool no desaparece —sigue siendo una de las filas y el detalle de "Conectado
-   * a Aave"—, pero deja de vestirse de número único.
+   * media ponderada que ya compuso el backend. Esta tarjeta responde **una**
+   * pregunta —cuánto rinde mi plata, en conjunto— y por eso **no** lista los
+   * lugares: el detalle de cada uno es otra pregunta, y vive en "Ver más", que es
+   * donde ya estaba. El APR del pool no desaparece —sigue siendo una de las filas
+   * de abajo—, pero deja de vestirse de número único.
    *
    * Esta línea no redondea ni arma frases: pasa lo que el servicio ya decidió.
+   *
+   * Y si el servicio no publicó una tasa combinada, acá no se muestra ninguna:
+   * ni el número, ni un guion, ni una frase. Una media ponderada sobre los lugares
+   * que contestaron es un número seguro armado con datos que faltan, y un
+   * `—` al lado se lee como "no rinde". Cuando todas las tasas se leen, la tasa
+   * vuelve sola, porque sale de la misma lectura.
    */
   const yieldView = balance?.yield ?? null;
   const combinedRate = yieldView === null ? null : formatYieldRate(yieldView);
-  /*
-   * La frase que acompaña a un titular que no existe. La del servicio cuando el
-   * rendimiento se leyó incompleto —y nombra qué falta—, la misma del balance
-   * cuando la lectura entera no llegó. Nunca un `0,00%`: un cero sería una
-   * afirmación sobre plata que nadie verificó.
-   */
-  const yieldNote =
-    yieldView === null
-      ? balance !== undefined && (balance.status === 'idle' || balance.status === 'loading')
-        ? 'Estamos leyendo dónde rinde tu plata.'
-        : YIELD_UNREADABLE_NOTE
-      : yieldView.incompletenessNote;
 
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans">
@@ -142,30 +144,17 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
               {usd === null ? '••••' : `${usd.whole}${usd.cents}`}
             </div>
             {/*
-              El total es parcial. El número queda porque lo que sí se pudo leer
-              también es cierto —tirar la suma parcial sería tirar lo que
-              sabemos— pero la frase dice cuál es la parte que falta, para que
-              nadie lea ese número como su saldo completo.
+              El total es parcial y no se dice. El número queda porque lo que sí
+              se pudo leer también es cierto —tirar la suma parcial sería tirar
+              lo que sabemos— y lo que faltó no necesita un cartel: no se pinta,
+              y cuando la lectura llegue la pieza aparece por su cuenta.
             */}
-            {dollars?.complete === false && dollars.incompletenessNote !== null && (
-              <div className="bg-amber-50 rounded-2xl p-3 mt-3 text-[11px] text-amber-700 leading-relaxed font-medium">
-                {dollars.incompletenessNote}
-              </div>
-            )}
-            {/*
-              Una lectura que no llegó no muestra un cero: dice que no se pudo
-              leer.
-            */}
-            {usd === null && note !== null && (
-              <p className="text-xs font-medium text-amber-600 leading-snug pt-1">
-                {note}
-              </p>
-            )}
           </div>
         </div>
 
         {/* =====================================================================
-            CARD 2: RENDIMIENTO (la tasa combinada de todos los lugares)
+            CARD 2: RENDIMIENTO — la tasa combinada, y el detalle de cada lugar
+            vive en "Ver más" ("Tu dinero"), no acá.
            ===================================================================== */}
         <div className="bg-white rounded-[32px] p-6 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80 space-y-4">
           <div className="flex items-center justify-between">
@@ -184,18 +173,16 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
           </div>
 
           {/*
-            LA TARSA COMBINADA, Y SU DESGLOSE.
+            LA TARSA COMBINADA, Y SOLO ESO.
 
             Antes ponía `3,90%` —el APR de un solo lugar— como si todo el dinero
             de la persona rindiera ahí, y dos cifras más escritas a mano. Ahora el
-            titular es la media ponderada que ya compuso el backend y debajo está
-            la fila de cada lugar con su propia tasa, leída de la misma fuente.
+            titular es la media ponderada que ya compuso el backend, y las filas de
+            abajo son datos de la posición, no un desglose por venue.
 
-            El titular tiene tres estados y ninguno de ellos es un cero: la tasa
-            real, la frase que nombra el lugar que no se pudo leer, o la frase de
-            que no se pudo leer el rendimiento. Un guion acá no es estilo: es la
-            diferencia entre "no rinde" y "no lo sabemos", y con plata de por
-            medio esa diferencia importa.
+            El titular tiene un solo estado: la tasa real que el backend publicó,
+            o nada. Un guion acá no sería estilo, sería una afirmación más —que no
+            rinde, o que no lo sabemos— y ninguna de las dos está verificada.
           */}
           {(() => {
             const view = pool?.pool;
@@ -207,47 +194,35 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
                 ? projectYearlyGain(positionRaw, position.value?.decimals ?? 6, supplyApr)
                 : null;
 
+            /*
+             * El depósito en el pool, si su pieza se pudo leer. Una pieza ilegible
+             * no se reemplaza por un texto: la fila entera no se pinta, porque
+             * una fila que sólo dice "no lo supimos leer" es ruido, y el dinero
+             * vuelve a aparecer cuando la lectura llega.
+             */
+            const poolPart = parts.find((part) => part.source === 'pool_position');
+            const poolPartValue =
+              poolPart !== undefined && poolPart.status === 'ok' ? poolPart.value : null;
+
             return (
               <>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl sm:text-4xl font-black font-display text-slate-900 tracking-tight">
-                    {combinedRate ?? '—'}
-                  </span>
-                  {combinedRate !== null && (
-                    <span className="text-sm font-semibold text-slate-500">anual</span>
-                  )}
-                </div>
-
-                {combinedRate === null && (
-                  <div className="bg-amber-50 rounded-2xl p-3 text-[11px] text-amber-700 leading-relaxed">
-                    {yieldNote}
-                  </div>
-                )}
-
-                {/*
-                  EL DESGLOSE, una fila por lugar.
-
-                  Se pinta aunque el titular no exista: las filas son hechos
-                  propios y ya se leyeron. Y cada fila decide sola qué muestra —
-                  una tasa, un "sin saldo depositado" o un "no se pudo leer"—
-                  porque un lugar que no tiene nada y un lugar que no supimos
-                  leer son dos verdades distintas, no dos versiones de la misma
-                  fila vacía.
-                */}
-                {yieldView !== null && yieldView.venues.length > 0 && (
-                  <div className="space-y-3 pt-4 border-t border-slate-100">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 font-display block">
-                      En cada lugar
+                {combinedRate !== null && (
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl sm:text-4xl font-black font-display text-slate-900 tracking-tight">
+                      {combinedRate}
                     </span>
-                    {yieldView.venues.map((venue) => (
-                      <YieldVenueRow key={venue.key} venue={venue} />
-                    ))}
+                    <span className="text-sm font-semibold text-slate-500">anual</span>
                   </div>
                 )}
 
                 <div className="space-y-3 pt-3 border-t border-slate-100 text-sm">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400 font-medium">Conectado a Aave</span>
+                    {/*
+                      "Conectado", y no "Conectado a Aave": el titular ya no es
+                      el de un solo lugar y esta fila habla de la conexión de la
+                      posición completa. El detalle de cada lugar es otra pantalla.
+                    */}
+                    <span className="text-slate-400 font-medium">Conectado</span>
                     <span className="font-extrabold text-black">
                       {view === null ? 'No todavía' : 'Sí, en lectura'}
                     </span>
@@ -256,35 +231,31 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400 font-medium">APR de Aave</span>
                     {/*
-                      La tasa del pool, con su propio nombre. Sigue siendo el
-                      detalle de la conexión con Aave —no el titular— porque el
-                      titular ya es la media de todos los lugares.
+                      La tasa del pool, con su propio nombre: es el ritmo del lugar
+                      de Aave, no el titular —que es la media de todos—, y el que
+                      necesita para entender la fila de "En un año" de más abajo.
                     */}
                     <span className="font-extrabold text-black">
                       {supplyApr === null ? '—' : formatPercent(supplyApr)}
                     </span>
                   </div>
 
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400 font-medium">Tu dinero en el pool</span>
-                    {/*
-                      La posición sale del **mismo** total, no de otra lectura: es
-                      la fila de Aave de la tarjeta "de dónde sale". Una sola
-                      fuente para la misma plata, así que no puede contradecirse
-                      con el número de arriba.
-                    */}
-                    {(() => {
-                      const position = parts.find((part) => part.source === 'pool_position');
-                      if (position === undefined || position.status !== 'ok') {
-                        return <span className="font-extrabold text-amber-600">No se pudo leer</span>;
-                      }
-                      return position.value.isZero ? (
+                  {/*
+                    La posición sale del **mismo** total, no de otra lectura: es
+                    la fila de Aave de la tarjeta "de dónde sale". Una sola
+                    fuente para la misma plata, así que no puede contradecirse
+                    con el número de arriba.
+                  */}
+                  {poolPartValue !== null && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400 font-medium">Tu dinero en el pool</span>
+                      {poolPartValue.isZero ? (
                         <span className="font-extrabold text-black">No depositás nada</span>
                       ) : (
-                        <span className="font-extrabold text-black">{`U$${position.value.formatted}`}</span>
-                      );
-                    })()}
-                  </div>
+                        <span className="font-extrabold text-black">{`U$${poolPartValue.formatted}`}</span>
+                      )}
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-between">
                     {/*

@@ -1,9 +1,7 @@
 import React, { useMemo, useState } from 'react';
 
 import { splitUsdDisplay } from '../../services/portfolio';
-import { formatPercent } from '../../services/pool';
-import { BALANCE_UNREADABLE_NOTE } from '../../services/walletBalance';
-import type { PoolScreenView } from '../../hooks/usePool';
+import { formatVenueRate } from '../../services/walletBalance';
 import { usePortfolio, type PortfolioView } from '../../hooks/usePortfolio';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import {
@@ -13,10 +11,17 @@ import {
   EyeOff,
   ArrowDown,
   ArrowUp,
-  DollarSign,
   ChevronRight,
 } from 'lucide-react';
 import { UserProfileData } from '../../types';
+
+/**
+ * El lugar de Aave V3 en Monad, por la **key** que publica el backend.
+ *
+ * Se busca por key y no por etiqueta a propósito: el nombre es texto del
+ * servidor y puede cambiar; la identidad del lugar no.
+ */
+const AAVE_VENUE_KEY = 'invest.aave_v3_usdc_monad';
 
 interface WalletViewProps {
   profile: UserProfileData | null;
@@ -26,8 +31,6 @@ interface WalletViewProps {
    * cerrar la lista de cripto sería una lectura de blockchain por cada apertura.
    */
   portfolio?: PortfolioView;
-  /** El pool de Aave en Monad, leído una vez por sesión en el `App`. */
-  pool?: PoolScreenView;
   /**
    * El balance, leído una vez por sesión en el `App`.
    *
@@ -40,7 +43,16 @@ interface WalletViewProps {
   onOpenProfile?: () => void;
   onNavigateToInvestments?: () => void;
   onNavigateToActivity?: () => void;
-  onOpenAction?: (action: 'depositar' | 'usar' | 'enviar') => void;
+  /**
+   * Qué acción abre la persona desde la fila de abajo.
+   *
+   * `'usar'` salió de acá y de `ActionModalType`: su menú sólo ofrecía Comprar y
+   * Vender, y las dos son cambio de activo. Hoy no hay motor de swap, así que
+   * una acción que no se puede ejecutar no se ofrece. Las pantallas de compra y
+   * venta **no se borraron** — están estacionadas a propósito y son la base de
+   * la Fase 2, que ya está decidida; sólo se les cerró la puerta de entrada.
+   */
+  onOpenAction?: (action: 'depositar' | 'enviar') => void;
   onOpenSearch?: () => void;
   onOpenScanner?: () => void;
   onOpenBugModal?: () => void;
@@ -58,7 +70,6 @@ interface WalletViewProps {
 export const WalletView: React.FC<WalletViewProps> = ({
   profile,
   portfolio,
-  pool,
   balance,
   onOpenProfile,
   onNavigateToInvestments,
@@ -90,23 +101,32 @@ export const WalletView: React.FC<WalletViewProps> = ({
   const usd = useMemo(() => splitUsdDisplay(balance?.total ?? null), [balance?.total]);
 
   /*
-   * Dos frases y ningún término medio: o el total es entero, o es parcial y se
-   * nombra lo que falta. `note` sale del servicio ya en castellano; la otra es la
-   * lectura que no llegó.
+   * La única frase que esta pantalla todavía escribe bajo el saldo.
+   *
+   * `balance.note` y `BALANCE_UNREADABLE_NOTE` no se pintan: las dos hablan de
+   * una lectura que no llegó, y lo que no se pudo leer no se nombra. La parte de
+   * `usdcNote` que nombra cadenas ilegibles tampoco.
+   *
+   * Lo que queda es su otra mitad —"No hay dólares digitales en tus
+   * billeteras."—, que no habla de una falla sino de un hecho: no hay saldo, y
+   * eso se muestra igual que se muestra un cero leído.
    */
   const balanceNote = useMemo(() => {
-    if (balance === undefined) return portfolio?.usdcNote ?? null;
-    if (balance.status === 'error' || balance.status === 'ready') {
-      return balance.note ?? (balance.status === 'error' ? BALANCE_UNREADABLE_NOTE : null);
-    }
-    return portfolio?.usdcNote ?? null;
-  }, [balance, portfolio?.usdcNote]);
+    if (portfolio === undefined) return null;
+    if (portfolio.unreadableChains.length > 0) return null;
+
+    return portfolio.usdcNote;
+  }, [portfolio]);
 
   /*
-   * La etiqueta acompaña al dato: dice "Balance total" porque lo que se muestra
-   * es el total de las dos cubetas, no un tipo de moneda suelto.
+   * La etiqueta acompaña al dato, y no lo anuncia: dice "Balance total" porque lo
+   * que se muestra es el total de las dos cubetas. Antes decía "Sin lectura"
+   * cuando el número no había llegado, que es una forma de escribir en pantalla
+   * que algo no se pudo leer —y algo que no se pudo leer no se nombra—; cuando
+   * no hay lectura, la cifra queda en puntos y la etiqueta sigue diciendo qué
+   * cifra es.
    */
-  const balanceLabel = usd === null ? 'Sin lectura' : 'Balance total';
+  const balanceLabel = 'Balance total';
 
   // Derivar el handle de usuario como $joadata o $nombre
   const userTag = profile?.nombre
@@ -235,35 +255,34 @@ export const WalletView: React.FC<WalletViewProps> = ({
             </div>
 
             {/*
-             * Una cadena que no se pudo leer se dice, en castellano y sin
-             * jerga. `usd === null` es justamente ese caso, y también el de una
-             * sesión que todavía no terminó de leer: por eso la línea sólo
-             * aparece cuando hay una frase que decir.
+             * La línea aparece sólo para lo que sí sabemos: la frase verdadera
+             * del portfolio, o el aviso de que el saldo está oculto —que es una
+             * decisión de esta pantalla, no una lectura que falló—. Cuando lo que
+             * hay es una lectura que no llegó, no se escribe nada.
              */}
-            {usd === null && balanceNote !== null && (
+            {usd === null && (!showBalance || balanceNote !== null) && (
               <p className="text-xs font-medium text-amber-600 leading-snug">
                 {showBalance ? balanceNote : 'Saldo oculto'}
               </p>
             )}
 
             {/*
-              El total se leyó pero le **falta** una parte. El número queda, y
-              la frase lo aclara: un total parcial nunca se presenta como entero,
-              y por eso la advertencia no depende de que el número se esté
-              mirando — aparece siempre que `complete` es `false`.
+              Un total parcial ya no lleva la frase que lo nombraba. El número
+              queda, que es lo que sí se pudo leer; la parte que faltó no se
+              nombra, y vuelve sola con la pieza cuando la lectura llega.
             */}
-            {showBalance && balance?.complete === false && balance?.note !== null && balance?.note !== undefined && (
-              <p className="text-xs font-medium text-amber-600 leading-snug">
-                {balance.note}
-              </p>
-            )}
 
             {/*
               La píldora antes decía `Rindiendo 3,90% anual`, con el número
-              escrito a mano en `config/markets.ts`. Ahora muestra la tasa que
-              devolvió `GET /api/pool` —la reserva leída en la cadena— y cuando esa
-              lectura no llegó, dice que no se pudo leer en vez de inventar un 0%:
-              un 0% de rendimiento es una afirmación sobre plata.
+              escrito a mano en `config/markets.ts`, y después lo tomaba de
+              `GET /api/pool`. Ahora sale de la tasa del **venue de Aave dentro
+              del mismo balance** que ya está en pantalla: es el mismo número con
+              la misma guarda —el backend no publica esa tasa si la reserva no
+              reconcilia—, y preguntar `/api/pool` desde la pestaña de la billetera
+              era un segundo viaje a la cadena en cada carga de página.
+
+              Cuando no hay tasa, no se dice `0%`: un 0% de rendimiento es una
+              afirmación sobre plata.
 
               Sigue siendo el mismo botón: abre el detalle del pool.
             */}
@@ -275,8 +294,15 @@ export const WalletView: React.FC<WalletViewProps> = ({
               >
                 <span>
                   {(() => {
-                    const apr = pool?.pool?.displayableSupplyApr ?? null;
-                    const label = formatPercent(apr);
+                    /*
+                     * El venue se busca por su **key**, no por su etiqueta: el
+                     * nombre es del backend y puede cambiar; la identidad del
+                     * lugar no.
+                     */
+                    const venue = (balance?.yield?.venues ?? []).find(
+                      (candidate) => candidate.key === AAVE_VENUE_KEY && candidate.status === 'ok',
+                    );
+                    const label = formatVenueRate(venue?.rate ?? null);
                     return label === null ? 'Tasa no disponible' : `Rindiendo ${label} anual`;
                   })()}
                 </span>
@@ -284,8 +310,18 @@ export const WalletView: React.FC<WalletViewProps> = ({
               </button>
             </div>
 
-            {/* 3 Botones Circulares de Acción (Negro + Verde Fluo) */}
-            <div className="grid grid-cols-3 gap-3 pt-4">
+            {/*
+              Dos botones, no tres.
+
+              La fila era `grid-cols-3` porque había tres acciones. Sacado "Usar"
+              —que era la puerta a Comprar y Vender, y no hay motor de swap— la
+              grilla queda en dos columnas y el hueco que dejó la tercera no se
+              rellena con nada: las dos acciones que quedan miden lo mismo y
+              siguen leyéndose como una fila de acciones, no como dos botones
+              descolgados. No se rediseña la fila; se le sacan las tres
+              columnas que ya no tiene contenido.
+            */}
+            <div className="grid grid-cols-2 gap-3 pt-4">
               {/* Depositar */}
               <div className="flex flex-col items-center">
                 <button
@@ -300,19 +336,17 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 </span>
               </div>
 
-              {/* Usar */}
-              <div className="flex flex-col items-center">
-                <button
-                  onClick={() => onOpenAction?.('usar')}
-                  type="button"
-                  className="w-14 h-14 rounded-full bg-black flex items-center justify-center text-[#ccff00] shadow-md hover:bg-slate-900 active:scale-90 transition-transform cursor-pointer"
-                >
-                  <DollarSign className="w-5 h-5 stroke-[2.5]" />
-                </button>
-                <span className="text-xs font-semibold text-black mt-2">
-                  Usar
-                </span>
-              </div>
+              {/*
+                ACÁ ESTABA "USAR", LA PUERTA A LAS PANTALLAS DE COMPRA Y VENTA.
+
+                No se borran esas pantallas: quedan en `ActionFlowModal`
+                (`use_buy` y `use_sell`), que son la base de la Fase 2 ya
+                decidida —1inch para EVM, Jupiter para Solana— y están
+                terminadas a falta del motor. Lo que se sacó fue la puerta,
+                porque una acción que no se puede ejecutar no se ofrece. Cuando
+                el motor exista, la puerta vuelve y las pantallas siguen ahí,
+                con el mismo catálogo y los mismos saldos.
+              */}
 
               {/* Enviar */}
               <div className="flex flex-col items-center">

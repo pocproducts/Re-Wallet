@@ -8,17 +8,21 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { splitUsdDisplay } from '../../services/portfolio';
-import { formatPercent } from '../../services/pool';
-import { BALANCE_UNREADABLE_NOTE } from '../../services/walletBalance';
+import { formatVenueRate } from '../../services/walletBalance';
 import type { WalletBalanceBucketView } from '../../services/walletBalance';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
-import type { PoolScreenView } from '../../hooks/usePool';
 import { UserProfileData } from '../../types';
+
+/**
+ * El lugar de Aave V3 en Monad, por la **key** que publica el backend.
+ *
+ * Se busca por key y no por etiqueta a propósito: el nombre es texto del
+ * servidor y puede cambiar; la identidad del lugar no.
+ */
+const AAVE_VENUE_KEY = 'invest.aave_v3_usdc_monad';
 
 interface InvestmentsViewProps {
   profile: UserProfileData | null;
-  /** El pool de Aave en Monad, leído una vez por sesión en el `App`. */
-  pool?: PoolScreenView;
   /**
    * El balance completo, leído una vez por sesión en el `App`.
    *
@@ -44,7 +48,6 @@ interface InvestmentsViewProps {
 
 export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
   profile,
-  pool,
   balance,
   onOpenProfile,
   onNavigateToWallet,
@@ -96,22 +99,34 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
   );
 
   /*
-   * El titular es parcial o no llegó: en los dos casos se dice, y nunca se
-   * muestra un cero de reemplazo.
+   * No hay frase de incompletitud en esta pantalla, y es a propósito.
+   *
+   * Una pieza que no se pudo leer no se nombra: ni acá, ni en la tarjeta de
+   * cripto, ni en la de dólares. Un aviso que dice qué falta es un recordatorio
+   * permanente de un problema de lectura, y la pieza desaparece de todos modos;
+   * cuando la lectura llega, la pieza vuelve sola, sin que haya que quitar nada
+   * a mano.
+   * El servicio sigue componiendo la frase (`buildIncompletenessNote`): esta
+   * pasada sólo decidió que acá no se pinta.
    */
-  const totalNote = useMemo(() => {
-    if (balance === undefined) return null;
-    if (balance.status === 'error') return BALANCE_UNREADABLE_NOTE;
-    return balance.note;
-  }, [balance]);
 
   /*
-   * La píldora de rendimiento sale de la reserva leída en la cadena. Antes decía
-   * `3,46%` escrito a mano en el JSX: una tasa que la app no había leído de
-   * ningún lado. Cuando la lectura no llegó, no hay tasa —y no se pone un `0%`,
-   * que sería afirmar que el pool no rinde.
+   * La píldora de rendimiento sale de la tasa del **venue de Aave dentro del
+   * balance** que esta pantalla ya tiene. Antes venía de `GET /api/pool`, que es
+   * un segundo viaje a la cadena en cada carga de página para leer un número que
+   * el backend ya publica en el balance con la misma guarda: si la reserva no
+   * reconcilia, no hay tasa.
+   *
+   * El redondeo lo hace `formatVenueRate`, en `bigint` y una sola vez, como el
+   * titular combinado: una componente no vuelve a armar un porcentaje a mano.
    */
-  const aprLabel = useMemo(() => formatPercent(pool?.pool?.displayableSupplyApr ?? null), [pool?.pool?.displayableSupplyApr]);
+  const aprLabel = useMemo(() => {
+    const venue = (balance?.yield?.venues ?? []).find(
+      (candidate) => candidate.key === AAVE_VENUE_KEY && candidate.status === 'ok',
+    );
+
+    return formatVenueRate(venue?.rate ?? null);
+  }, [balance?.yield]);
 
   const userTag = profile?.nombre
     ? '$' + profile.nombre.toLowerCase().replace(/\s+/g, '').slice(0, 10)
@@ -221,26 +236,22 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             </button>
           </div>
 
-          {/* EL TOTAL DEL BACKEND, TAL CUAL LLEGÓ */}
+          {/* EL TOTAL DEL BACKEND, TAL CUAL LLEGÓ
+
+              Cuando el número no llegó, la cifra queda en puntos como cuando la
+              persona la oculta: los puntos no afirman nada sobre la plata, y un
+              `—` o un cero dirían "no sé cuánto" o "no tenés nada", que son dos
+              afirmaciones que nadie verificó. */}
           <div className="flex items-baseline font-display">
             <span className="text-4xl font-extrabold text-black tracking-tight">
-              {!showBalance ? '••••' : total === null ? '—' : total.whole}
+              {!showBalance || total === null ? '••••' : total.whole}
             </span>
             <span className="text-2xl font-bold text-slate-300 ml-0.5">
               {!showBalance || total === null ? '' : total.cents}
             </span>
           </div>
 
-          {/*
-            Un total parcial se muestra **con** la frase que nombra lo que falta,
-            y la frase no depende de que el número se esté mirando. Un total
-            entero, en cambio, se dice entero: acá abajo, en las dos tarjetas, está
-            de qué está hecho.
-          */}
-          {showBalance && totalNote !== null && (
-            <p className="text-xs font-medium text-amber-600 leading-snug pt-1">{totalNote}</p>
-          )}
-        </div>
+          </div>
       </div>
 
       {/* =========================================================================
@@ -272,22 +283,18 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 block">Bitcoin & Crypto</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
-                {!showBalance ? '••' : cryptoTotal === null ? '—' : cryptoTotal.whole}
+                {!showBalance || cryptoTotal === null ? '••' : cryptoTotal.whole}
               </span>
               <span className="text-sm font-bold text-slate-300 ml-0.5">
                 {!showBalance || cryptoTotal === null ? '' : cryptoTotal.cents}
               </span>
             </div>
             {/*
-              Una cubeta incompleta conserva lo que sí se pudo leer y **dice qué
-              le falta**. Un cero real no dice nada: cero por cualquier precio es
-              cero, y una billetera vacía tiene que poder parecer vacía.
+              La cubeta incompleta no dice nada acá abajo. El número es lo que
+              se leyó y se muestra; la pieza que faltó no se nombra, y un cero
+              real tampoco necesita aviso: cero por cualquier precio es cero, y
+              una billetera vacía tiene que poder parecer vacía.
             */}
-            {showBalance && cryptoValue?.complete === false && cryptoValue.incompletenessNote !== null && (
-              <p className="text-[11px] font-medium text-amber-600 leading-snug mt-0.5">
-                {cryptoValue.incompletenessNote}
-              </p>
-            )}
           </div>
         </div>
 
@@ -302,7 +309,7 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
               U$
             </div>
 
-            {/* Píldora de la tasa real del pool, o nada si no se pudo leer */}
+            {/* Píldora de la tasa del lugar de Aave, o nada si no se pudo leer */}
             <div className="flex items-center gap-1">
               {aprLabel !== null && (
                 <span className="px-2 py-0.5 rounded-full bg-[#ccff00] text-black font-extrabold text-[11px]">
@@ -317,17 +324,13 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 block">Dólares digitales</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
-                {!showBalance ? '••' : dollarsTotal === null ? '—' : dollarsTotal.whole}
+                {!showBalance || dollarsTotal === null ? '••' : dollarsTotal.whole}
               </span>
               <span className="text-sm font-bold text-slate-300 ml-0.5">
                 {!showBalance || dollarsTotal === null ? '' : dollarsTotal.cents}
               </span>
             </div>
-            {showBalance && digitalDollarsValue?.complete === false && digitalDollarsValue.incompletenessNote !== null && (
-              <p className="text-[11px] font-medium text-amber-600 leading-snug mt-0.5">
-                {digitalDollarsValue.incompletenessNote}
-              </p>
-            )}
+            {/* Mismo criterio que la tarjeta de cripto: lo ilegible no se nombra. */}
           </div>
         </div>
       </div>

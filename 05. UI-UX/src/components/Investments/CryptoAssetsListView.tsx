@@ -5,11 +5,11 @@ import {
 } from 'lucide-react';
 import { CryptoAssetDetailModal } from './CryptoAssetDetailModal';
 import { BalancePieceRow } from './BalancePieceRow';
-import { unreadableChainMessage } from '../../services/portfolio';
-import { BALANCE_UNREADABLE_NOTE, byUsdValueDesc } from '../../services/walletBalance';
+import { byUsdValueDesc } from '../../services/walletBalance';
 import type { WalletBalancePart } from '../../services/walletBalance';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import type { PortfolioView } from '../../hooks/usePortfolio';
+import type { DepositInfoView } from '../../hooks/useDepositInfo';
 import type { CryptoAssetData } from './CryptoAssetDetailModal';
 
 /**
@@ -46,16 +46,26 @@ interface CryptoAssetsListViewProps {
    * cada fila. El portfolio sólo aporta identidad y direcciones.
    */
   balance?: WalletBalanceScreenView;
+  /**
+   * El catálogo de depósito, leído una vez por sesión en el `App`.
+   *
+   * Va por props y no por un hook propio porque la lectura ya existe: el detalle
+   * de un cripto lo necesita para armar la lista real de "comprar, vender y
+   * cambiar", y una segunda lectura sería la misma app preguntando dos veces lo
+   * mismo al servidor.
+   */
+  depositInfo?: DepositInfoView;
 }
 
-/** El texto de la card superior cuando **no** hay un total que mostrar. */
-const SIN_VALOR = '—';
+/** Sin total que mostrar no se escribe un `—`: la cifra queda en puntos. */
+const SIN_TOTAL = '••••';
 
 export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
   onBack,
   userTag,
   portfolio,
   balance,
+  depositInfo,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedAsset, setSelectedAsset] = useState<CryptoAsset | null>(null);
@@ -153,15 +163,19 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
     [filteredAssets],
   );
 
-  /* Las cadenas que no se pudieron leer, o donde no hay billetera. */
-  const unreadableChains = portfolio?.unreadableChains ?? [];
+  /*
+   * Sin cartel de "no pudimos leer todo" en esta pantalla.
+   *
+   * Las cadenas que no se pudieron leer no se nombran: no hay ninguna fila que
+   * las represente, y cuando la lectura vuelve los saldos aparecen solos. El
+   * contador de arriba sigue contando los activos que la cadena reportó, que es
+   * un hecho verdadero y no un conteo de promesas.
+   */
 
   /*
-   * El total de la cubeta de cripto, y cuándo se puede pintar.
-   *
-   * Sale de `cryptoValue.total`, que el backend sumando con las piezas que sí se
-   * pudieron leer. Un total parcial se muestra **con** la frase que nombra lo
-   * que falta, y un cero real se muestra como cero: una billetera vacía tiene que
+   * El total de la cubeta de cripto, tal cual lo compuso el backend sumando lo
+   * que sí se pudo leer. Un total parcial no lleva la frase que nombra lo que
+   * falta, y un cero real se muestra como cero: una billetera vacía tiene que
    * poder parecer vacía.
    */
   const cryptoUsd = cryptoValue?.total?.formatted ?? null;
@@ -210,49 +224,24 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
 
           <div className="flex items-baseline font-display">
             <span className="text-4xl sm:text-5xl font-extrabold text-black tracking-tight">
-              {cryptoUsd === null ? SIN_VALOR : `U$${cryptoUsd}`}
+              {cryptoUsd === null ? SIN_TOTAL : `U$${cryptoUsd}`}
             </span>
           </div>
 
           {/*
-            Un total parcial conserva el número y dice qué le falta; nunca se
-            presenta como entero. Un total entero dice lo que es: la cripto que
-            está libre, sin lo que dejaste en los pools.
+            La frase de abajo describe la cifra, así que sólo aparece cuando hay
+            cifra. Cuando la lectura no llegó no se escribe nada: ni el número en
+            cero, ni un guion, ni una frase que diga qué faltó —la parte que no se
+            pudo leer no se nombra— y el subtítulo vuelve solo con la lectura.
           */}
           <p className="text-xs font-semibold text-slate-400 font-mono tracking-tight pt-0.5">
             {balance === undefined || balance.status === 'idle' || balance.status === 'loading'
               ? 'Leyendo la cadena…'
-              : balance.status === 'error'
-                ? 'No pudimos leer tus saldos.'
-                : cryptoValue?.complete === false
-                  ? cryptoValue.incompletenessNote
-                  : cryptoUsd === null
-                    ? BALANCE_UNREADABLE_NOTE
-                    : 'Es lo que tenés libre en tus billeteras y no está pegado al dólar. Tus dólares digitales van en la tarjeta de Dólares digitales.'}
+              : cryptoUsd === null
+                ? null
+                : 'Es lo que tenés libre en tus billeteras y no está pegado al dólar. Tus dólares digitales van en la tarjeta de Dólares digitales.'}
           </p>
         </div>
-
-        {/* =========================================================================
-            CADENAS QUE NO SE PUDIERON LEER
-
-            Es la diferencia más importante de esta pantalla: una cadena caída NO
-            es un saldo cero. Un cero se ve como una billetera vacía, y alguien
-            puede decidir no comprar; un fallo de lectura se ve como un fallo y
-            se puede volver a intentar. La frase va en castellano y sin el enum
-            del backend, que va al log.
-         ========================================================================= */}
-        {unreadableChains.length > 0 && (
-          <div className="bg-white border border-amber-200/80 rounded-3xl p-4 space-y-1 shadow-2xs">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-amber-600 font-display block">
-              no pudimos leer todo
-            </span>
-            {unreadableChains.map((chain) => (
-              <p key={chain.chain} className="text-xs font-medium text-slate-600 leading-snug">
-                {unreadableChainMessage(chain)}
-              </p>
-            ))}
-          </div>
-        )}
 
         {/* Buscador de Criptomonedas */}
         <div className="relative">
@@ -304,18 +293,18 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
 
                 {/* DERECHA: el valor en dólares y, debajo, la cantidad real.
 
-                    La fila completa la pinta `BalancePieceRow` cuando el backend
-                    envió la pieza: el valor arriba, la cantidad abajo, y el motivo
-                    —en vez de un número— cuando la pieza no se pudo leer. Sin
-                    pieza, la fila cae a la cantidad de la cadena, que es un dato
-                    verdadero aunque no tenga valor. */}
+                    `BalancePieceRow` se pide sólo para piezas que se pudieron
+                    leer: la fila ilegible se resuelve acá, en el mapa, y la
+                    pieza cae a la cantidad de la cadena, que la cadena sí
+                    reportó y es un dato verdadero. Un cero leído también entra
+                    por acá, sólo que en gris. */}
                 <div className="text-right shrink-0">
-                  {asset.part === null ? (
+                  {asset.part !== null && asset.part.status === 'ok' ? (
+                    <BalancePieceRow part={asset.part} hideLabel />
+                  ) : (
                     <span className="text-sm font-extrabold font-display text-black block leading-none">
                       {asset.totalCrypto}
                     </span>
-                  ) : (
-                    <BalancePieceRow part={asset.part} hideLabel />
                   )}
                 </div>
               </div>
@@ -340,6 +329,15 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
           asset={selectedAsset}
           onClose={() => setSelectedAsset(null)}
           userTag={userTag || '$joadata'}
+          /*
+            Las tres lecturas que el detalle necesita para no inventar nada: el
+            catálogo de redes y activos, los saldos por cadena y el precio por
+            pieza. Antes no tenía ninguna, y por eso sus botones de comprar,
+            vender y cambiar anunciaban operaciones que no existían.
+          */
+          depositInfo={depositInfo ?? null}
+          holdings={portfolio?.holdings ?? []}
+          balance={balance ?? null}
         />
       )}
     </div>

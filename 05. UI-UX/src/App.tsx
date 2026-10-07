@@ -105,18 +105,6 @@ export default function App() {
   const depositInfo = useDepositInfo(sessionStatus === 'authenticated');
 
   /*
-   * El pool de Aave en Monad, leído UNA vez por sesión, acá y no en cada pantalla.
-   *
-   * `GET /api/pool` va a la cadena por pedido —la reserva, tres saldos—, así que un
-   * hook por pantalla sería un viaje a Monad por cada navegación. El `App` lee una
-   * vez y le pasa el resultado a las dos vistas que lo muestran.
-   *
-   * `reload()` es lo que se llama después de un depósito firmado: el número de
-   * pantalla tiene que salir de la cadena, no del hecho de que la persona firmó.
-   */
-  const pool = usePool(sessionStatus === 'authenticated');
-
-  /*
    * EL BALANCE DE LA BILLETERA — UN solo número, leído UNA vez por sesión.
    *
    * `GET /api/wallet-balance` es la composición que hace el backend: las dos
@@ -173,6 +161,38 @@ export default function App() {
   const [isAavePoolsOpen, setIsAavePoolsOpen] = useState(false);
   const [isDigitalDollarsOpen, setIsDigitalDollarsOpen] = useState(false);
   const [isCryptoListOpen, setIsCryptoListOpen] = useState(false);
+
+  /*
+   * EL POOL DE AAVE — se lee sólo mientras una pantalla abierta lo necesita.
+   *
+   * Antes este hook estaba montado siempre, con la sesión abierta: eso pedía
+   * `GET /api/pool` en **cada** carga de página, y `/api/pool` va a la cadena
+   * por pedido. Peor: `GET /api/wallet-balance` ya compone esa misma lectura de
+   * Aave, así que la app preguntaba dos veces lo mismo desde una sola carga. El
+   * memo del backend lo hacía barato por unos segundos, que es un parche y no una
+   * razón.
+   *
+   * Ahora el corte es la **pantalla abierta**, no la sesión:
+   *
+   *  - "Tu dinero" (`AavePoolsView`, con `DepositToPoolModal` adentro) y "Dólares
+   *    digitales" (`DigitalDollarsView`) son las únicas que piden el detalle de
+   *    la reserva: totales del pool, tasa de préstamo, saldos, gas,
+   *    reconciliación y la posición en `aMonUSDC`.
+   *  - La billetera y las inversiones **ya no** lo piden: sus píldoras de tasa
+   *    salen de la tasa del venue de Aave dentro del balance, que es el mismo
+   *    número con la misma guarda de reconciliación.
+   *
+   * Una pantalla cerrada no puede ser la razón de una lectura, y por eso el
+   * booleano se arma acá y no dentro de cada vista.
+   *
+   * Y `reload()` sigue siendo lo que se llama después de un depósito firmado: el
+   * número de pantalla tiene que salir de la cadena, no del hecho de que la
+   * persona firmó. Eso pasa en "Tu dinero", que es una de las pantallas que
+   * mantienen el corte abierto.
+   */
+  const pool = usePool(
+    sessionStatus === 'authenticated' && (isAavePoolsOpen || isDigitalDollarsOpen),
+  );
 
   /*
    * Actividad arranca **vacía**.
@@ -432,7 +452,6 @@ export default function App() {
                       <WalletView
                         profile={profile}
                         portfolio={portfolio}
-                        pool={pool}
                         balance={balance}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToInvestments={() => setCurrentTab('investments')}
@@ -453,7 +472,6 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <InvestmentsView
                         profile={profile}
-                        pool={pool}
                         balance={balance}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToWallet={() => setCurrentTab('wallet')}
@@ -521,10 +539,13 @@ export default function App() {
           }}
         />
 
-        {/* =========================================================================
-            MODAL DE ACCIÓN PANTALLA COMPLETA VERDE LIMA (DEPOSITAR, USAR, ENVIAR)
-            CUBRE TODA LA PANTALLA
-           ========================================================================= */}
+        {/*
+          MODAL DE ACCIÓN A PANTALLA COMPLETA VERDE LIMA (DEPOSITAR, ENVIAR).
+
+          'usar' ya no se puede pasar: se sacó su único llamador —el botón
+          "Usar" de la billetera— porque su menú era compra y venta, y no hay
+          motor de swap.
+        */}
         <ActionFullscreenModal
           action={activeActionModal}
           onClose={() => setActiveActionModal(null)}
@@ -543,6 +564,7 @@ export default function App() {
           <AavePoolsView
             onBack={() => setIsAavePoolsOpen(false)}
             pool={pool}
+            balance={balance}
             onReload={pool.reload}
           />
         )}
@@ -567,6 +589,12 @@ export default function App() {
             userTag={userTag}
             portfolio={portfolio}
             balance={balance}
+            /*
+              La misma lectura que usa el modal de acciones. Entra por props
+              porque ya está leída en esta sesión: pedirla otra vez desde la lista
+              sería una segunda respuesta del servidor para la misma pregunta.
+            */
+            depositInfo={depositInfo}
           />
         )}
 
