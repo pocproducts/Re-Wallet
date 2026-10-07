@@ -4,11 +4,11 @@ name: pruebas
 #
 # Porque hasta ahora los 768 tests del backend corrían solo cuando alguien se
 # acordaba, en una máquina, antes de un deploy. Ese es el motivo real por el que
-# main estuvo una semana sin la app sin que nadie lo notara: no habia nada que
+# main estuvo una semana sin la app sin que nadie lo notara: no había nada que
 # dijera "esto se rompió".
 #
 # Es una red de seguridad, no una puerta: corre en cada push y en cada PR, y no
-# bloquea el merge por si sola. La decisión de mergear sigue siendo de una
+# bloquea el merge por sí sola. La decisión de mergear sigue siendo de una
 # persona.
 
 on:
@@ -21,56 +21,64 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  backend:
-    name: backend — tipos y tests
-    # Estas guardas aterrizan en `main` ANTES que la app: `main` todavia no tiene
-    # `07.PockBackend`, y un job que corre sobre un directorio inexistente falla
-    # siempre, o sea un rojo falso en el primer push. La guarda lo salta y recien
-    # empieza a trabajar cuando la app llega, sin que nadie tenga que acordarse.
-    if: ${{ hashFiles('07.PockBackend/package.json') != '' }}
+  pruebas:
+    name: tipos, tests y build
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: 07.PockBackend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: 07.PockBackend/package-lock.json
-      # `npm install` y no `npm ci`: el lock del backend esta desincronizado con
-      # su package.json por una dependencia transitiva (`utf-8-validate`), y
-      # `npm ci` se niega a instalar cuando no coinciden en vez de arreglarlo.
-      # La diferencia de comportamiento es que `install` resuelve de mas, que es
-      # justo lo que se necesita mientras el lock este desfasado.
-      - run: npm install --no-audit --no-fund
-      - name: tipos
+
+      # ── Un solo job, no dos ────────────────────────────────────────────────
+      #
+      # La versión anterior tenía un job por proyecto, cada uno con su guarda
+      # `hashFiles(...)` a nivel de job. Eso no es una expresión válida ahí: el
+      # workflow fallaba **antes de crear ningún job**, que es peor que un rojo,
+      # porque no dice qué pasó. La guarda va a nivel de paso, que sí es el
+      # lugar soportado para `hashFiles`, y los dos proyectos se corren en el
+      # mismo job para no duplicar la instalación de Node.
+      #
+      # Las guardas existen porque estas pruebas aterrizan en `main` **antes** que
+      # la app: `main` todavía no tiene `07.PockBackend` ni `05. UI-UX`, y un paso
+      # que corre sobre un directorio inexistente falla siempre. Cuando la app
+      # llegue, empiezan a trabajar solas, sin que nadie las active.
+
+      - name: backend — dependencias
+        if: ${{ hashFiles('07.PockBackend/package.json') != '' }}
+        working-directory: 07.PockBackend
+        # `npm install` y no `npm ci`: el lock del backend está desincronizado con
+        # su package.json por una dependencia transitiva (`utf-8-validate`), y
+        # `npm ci` se niega a instalar cuando no coinciden en vez de resolverlo.
+        run: npm install --no-audit --no-fund
+
+      - name: backend — tipos
+        if: ${{ hashFiles('07.PockBackend/package.json') != '' }}
+        working-directory: 07.PockBackend
         run: npm run typecheck
-      - name: tests
-        run: npm test
+
+      - name: backend — tests
+        if: ${{ hashFiles('07.PockBackend/package.json') != '' }}
+        working-directory: 07.PockBackend
+        # La suite tiene tests que comparten una base. Sin esto, un push puede
+        # escribir contra la base real de alguien.
         env:
-          # La suite tiene tests que comparten una base. Sin esto, un push puede
-          # escribir contra la base real de alguien.
           NODE_ENV: test
           CI: 'true'
+        run: npm test
 
-  front:
-    name: front — tipos y build
-    if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
+      - name: front — dependencias
+        if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
         working-directory: 05. UI-UX
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: 05. UI-UX/package-lock.json
-      - run: npm install --no-audit --no-fund
-      - name: tipos
+        run: npm install --no-audit --no-fund
+
+      - name: front — tipos
+        if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
+        working-directory: 05. UI-UX
         run: npm run lint
-      - name: build
+
+      - name: front — build
+        if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
+        working-directory: 05. UI-UX
         run: npm run build
