@@ -11,6 +11,11 @@ services:
       - '5432:5432'
     volumes:
       - bestpath-pgdata:/var/lib/postgresql/data
+      # Crea `bestpath_test` en el primer `up`. La usan los tests de integración,
+      # que NO pueden correr contra `bestpath` ni contra Neon: la guarda en
+      # `apps/api/tests/helpers/testDb.ts` solo abre una base cuyo nombre declara
+      # que es descartable. Ver el comentario del script para el porqué.
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U bestpath -d bestpath']
       interval: 5s

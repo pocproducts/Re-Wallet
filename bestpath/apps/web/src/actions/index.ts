@@ -5,8 +5,8 @@ import { UI } from '../ui';
 import { Router } from '../core/router';
 import { Flow } from '../flow';
 import { DEFAULT_COUNTRY, getCountry, toE164 } from '../components/countries';
-import { normalizeTag } from '@bestpath/shared/tag';
 import { hasPrivyIsland, requestPrivyLogin, requestPrivyRegister } from '../wire/privy';
+import { saveProfileName, saveRecovery } from '../wire/profile';
 
 /** Copy without the async clipboard API, for insecure origins. */
 function fallbackCopy(text, done){
@@ -67,7 +67,17 @@ export const Actions = BP.actions = {
         // did something when no listener is mounted; it must not restate the
         // failure or blame the user's passkey.
         console.warn('[rewallet] login de passkey falló', err);
-        UI.toast('No pudimos iniciar sesión. Intentá de nuevo.', 'warning');
+        // The copy follows the CEREMONY. Telling someone who pressed "Empezar" to
+        // "iniciá sesión" is a sentence about the wrong action, and the one case
+        // where it really matters is a person who already HAS an account pressing
+        // the register button — which is what the logout routing used to do to
+        // them, and it is indistinguishable from a broken fingerprint reader.
+        UI.toast(
+          mode === 'login'
+            ? 'No pudimos verificar tu passkey. Intentá de nuevo.'
+            : 'No pudimos crear tu cuenta. Si ya tenías una, entrá con tu passkey.',
+          'warning',
+        );
       }
       return;
     }
@@ -109,31 +119,56 @@ export const Actions = BP.actions = {
   },
 
   // ── onboarding-v2: single screen saves the whole profile at once ───
-  'save-profile'(el, root){
+  //
+  // IT GOES TO THE API NOW. It used to `Store.set(...)` the four fields and call
+  // it done, which meant the name and the tag existed only in this browser: the
+  // database kept `name = 'ReWallet'` and the provisional `@u…` handle while the
+  // phone showed a real identity, and clearing the browser data took it away.
+  //
+  // The tag in particular cannot be decided here. The screen PREDICTS it with
+  // `suggestTag` to show the user what they are about to get, but only the
+  // server knows whether that handle is already taken, and `PATCH /me/profile`
+  // allocates a unique one. So the value that ends up in the store is the one
+  // that came BACK, never the one that was guessed — a client that keeps its own
+  // guess ends up showing a handle that belongs to somebody else.
+  async 'save-profile'(el, root){
     const first  = root.querySelector('#inp-first').value.trim();
     const last   = root.querySelector('#inp-last').value.trim();
     const email  = root.querySelector('#inp-email').value.trim();
     const nat    = root.querySelector('#inp-phone').value.replace(/\D/g, '');
-    // The tag is derived from the name now, never typed: read it back from the
-    // row the screen rendered rather than from an input.
-    const tag    = normalizeTag((root.querySelector('[data-tag-value]')?.textContent || '').replace(/^@/, ''));
     const cc     = Store.get().recoveryPhoneCountry || DEFAULT_COUNTRY;
-    if (!first || !last || !U.isEmail(email) || nat.length < 7 || !tag) return;
+    if (!first || !last || !U.isEmail(email) || nat.length < 7) return;
+
     if (!navigator.onLine){ UI.toast('Revisa tu conexión para continuar.','warning'); return; }
 
-    const country = getCountry(cc) ?? getCountry(DEFAULT_COUNTRY);
+    const country = getCountry(cc);
+    if (!country) return;
+
     el.classList.add('is-loading');
-    Store.set({
-      firstName: first,
-      lastName: last,
-      userName: first,
-      recoveryEmail: email,
-      recoveryPhone: toE164(country, nat),
-      recoveryPhoneCountry: cc,
-      bpTag: `@${tag}`,
-      tagNormalized: tag,
-    });
-    setTimeout(() => Flow.completeOnboarding(), 500);
+    try {
+      // Name first: it is what allocates the tag, and a tag the recovery step
+      // could change would mean two handles for one account.
+      const namePatch = await saveProfileName({ firstName: first, lastName: last });
+      // Then the recovery contacts, in their own call. A failure HERE must not
+      // undo the name: the user would be sent back to a form for an account that
+      // is already named, and the tag would be allocated a second time.
+      const recoveryPatch = await saveRecovery({
+        email,
+        phone: toE164(country, nat),
+        country: cc,
+      });
+
+      Store.set({ ...namePatch, ...recoveryPatch });
+      Flow.completeOnboarding();
+    } catch (err) {
+      // `onboardingComplete` is deliberately NOT latched: it is the flag the
+      // logout routing trusts, and setting it on a failed save is how a user ends
+      // up told they finished onboarding for a profile the server never saw.
+      console.warn('[rewallet] onboarding: no se pudo guardar el perfil', err);
+      UI.toast('No pudimos guardar tus datos. Revisá tu conexión e intentá de nuevo.', 'warning');
+    } finally {
+      el.classList.remove('is-loading');
+    }
   },
 
   'open-add'(){ Flow.openAddMoney(); },
