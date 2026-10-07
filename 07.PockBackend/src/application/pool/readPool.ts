@@ -43,8 +43,21 @@ import {
 import { formatUnits } from '../../domain/portfolio/assets';
 import { WalletsUnavailable } from '../portfolio/readPortfolio';
 
-/** Why a field could not be read. Bounded: no provider text crosses this line. */
-export type PoolReadFailure = BalanceReadFailure | 'RESERVE_DECODE_FAILED' | 'CONFIG_UNREADABLE';
+/**
+ * Why a field could not be read. Bounded: no provider text crosses this line.
+ *
+ * `APR_NOT_RECONCILED` is **ours**, and it is not a read failure at all: the
+ * supply APR was read perfectly well and it failed the identity
+ * `liquidityRate = borrow x utilisation x (1 - RF)`. `reconciliation.agrees` says
+ * so on every response, and this name lets a *consumer* of the pool read — the
+ * combined yield — refuse that rate with the same word the pool screen uses,
+ * instead of inventing a second vocabulary for one fact.
+ */
+export type PoolReadFailure =
+  | BalanceReadFailure
+  | 'RESERVE_DECODE_FAILED'
+  | 'CONFIG_UNREADABLE'
+  | 'APR_NOT_RECONCILED';
 
 /** A field, with its own state. The two are not interchangeable. */
 export type PoolField<T> =

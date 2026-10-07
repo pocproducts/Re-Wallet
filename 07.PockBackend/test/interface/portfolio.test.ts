@@ -81,6 +81,7 @@ const solanaReader = (lamports: Record<string, string>): SolanaBalanceReader & {
       return BigInt(lamports[address] ?? '0');
     },
     tokenAmount: async () => 0n,
+    mintBalance: async () => 0n,
   };
 };
 
@@ -187,6 +188,9 @@ const failingSolanaReader = (): SolanaBalanceReader => ({
     throw new BalanceReadError('RPC_REJECTED', 'the endpoint rejected the request');
   },
   tokenAmount: async () => {
+    throw new BalanceReadError('RPC_REJECTED', 'the endpoint rejected the request');
+  },
+  mintBalance: async () => {
     throw new BalanceReadError('RPC_REJECTED', 'the endpoint rejected the request');
   },
 });

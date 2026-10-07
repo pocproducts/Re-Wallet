@@ -17,6 +17,8 @@ import { Hono } from 'hono';
 
 import type { MintSession } from '../../application/session/mintSession';
 import type { ReadPortfolio } from '../../application/portfolio/readPortfolio';
+import type { ReadDigitalDollars } from '../../application/portfolio/readDigitalDollars';
+import type { ReadWalletBalance } from '../../application/portfolio/readWalletBalance';
 import type { ReadPool } from '../../application/pool/readPool';
 import type { PrepareDeposit } from '../../application/pool/prepareDeposit';
 import type { ReadDepositInfo } from '../../application/deposit-info/readDepositInfo';
@@ -34,12 +36,14 @@ import type { TokenVerifier } from '../../domain/ports/token-verifier';
 import { SESSION_COOKIE_NAME } from './cookie';
 import { createAuthRoutes } from './routes/auth';
 import { createDepositInfoRoutes } from './routes/depositInfo';
+import { createDigitalDollarsRoutes } from './routes/digitalDollars';
 import { createDiagnosticsRoutes } from './routes/diagnostics';
 import { createNotificationsRoutes } from './routes/notifications';
 import { createPortfolioRoutes } from './routes/portfolio';
 import { createSendRoutes } from './routes/send';
 import { createPaymentRequestsRoutes } from './routes/paymentRequests';
 import { createPoolRoutes } from './routes/pool';
+import { createWalletBalanceRoutes } from './routes/walletBalance';
 import { createWalletsRoutes } from './routes/wallets';
 import { createWebhookRoutes } from './routes/webhooks';
 
@@ -61,6 +65,26 @@ export interface AppDeps {
    */
   readonly readPool?: ReadPool;
   readonly prepareDeposit?: PrepareDeposit;
+  /**
+   * Absent when the aggregation is not wired: the route is then not there.
+   *
+   * One number, and a statement of whether it is the whole truth. A screen that
+   * cannot tell a complete total from a partial one is exactly the screen this
+   * route exists to prevent, so the honest answer to "this deployment cannot
+   * compose a total" is that the route does not exist.
+   */
+  readonly readDigitalDollars?: ReadDigitalDollars;
+  /**
+   * Absent when the composition is not wired: the route is then not there.
+   *
+   * `GET /api/wallet-balance` returns the **whole** balance as two buckets plus
+   * a total computed on this side: free crypto at market price, and pool
+   * positions. Same reasoning as the routes above, and sharper — this is the
+   * number the person looks at first, so an endpoint that answered "not
+   * configured", or that answered it as the sum of only the USDC pieces, would
+   * be worse than no endpoint.
+   */
+  readonly readWalletBalance?: ReadWalletBalance;
   /**
    * Absent when the wallet store is not wired: the route is then not there.
    *
@@ -168,6 +192,42 @@ export const createApp = (deps: AppDeps) => {
         sessions: deps.sessions,
         readPool: deps.readPool,
         prepareDeposit: deps.prepareDeposit,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
+  /*
+   * `/api/digital-dollars` is the composition of the two reads above, and it is
+   * mounted when the use case exists. Same reasoning as the portfolio: a total
+   * that answered "not configured" would look, from a screen, exactly like a
+   * confident zero.
+   */
+  if (deps.readDigitalDollars) {
+    app.route(
+      '/api/digital-dollars',
+      createDigitalDollarsRoutes({
+        sessions: deps.sessions,
+        readDigitalDollars: deps.readDigitalDollars,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
+  /*
+   * `/api/wallet-balance` is **the** balance: two buckets and a total this
+   * Worker adds up. Mounted when the use case exists.
+   */
+  if (deps.readWalletBalance) {
+    app.route(
+      '/api/wallet-balance',
+      createWalletBalanceRoutes({
+        sessions: deps.sessions,
+        readWalletBalance: deps.readWalletBalance,
         cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
         now: deps.now,
         log,

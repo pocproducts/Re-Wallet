@@ -25,6 +25,9 @@ import { PrivyClient } from '@privy-io/node';
 
 import { mintSession } from './application/session/mintSession';
 import { readPortfolio } from './application/portfolio/readPortfolio';
+import { readDigitalDollars } from './application/portfolio/readDigitalDollars';
+import { readWalletBalance } from './application/portfolio/readWalletBalance';
+import { readKaminoEarnPosition } from './application/portfolio/readKaminoEarnPosition';
 import { readPool } from './application/pool/readPool';
 import { prepareDeposit } from './application/pool/prepareDeposit';
 import { prepareSend } from './application/send/prepareSend';
@@ -54,6 +57,12 @@ import {
   createHttpSolanaBalanceReader,
   DEFAULT_SOLANA_RPC_URL,
 } from './infrastructure/rpc/solanaBalanceReader.http';
+import { createChainlinkPriceFeed } from './infrastructure/rpc/chainlinkPriceFeed';
+import { createHttpKaminoEarnVaultReader } from './infrastructure/rpc/kaminoEarnVaultReader.http';
+import {
+  createHttpKaminoSharePriceFeed,
+  DEFAULT_KAMINO_API_URL,
+} from './infrastructure/rpc/kaminoSharePriceFeed.http';
 import { createHttpSolanaTransferPreparer } from './infrastructure/rpc/solanaTransferPreparer.http';
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
 import { createApp } from './interface/http/app';
@@ -89,6 +98,15 @@ export interface Config {
    * Worker from booting for a route that has a working default.
    */
   readonly monadPoolRpcUrl: string;
+  /**
+   * Optional: the base URL of Kamino's public API, where the **share price** of a
+   * Kamino Earn vault is read.
+   *
+   * Same reasoning as every other endpoint here: a deployment detail with a
+   * verified default, not an identity. Nothing else about Kamino is read from it —
+   * the shares are read on chain, and the position is never written anywhere.
+   */
+  readonly kaminoApiUrl?: string;
 }
 
 /** The one place that knows which environment variables exist. */
@@ -117,6 +135,7 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
     ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.ethereum),
     solanaRpcUrl: readEnv(env, 'SOLANA_RPC_URL') || DEFAULT_SOLANA_RPC_URL,
     monadPoolRpcUrl: readEnv(env, 'MONAD_POOL_RPC_URL') || firstCandidate(DEFAULT_POOL_ENDPOINTS),
+    kaminoApiUrl: readEnv(env, 'KAMINO_API_URL') || DEFAULT_KAMINO_API_URL,
   };
 };
 
@@ -192,6 +211,38 @@ export const buildApp = (config: Config, log: Logger) => {
   /* The charges, in a table that already existed. No table is created here. */
   const paymentRequests = createPostgresPaymentRequestStore(db);
 
+  /*
+   * The two reads the total is composed from, built **once** and handed to both
+   * the portfolio and the total: one wallet store, one source of addresses, and
+   * a total whose parts are by construction the same numbers the other screens
+   * already show.
+   */
+  const portfolioRead = readPortfolio({ wallets: walletStore, evm, solana, log });
+  const poolRead = readPool({ wallets: walletStore, pool: aavePool, log });
+
+  /*
+   * The **second venue**: Kamino Earn on Solana.
+   *
+   * The hybrid, in two collaborators. The shares come off the chain, through the
+   * **same** SPL reader the portfolio already uses (`mintBalance`, filtered by the
+   * vault's shares mint) and through the vault account itself, which is read over
+   * the same Solana endpoint. The share price comes from Kamino's public API
+   * through an injected port, because it cannot be computed here — ~99.5 % of this
+   * vault's assets sit in klend cTokens rather than in the vault's own account.
+   *
+   * Nothing is persisted: the position is read live, exactly as the Aave position
+   * is, and `sql/` is not touched by this feature at all.
+   */
+  const kaminoVaults = createHttpKaminoEarnVaultReader({ url: config.solanaRpcUrl });
+  const kaminoSharePrices = createHttpKaminoSharePriceFeed({ baseUrl: config.kaminoApiUrl });
+  const readKaminoEarnOf = readKaminoEarnPosition({
+    wallets: walletStore,
+    vaults: kaminoVaults,
+    solana,
+    prices: kaminoSharePrices,
+    log,
+  });
+
   return createApp({
     mint: mintSession({
       verify,
@@ -210,14 +261,47 @@ export const buildApp = (config: Config, log: Logger) => {
     }),
     sessions,
     // The same wallet store the claim writes through, read through.
-    readPortfolio: readPortfolio({ wallets: walletStore, evm, solana, log }),
+    readPortfolio: portfolioRead,
     /*
      * The pool read and the deposit, over the same store the portfolio reads: one
      * source of addresses, so the position shown on the pool screen belongs to the
      * wallet the portfolio shows and the deposit signs for.
      */
-    readPool: readPool({ wallets: walletStore, pool: aavePool, log }),
+    readPool: poolRead,
     prepareDeposit: prepareDeposit({ wallets: walletStore, pool: aavePool, log }),
+    /*
+     * The one number. It adds up what those two reads answer and states whether
+     * every part of it could be read; it opens no connection of its own, so
+     * nothing here can disagree with the portfolio or the pool screen.
+     */
+    readDigitalDollars: readDigitalDollars({ readPortfolio: portfolioRead, readPool: poolRead, log }),
+    /*
+     * **The** number, and the price that makes it possible.
+     *
+     * The Chainlink feeds live on Monad, so the price adapter talks to the same
+     * network as the Monad balances, through the same "an override adds a
+     * candidate endpoint ahead of the defaults" rule: a deployment can point at a
+     * provider of its own without leaving itself with a single URL.
+     *
+     * Both channels of a pair are read at **one block**, so the cross-check
+     * compares one instant of the world rather than two reads seconds apart —
+     * which is what made the two MON channels look 0.76% apart when they were
+     * both reading the same $0.028642.
+     */
+    readWalletBalance: readWalletBalance({
+      readPortfolio: portfolioRead,
+      readPool: poolRead,
+      // The second venue. It adds one piece to `investedValue` and to the sum
+      // over it; no bucket and no term of the total is added with it.
+      readKaminoEarn: readKaminoEarnOf,
+      prices: createChainlinkPriceFeed({
+        endpoints:
+          config.monadRpcUrl === DEFAULT_EVM_ENDPOINTS.monad[0]
+            ? DEFAULT_EVM_ENDPOINTS.monad
+            : [config.monadRpcUrl, ...DEFAULT_EVM_ENDPOINTS.monad],
+      }),
+      log,
+    }),
     /*
      * El envío. Mismos lectores de saldo que el portfolio —una sola fuente de
      * saldos— y el mismo catálogo como fuente de verdad de qué activo existe en

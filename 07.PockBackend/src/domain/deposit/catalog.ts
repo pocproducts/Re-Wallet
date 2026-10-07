@@ -195,11 +195,13 @@ export const DEPOSIT_NETWORKS: readonly DepositNetworkSpec[] = [
      * dirección es un mint de un token program y no un contrato— y el camino de
      * dólares lo muestra sin tocar ninguna pantalla.
      *
-     * `balanceReadable: false` y **no** es una limitación de pantalla: no hay
-     * lector verificado para un saldo de SPL en la pantalla de cobro, así que la
-     * fila aparece con su red y su dirección y no con una cifra inventada. El
-     * envío sí lee el saldo —por otro puerto— porque ahí la cifra decide si la
-     * persona puede pagar.
+     * `balanceReadable: true` y **no** por entusiasmo: porque ahora hay un lector.
+     * El saldo de un SPL se lee con `getTokenAccountsByOwner` filtrado por este
+     * mint, y `readPortfolio` ya lo lee —el mismo puerto del que salen los
+     * lamports—. El flag dice una sola cosa, "sabemos leer la cifra de este
+     * activo en esta red", y antes de este lector eso era falso: la fila aparecía
+     * con su red y su dirección y sin número, o sea que un USDC depositado acá
+     * no se veía en ninguna parte de la app.
      */
     assets: [
       { symbol: 'SOL', name: 'Solana', kind: 'crypto', decimals: 9, native: true, token: null, balanceReadable: true },
@@ -212,8 +214,12 @@ export const DEPOSIT_NETWORKS: readonly DepositNetworkSpec[] = [
         // Mint del USDC de Solana mainnet. **No** es la dirección del USDC de
         // Monad ni el del de Ethereum: son tres identidades distintas, y usar
         // una donde vive otra lee el saldo de un activo que no existe ahí.
+        //
+        // `readPortfolio` deriva de **esta misma fila** el spec que lee: los
+        // mints que se piden son los que el catálogo declara, y el orden de
+        // lectura de la cartera es el orden de acá.
         token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-        balanceReadable: false,
+        balanceReadable: true,
       },
     ],
   },

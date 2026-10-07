@@ -24,14 +24,14 @@
 import type { EvmBalanceReader } from '../../domain/ports/evm-balance-reader';
 import type { SolanaBalanceReader } from '../../domain/ports/solana-balance-reader';
 import type { WalletStore } from '../../domain/ports/wallet-store';
-import { ASSETS_BY_CHAIN, toAsset } from '../../domain/portfolio/assets';
+import { ASSETS_BY_CHAIN, toAsset, toUnreadableAsset } from '../../domain/portfolio/assets';
 import { BalanceReadError, type BalanceReadFailure } from '../../domain/portfolio/errors';
 import { PORTFOLIO_CHAINS, WALLET_CHAIN_FOR, type PortfolioChain } from '../../domain/portfolio/networks';
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 
 /** One asset, exact, with the unit the screen has to divide by. */
-export interface PortfolioAsset {
+interface PortfolioAssetOk {
   readonly symbol: string;
   readonly unit: string;
   readonly decimals: number;
@@ -40,6 +40,34 @@ export interface PortfolioAsset {
   /** The same value in `unit`, unrounded. Equal to `raw` when `decimals` is 0. */
   readonly amount: string;
 }
+
+/**
+ * One asset whose own read failed.
+ *
+ * The second member of the union, and it carries **no amount**: `raw` and
+ * `amount` are `null` rather than `'0'`, because a member of this union cannot
+ * be mistaken for a balance. Nothing downstream has to remember to check a flag
+ * before treating a figure as money, because the figure is not there.
+ */
+interface PortfolioAssetUnreadable {
+  readonly symbol: string;
+  readonly unit: string;
+  readonly decimals: number;
+  readonly raw: null;
+  readonly amount: null;
+  readonly error: { readonly code: 'ASSET_READ_FAILED'; readonly reason: PortfolioFailureReason };
+}
+
+/**
+ * One asset of a chain, with the state of **its own** read.
+ *
+ * Before the SPL read, this was one shape and the chain carried all of it. It is a
+ * union now because one chain can hold several assets and one of them can fail
+ * while the others do not: with SOL and USDC on Solana, a mint that cannot be
+ * read says nothing about the lamports, and reporting the whole chain as failed
+ * would throw away a balance we did read.
+ */
+export type PortfolioAsset = PortfolioAssetOk | PortfolioAssetUnreadable;
 
 /** Why a chain is `error`. Bounded, so a browser can render it and nothing else. */
 export type PortfolioFailureReason = BalanceReadFailure | 'WALLETS_UNAVAILABLE';
@@ -121,23 +149,63 @@ export const readPortfolio = (deps: ReadPortfolioDeps): ReadPortfolio => {
    * The `catch` is the whole design: a chain that could not be read becomes a
    * state, and the loop continues. Not `0`, never: a zero renders as an empty
    * wallet, and an empty wallet is the answer that costs a person their money.
+   *
+   * ── The coin decides the chain; a mint decides only itself ────────────────
+   *
+   * The chain's own coin is read first, **outside** the per-asset `try`: if it
+   * cannot be read, the chain could not be reached, and that is the per-chain
+   * error this use case has always answered.
+   *
+   * On Solana the catalogued mints are separate reads of separate account spaces,
+   * and one of them failing says nothing about the others: a mint that cannot be
+   * read becomes an **asset** that is unreadable, with its own bounded reason, and
+   * the lamports next to it keep their figure.
+   *
+   * The EVM chains keep the chain-level behaviour they have always had, and this
+   * is deliberately **not** widened to them: the per-asset hole is new state on
+   * the wire for `chains[].assets[]`, and one chain family adopting it is enough
+   * for it to be a real shape. Extending it to EVM is a separate decision, with
+   * its own tests, and not one this change should make quietly.
    */
   const readChain = async (chain: PortfolioChain, address: string): Promise<PortfolioChainState> => {
     const specs = ASSETS_BY_CHAIN[chain];
-    const assets = [];
+    const assets: PortfolioAsset[] = [];
+    // No `token` on a spec means it is the chain's own coin.
+    const native = specs.find((spec) => spec.token === undefined);
+    // Pairs the spec with its address, so nothing downstream needs a cast and
+    // the mint a read is asked for is the mint the catalog declared.
+    const tokens = specs.flatMap((spec) => (spec.token === undefined ? [] : [{ spec, token: spec.token }]));
 
-    for (const spec of specs) {
-      let raw: bigint;
-      if (chain === 'solana') {
-        raw = await deps.solana.lamports(address);
-      } else if (spec.token === undefined) {
-        // A spec with no token is the chain's native coin.
-        raw = await deps.evm.nativeBalance(chain, address);
-      } else {
-        raw = await deps.evm.erc20Balance(chain, spec.token, address);
+    if (native !== undefined) {
+      const raw =
+        chain === 'solana' ? await deps.solana.lamports(address) : await deps.evm.nativeBalance(chain, address);
+      assets.push(toAsset(native, raw));
+    }
+
+    for (const { spec, token } of tokens) {
+      try {
+        const raw =
+          chain === 'solana'
+            ? await deps.solana.mintBalance(address, token)
+            : await deps.evm.erc20Balance(chain, token, address);
+        assets.push(toAsset(spec, raw));
+      } catch (error) {
+        if (chain !== 'solana') throw error;
+
+        /*
+         * The provider's own words go to the log; the response carries the code.
+         * The coin read on this same wallet stays standing next to it.
+         */
+        log.error(`portfolio.asset_read_failed:${chain}`, {
+          chain,
+          address,
+          symbol: spec.symbol,
+          error,
+          reason: reasonOf(error),
+          detail: messageOf(error),
+        });
+        assets.push(toUnreadableAsset(spec, reasonOf(error)));
       }
-
-      assets.push(toAsset(spec, raw));
     }
 
     log.log('portfolio.chain_read', { chain, address, assets: assets.length });
