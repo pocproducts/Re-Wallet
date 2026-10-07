@@ -1,0 +1,30 @@
+{
+  // One Worker for everything: the API and the web app, on the SAME origin.
+  //
+  // This is a security decision, not a convenience. The session is an httpOnly
+  // `SameSite=Lax` cookie with a `__Host-` prefix. With two origins that cookie
+  // has to become cross-site (`SameSite=None` plus credentialed CORS), which is
+  // exactly the pair of security changes that single-origin avoids. The
+  // `__Host-` prefix also forces `Secure`, no `Domain`, and `Path=/`.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rewallet-poc-api",
+  "main": "dist-worker.js",
+  "compatibility_date": "2026-10-02",
+
+  // `nodejs_compat` is what makes `node:crypto` and `process.env` exist in the
+  // Workers runtime. Without it neither the session signing nor reading the
+  // bindings works.
+  "compatibility_flags": ["nodejs_compat"],
+
+  // The front end. The same Worker serves it, so there is only one origin.
+  "assets": {
+    "directory": "../05. UI-UX/dist",
+    "not_found_handling": "single-page-application"
+  },
+
+  // Secrets are NOT in this file. They are set with `wrangler secret put`:
+  // PRIVY_APP_ID, PRIVY_APP_SECRET, DATABASE_URL, SESSION_SECRET.
+  "routes": [{ "pattern": "app-dev.rewallet.win", "custom_domain": true }],
+
+  "observability": { "enabled": false }
+}

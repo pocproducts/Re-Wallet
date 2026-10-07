@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   TOKENS
+   ----------------------------------------------------------------------------
+   Esto vive en `@theme` y NO en `:root`, y esa es la diferencia entre que una
+   clase exista y no exista.
+
+   Tailwind v4 solo genera una utility a partir de una variable declarada en
+   `@theme`. Declarada en `:root` dentro de `@layer base`, la variable existe
+   para el CSS pero **no produce ninguna clase**. Por eso este proyecto tenía
+   153 usos de `font-display` y la clase `.font-display` no aparecía en el CSS
+   compilado: todos esos elementos caían a la fuente heredada y el código
+   mentía sobre el diseño. En `@theme`, `font-display` y `font-mono` existen.
+
+   Las tres fuentes que se cargaban y el rol real de cada una:
+     - Plus Jakarta Sans  → toda la interfaz. Es la cara de la app.
+     - JetBrains Mono     → cifras y tickers (`font-mono`, 19 usos). En una app
+                            de dinero la columna de números tiene que alinearse
+                            sola; una sans con cifras proporcionales no.
+     - Syne               → se eliminó. Nunca se aplicó en ningún dispositivo.
+
+   `font-display` queda como alias explícito de Plus Jakarta, y no como una
+   promesa a otra fuente: se usa en 153 lugares y hoy, en la pantalla, dice
+   exactamente lo que dice.
+   ========================================================================= */
+@theme {
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /*
+   * `font-display` existe y apunta a Plus Jakarta. Antes NO existía como clase:
+   * la variable estaba en `:root` de `@layer base`, que no genera utilities, y
+   * sus 153 usos caían a la fuente heredada. Declararla acá es lo que convierte
+   * esos 153 usos en una promesa que el dispositivo cumple.
+   */
+  --font-display: var(--font-sans);
+
+  /* La lemon de marca y sus grises, para que ningún color se escriba a mano. */
+  --color-lemon: #ccff00;
+  --color-lemon-dark: #b8e600;
+  --color-page: #f3f4f6;
+}
+
+/* ============================================================================
+   BASE
+   ========================================================================= */
+@layer base {
+  /*
+   * `height: 100%` en `html` y `body` es lo que hace que el marco de pantalla
+   * (`h-dvh` en App.tsx) mida lo que dice medir. Sin esto, el `h-dvh` del hijo
+   * se resuelve contra el alto del viewport pero el padre sigue en su alto
+   * automático y la página queda scrolleable por detrás de la app.
+   */
+  html {
+    height: 100%;
+    /*
+     * iOS Safari infla los textos cuando la página rota a horizontal, y eso
+     * rompe los layouts con altura fija. `100%` le dice que use el tamaño que
+     * el sistema ya eligió.
+     */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    height: 100%;
+    font-family: var(--font-sans);
+    background-color: var(--color-page);
+    color: #0f172a;
+    -webkit-tap-highlight-color: transparent;
+    /*
+     * El marco de la app ya scrollea solo. Sin esto, unarrastre que llega al
+     * final de un panel interno sigue arrastrando la página de atrás y en
+     * Android el usuario ve el "rubber band" gris detrás de la app.
+     */
+    overscroll-behavior: none;
+  }
+
+  /*
+   * Piso defensivo de 16px en cualquier input futuro.
+   *
+   * iOS Safari hace zoom automático al enfocar un campo con menos de 16px y no
+   * vuelve solo: el usuario tiene que hacer pinz para salir. Es el defecto que
+   * más arruina una app en un teléfono real y el que un preview en monitor
+   * nunca muestra. Los inputs del proyecto están explícitos en 16px; esto
+   * cubre los que se agreguen mañana.
+   */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /*
+   * Foco visible solo por teclado. Un `outline: none` global sin reemplazo deja
+   * a quien navega con teclado sin saber dónde está; el navegador lo dibuja
+   * solo en `:focus-visible`, que es exactamente cuando corresponde.
+   */
+  :focus-visible {
+    outline: 2px solid #0f172a;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* ============================================================================
+   SAFE AREAS
+   ----------------------------------------------------------------------------
+   El viewport declara `viewport-fit=cover`, así que la pantalla llega hasta el
+   borde físico: en consequence notch y barra de inicio quedan ENCIMA del
+   contenido si nadie los tiene en cuenta. Estas dos utilities lo resuelven sin
+   agregar un solo div, sumando el inset al padding que la pantalla ya tenía:
+
+     <div className="px-5 safe-bottom-4 pb-4">   →  16px + barra de inicio
+     <div className="px-5 safe-top-5 pt-5">     →  20px + notch
+
+   El inset es 0 en un navegador de escritorio y en un Android sin muesca, así
+   que el diseño se ve idéntico en el preview y cambia solo donde hace falta.
+   `max(0px, ...)` porque algunos navegadores reportan un inset negativo en
+   horizontal, y un `padding-top` negativo borra el padding.
+
+   EL `calc()` NO ES OPCIONAL. Sin él, `max(0px, env(...)) + 4 * .25rem` es una
+   expresión inválida —una función matemática mezclada con aritmética— y el
+   navegador descarta la declaración entera en silencio: la clase se emite en
+   el CSS, aparece en el devtools, y no aplica NADA. Pasó acá: durante un rato
+   las safe areas estuvieron en cero en toda la app sin que se viera.
+   ========================================================================= */
+@utility safe-top-* {
+  padding-top: calc(max(0px, env(safe-area-inset-top, 0px)) + --value(integer) * 0.25rem);
+}
+
+@utility safe-bottom-* {
+  padding-bottom: calc(max(0px, env(safe-area-inset-bottom, 0px)) + --value(integer) * 0.25rem);
+}
+
+/* ============================================================================
+   NOTA sobre lo que NO está acá
+   ----------------------------------------------------------------------------
+   Este proyecto ya no carga Leaflet ni estilos de mapa: no hay ningún mapa en
+   la app. Venían de la plantilla de GeoDrop de AI Studio, junto con una
+   animación `radar-ping-lemon` para un beacon GPS que tampoco existe. Pedían
+   permiso de geolocalización que la app nunca usa. Todo eso quedó afuera: una
+   guía definitiva no puede llevar código muerto que le sugiera al que la lea
+   que el producto tiene mapas.
+
+   ============================================================================
+   MOVIMIENTO REDUCIDO
+   ----------------------------------------------------------------------------
+   La app está llena de `animate-in`, `animate-ping`, pulsos y confeti. Para
+   alguien con `prefers-reduced-motion: reduce` eso no es decoración: son
+   movimientos vestibulares. Se apagan las animaciones, no el diseño: la
+   pantalla sigue mostrando lo mismo, solo deja de moverse.
+   ========================================================================= */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
