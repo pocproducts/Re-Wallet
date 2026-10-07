@@ -1,0 +1,56 @@
+erDiagram
+    ASSETS ||--o{ WALLET_POSITIONS : "referencia"
+    WALLETS ||--o{ WALLET_POSITIONS : "sostiene"
+    WALLETS ||--o{ SWAP_QUOTES : "consulta"
+    WALLETS ||--o{ SWAP_EXECUTIONS : "ejecuta"
+    USERS ||--|| USER_PREFERENCES : "configura"
+
+    ASSETS {
+        uuid id PK
+        text symbol UK
+        text contract_address
+        integer chain_id
+        integer decimals
+        text status
+        timestamptz created_at
+    }
+
+    WALLET_POSITIONS {
+        uuid id PK
+        uuid wallet_id FK
+        uuid asset_id FK
+        numeric balance
+        numeric balance_usd
+        timestamptz updated_at
+    }
+
+    SWAP_QUOTES {
+        uuid id PK
+        uuid wallet_id FK
+        uuid from_asset_id FK
+        uuid to_asset_id FK
+        numeric amount_in
+        numeric amount_out
+        numeric price_impact_bps
+        integer valid_until
+        text provider
+        timestamptz created_at
+    }
+
+    SWAP_EXECUTIONS {
+        uuid id PK
+        uuid quote_id FK
+        uuid movement_id FK
+        text tx_hash
+        text status
+        numeric gas_cost_usd
+        timestamptz executed_at
+    }
+
+    USER_PREFERENCES {
+        uuid user_id PK
+        boolean hide_zero_balances
+        text preferred_asset
+        boolean auto_compound
+        boolean trust_policy_visible
+    }

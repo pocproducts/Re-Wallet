@@ -15,6 +15,20 @@
  * O sea: este archivo tiene exactamente el mismo destino que `markets.ts`. Es
  * el simulacro de lo que el backend va a responder, y se borra ese día.
  *
+ * ── [2026-10-08] Lo que queda acá es SÓLO identidad ──────────────────────
+ *
+ * La lista dejó de ser la fuente de verdad de "qué se puede comprar o vender":
+ * el flujo de comprar y vender ya se arma con el catálogo de
+ * `GET /api/deposit-info`, y por eso BTC, TRX, DOGE y USDT —que el backend
+ * rechaza con `ASSET_NOT_ON_CHAIN`— ya no se ofrecen en ninguna parte.
+ *
+ * Estas filas siguen viviendo para una cosa: **el nombre, el glifo y el color**.
+ * Eso es identidad de producto y no un dato, y lo usan el resto de las pantallas
+ * para dibujar el círculo del activo (`services/portfolioIdentity.ts`). Un
+ * activo nuevo necesita su fila acá hasta que haya una fuente de identidad
+ * verificada; lo que no necesita es volver a ser la lista de lo que la app
+ * ofrece.
+ *
  * ── Sumar un activo mañana es UNA fila ─────────────────────────────────────
  *
  * Antes de este archivo, saber qué activos existían estaba repartido en tres
@@ -25,7 +39,7 @@
  * Acá están los cinco que la app ya conocía (Bitcoin, Ethereum, Solana, Tron y
  * Dogecoin, con el nombre y el color exactos que ya usaba la lista) más los dos
  * dólares digitales. Agregar el siguiente es agregar una fila a `ASSETS` y el
- * activo aparece solo en el selector de comprar y de vender.
+ * activo aparece solo en las pantallas que lo dibujan.
  *
  * ── `iconBg` es una clase de Tailwind, no un color ─────────────────────────
  *
@@ -112,6 +126,19 @@ export const ASSETS: readonly Asset[] = [
     iconBg: 'bg-[#26A17B]',
     decimals: 2,
   },
+  {
+    /*
+     * MON es el activo nativo de Monad (chain 143). Está en el catálogo porque
+     * el backend lo reporta como saldo real: sin esta entrada, los flujos de
+     * compra y cambio caían en un default que le prestaba la identidad del
+     * USDC, y Monad se veía con el nombre y el color de otra red.
+     */
+    ticker: 'MON',
+    name: 'Monad',
+    glyph: 'M',
+    iconBg: 'bg-[#7B3FE4]',
+    decimals: 18,
+  },
 ] as const;
 
 /** Los tickers que existen, derivados de la lista y no maintained aparte. */
@@ -132,12 +159,16 @@ export function assetTickers(): readonly string[] {
   return ASSETS.map((asset) => asset.ticker);
 }
 
-/**
- * El activo por defecto de cada lado de una conversión.
+/*
+ * ── BORRADO: `DEFAULT_SOURCE` y `DEFAULT_DESTINATION` ──────────────────────
  *
- * Comprar arranca desde los Dólares digitales porque es de donde sale la plata
- * en este producto; vender arranca desde Bitcoin porque es lo primero que
- * alguien vende.
+ * Eran el par por defecto de la conversión: "salir de USDC, llegar a BTC". Los
+ * consumía `useAssetTrade`, y eran la forma más discreta de que una pantalla
+ * ofreciera Bitcoin: un default no se ve en el código de la pantalla, aparece
+ * sólo cuando alguien abre el flujo.
+ *
+ * Ahora el par inicial lo decide el catálogo real —de los dólares a la primera
+ * cripto que exista—, así que un activo que el backend no conoce no puede
+ * aparecer por la puerta de atrás. Si alguna vez hace falta un par por defecto,
+ * sale del catálogo y no de una constante acá.
  */
-export const DEFAULT_SOURCE = assetByTicker('USDC') as Asset;
-export const DEFAULT_DESTINATION = assetByTicker('BTC') as Asset;

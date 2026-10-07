@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es-AR">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      `viewport-fit=cover` deja que la pantalla llegue al borde físico del
+      teléfono. Es lo que hace posible las safe areas; sin esto, iOS las
+      reporta todas en 0 y los notch no estorban. El padding real lo ponen las
+      utilities `safe-top-*` / `safe-bottom-*` de `index.css`.
+
+      NO se agrega `maximum-scale` ni `user-scalable=no`: bloquear el pinz-zoom
+      es un fallo de WCAG 1.4.4 y en iOS además le impide a la única persona
+      con vista baja de este equipo agrandar el texto para leerlo.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>ReWALLET - Dólares Digitales y Rendimientos</title>
+    <meta name="description" content="ReWALLET: Una cuenta en dólares digitales para ahorrar, enviar y hacer rendir tu dinero sin aprender cripto." />
+    <meta property="og:title" content="ReWALLET - Dólares Digitales y Rendimientos" />
+    <meta property="og:description" content="ReWALLET: Una cuenta en dólares digitales para ahorrar, enviar y hacer rendir tu dinero sin aprender cripto." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!--
+      Dos familias y ninguna más.
+
+      `Plus Jakarta Sans` es toda la interfaz. `JetBrains Mono` son las cifras y
+      los tickers: en una app de dinero la columna de números tiene que
+      alinearse sola, y una sans con cifras proporcionales no lo hace.
+
+      Se quita `Syne`: estaba en la lista desde la plantilla de AI Studio y
+      `grep Syne dist/assets/*.css` daba 0. Se descargaba en cada arranque y no
+      se aplicaba nunca. `font-display` es un alias de Plus Jakarta, declarado
+      en el bloque `@theme` de `index.css`.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased overflow-x-hidden selection:bg-emerald-500 selection:text-black">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    
+    
+  </body>
+</html>
+

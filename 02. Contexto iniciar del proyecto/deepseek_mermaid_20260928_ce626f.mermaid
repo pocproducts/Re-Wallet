@@ -1,0 +1,31 @@
+flowchart TB
+    subgraph M1["FASE 1 → FASE 2"]
+        direction TB
+        A1["1. Agregar tabla assets<br/>con USDC + USDT"]
+        A2["2. Migrar wallets<br/>a wallet_positions"]
+        A3["3. Implementar<br/>Balance Composer"]
+        A4["4. Implementar<br/>Swap Orchestrator"]
+        A5["5. Configurar<br/>Pimlico en dashboard"]
+        A6["6. Cambiar<br/>GAS_PHASE=production"]
+        A7["7. Activar UI<br/>historial política"]
+        A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7
+    end
+
+    subgraph M2["FASE 2 → FASE 3"]
+        direction TB
+        B1["1. Agregar tabla chains"]
+        B2["2. Configurar<br/>Privy Bridge"]
+        B3["3. Integrar<br/>Rain / Immersve"]
+        B4["4. Integrar<br/>Alchemy Pay"]
+        B5["5. Implementar<br/>API merchants"]
+        B6["6. Integrar<br/>KYC + AML"]
+        B7["7. Multi-tenant<br/>en schema"]
+        B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7
+    end
+
+    M1 -->|"2-3 meses"| M2
+    M2 --> PROD([Producción completa])
+
+    style M1 fill:#5B4DFF,color:#fff
+    style M2 fill:#7A6EFF,color:#fff
+    style PROD fill:#34C759,color:#fff

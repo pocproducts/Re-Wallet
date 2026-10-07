@@ -1,0 +1,61 @@
+flowchart LR
+    subgraph BP["BestPath Backend"]
+        API["API Hono"]
+    end
+
+    subgraph F1I["FASE 1"]
+        direction TB
+        P1[Privy Auth]
+        P2[Privy Wallet]
+        P3[Privy Gas]
+        P4[Alchemy Paymaster]
+        P5[Aave V3]
+        P6[Monad]
+        P7[Neon]
+    end
+
+    subgraph F2I["FASE 2"]
+        direction TB
+        Q1[Privy Swap]
+        Q2[Uniswap]
+        Q3[Pimlico]
+        Q4[USDT Contract]
+    end
+
+    subgraph F3I["FASE 3"]
+        direction TB
+        R1[Privy Bridge]
+        R2[Circle CCTP]
+        R3[Rain Card]
+        R4[Immersve]
+        R5[Alchemy Pay]
+        R6[MoonPay]
+        R7[KYC Provider]
+        R8[AML Provider]
+    end
+
+    API --> P1
+    API --> P2
+    API --> P3
+    P3 --> P4
+    API --> P5
+    API --> P6
+    API --> P7
+
+    API --> Q1
+    Q1 --> Q2
+    API --> Q3
+    API --> Q4
+
+    API --> R1
+    R1 --> R2
+    API --> R3
+    API --> R4
+    API --> R5
+    API --> R6
+    API --> R7
+    API --> R8
+
+    style F1I fill:#5B4DFF,color:#fff
+    style F2I fill:#7A6EFF,color:#fff
+    style F3I fill:#A56BFF,color:#fff

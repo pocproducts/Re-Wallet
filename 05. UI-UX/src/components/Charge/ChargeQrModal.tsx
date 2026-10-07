@@ -1,22 +1,54 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
-  QrCode,
   Copy,
   Check,
   Share2,
   ArrowLeft,
-  CheckCircle2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { TransactionItem } from '../../types';
+import { QrScannerModal } from '../Wallet/QrScannerModal';
+import { PayChargeView } from '../Wallet/PayChargeView';
+import {
+  CHARGE_FAILURE_TEXT,
+  chargeAmountToDecimal,
+  createPaymentRequest,
+  type PaymentRequest,
+} from '../../services/paymentRequests';
+import { paymentRequestShareUrl } from '../../config/paymentLinks';
+import { encodeQrText, qrSvgPath } from '../../services/qrEncode';
+
+/**
+ * Una dirección de cobro y la red a la que pertenece.
+ *
+ * Viene de `GET /api/portfolio` y de ningún otro lado. Antes este modal no
+ * tenía un receptor real: generaba un QR con el `@user` de la persona y, detrás,
+ * un saldo de Bitcoin escrito a mano que además sobrevivía a los recargas.
+ */
+export interface ChargeReceiveAddress {
+  readonly label: string;
+  readonly address: string;
+}
 
 interface ChargeQrModalProps {
   isOpen: boolean;
   onClose: () => void;
-  userTag: string;
-  btcBalance?: number;
-  onUpdateBtcBalance?: (newBalance: number) => void;
+  /**
+   * La dirección real de esta persona, o `null` si todavía no se pudo leer.
+   *
+   * `null` no se rellena: no se genera el cobro. Un cobro sin destino real es
+   * una pantalla que le pide a alguien que confíe en un número.
+   */
+  receiveAddress: ChargeReceiveAddress | null;
+  /**
+   * El origen donde la app está, para armar el link del cobro.
+   *
+   * Lo pasa el `App`, igual que a `CreateChargeView`, y por el mismo motivo: esta
+   * pantalla no sabe de dónde vino la app. Un link armado con un origen escrito
+   * a mano no abre la app donde la persona la tiene instalada.
+   */
+  origin: string;
   onAddTransaction: (tx: TransactionItem) => void;
   onNavigateToActivity?: () => void;
 }
@@ -24,71 +56,92 @@ interface ChargeQrModalProps {
 export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
   isOpen,
   onClose,
-  userTag,
-  btcBalance = 0.000186,
-  onUpdateBtcBalance,
+  receiveAddress,
+  origin,
   onAddTransaction,
 }) => {
-  const [step, setStep] = useState<
-    'select_action' | 'charge_input' | 'charge_qr' | 'pay_scan' | 'pay_success'
-  >('select_action');
+  const [step, setStep] = useState<'select_action' | 'charge_input' | 'charge_qr'>('select_action');
   const [amount, setAmount] = useState('0');
   const [copied, setCopied] = useState(false);
-  const [currentBtc, setCurrentBtc] = useState<number>(btcBalance);
-  const [paidBtcAmount, setPaidBtcAmount] = useState<number>(0.00005);
+  /** El cobro real, o `null` mientras no se creó ninguno. */
+  const [charge, setCharge] = useState<PaymentRequest | null>(null);
+  const [creating, setCreating] = useState(false);
+  /** El código de por qué no se pudo cobrar, en las palabras de la pantalla. */
+  const [failureCode, setFailureCode] = useState<string | null>(null);
+
+  /*
+   * PAGAR: no es un paso de este menú, es otra pantalla encima.
+   *
+   * Durante un tiempo "Pagar" fue un cuarto paso de este mismo menú con un visor
+   * falso: un rectángulo negro con cuatro escuadras y la frase *"todavía no
+   * podemos leer el código"*. Era un callejón sin salida —no leía nada, no
+   * reciénía nada y no dejaba pagar nada— y la forma de arreglarlo sin inventar
+   * una pantalla nueva es dejar de fingir que el paso existe.
+   *
+   * Ahora "Pagar" abre el **escáner de verdad**, que es el mismo componente que ya
+   * usa el flujo de envío, en modo `pay`. Y cuando el QR resulta ser un link de
+   * cobro, ese id abre `PayChargeView` por encima de todo esto.
+   *
+   * Dos banderas y no un paso más, y la razón es de navegación: el escáner
+   * vuelve a `select_action`, y hacer eso con un `step` obligaría a memorizar un
+   * paso que nunca se dibuja —porque durante la lectura la pantalla de arriba es
+   * el escáner, no el menú—.
+   */
+  const [isPayScannerOpen, setIsPayScannerOpen] = useState<boolean>(false);
+  /** El cobro escaneado, que se paga en `PayChargeView`, o `null`. */
+  const [payForChargeId, setPayForChargeId] = useState<string | null>(null);
 
   useEffect(() => {
-    setCurrentBtc(btcBalance);
-  }, [btcBalance]);
-
-  // Al abrir el modal, siempre reiniciar en la pantalla inicial de selección
-  useEffect(() => {
+    // Al abrir el modal, siempre reiniciar en la pantalla inicial de selección
     if (isOpen) {
       setStep('select_action');
       setAmount('0');
       setCopied(false);
+      setCharge(null);
+      setCreating(false);
+      setFailureCode(null);
+      setIsPayScannerOpen(false);
+      setPayForChargeId(null);
     }
   }, [isOpen]);
 
-  // Escaneo automático cuando entra a 'pay_scan'
-  useEffect(() => {
-    if (step === 'pay_scan') {
-      const timer = setTimeout(() => {
-        const paymentAmount = 0.00005;
-        const newBalance = Math.max(0, currentBtc - paymentAmount);
-        setCurrentBtc(newBalance);
-        setPaidBtcAmount(paymentAmount);
-        if (onUpdateBtcBalance) {
-          onUpdateBtcBalance(newBalance);
-        }
+  /*
+   * EL COBRO: uno solo, con dos presentaciones.
+   *
+   * El link y el QR son la **misma fila** de `payment_requests`. El id sale del
+   * backend, el link se arma con `paymentRequestShareUrl` y el QR dibuja ese
+   * mismo link —no una dirección, no un formato propio, no un payload que
+   * esta app no entiende—. Quien escanea el QR y quien copia el texto llegan al
+   * mismo `PayChargeView` con el mismo cobro.
+   *
+   * Antes el QR llevaba un esquema propio —un `pay?addr=…&amount=…` que esta
+   * app no leía en ningún lado— y el link de abajo se armaba en el momento, sin
+   * registro en el servidor. Dos presentaciones que no eran la misma cosa, y
+   * ninguna de las dos era un cobro: el código no lo abría ninguna cámara.
+   */
+  const shareUrl = useMemo(
+    () => (charge === null ? null : paymentRequestShareUrl(charge.id, origin)),
+    [charge, origin],
+  );
 
-        // Registrar en Actividad
-        const now = new Date();
-        const newTx: TransactionItem = {
-          id: `pay-btc-${Date.now()}`,
-          title: 'Pago con QR',
-          date: `Hoy, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} hs`,
-          amount: `- ${paymentAmount.toFixed(6)} BTC`,
-          isPositive: false,
-          type: 'btc',
-          section: 'Hoy',
-          status: 'Completada',
-        };
-        onAddTransaction(newTx);
+  const qrMatrix = useMemo(() => (shareUrl === null ? null : encodeQrText(shareUrl)), [shareUrl]);
 
-        confetti({
-          particleCount: 50,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#000000', '#F7931A', '#ffffff'],
-        });
-
-        setStep('pay_success');
-      }, 1800);
-
-      return () => clearTimeout(timer);
-    }
-  }, [step]);
+  /*
+   * El pago con QR ya no simula un pago.
+   *
+   * Antes, 1,8 segundos después de abrir "Pagar" esta pantalla restaba
+   * `0,00005 BTC` de un saldo inventado, disparaba confeti, escribía un
+   * movimiento con ese importe en Actividad y mostraba "¡Pago realizado!"
+   * con la cifra. Nadie había pagado nada: el número lo escribía el modal, y
+   * el saldo que tocaba ni siquiera venía de la cadena.
+   *
+   * Después hubo un paso "Pagar con QR" con un visor dibujado a mano y la
+   * frase *"todavía no podemos leer el código"*. Sigue sin ser un pago, pero ya
+   * no es una mentira: es el escáner de verdad, y lo que hace —leer un QR, abrir
+   * el cobro que ese QR sea, y no abrir nada si no lo es— es exactamente lo que
+   * dice. El importe del cobro, cuando lo hay, lo lee `PayChargeView` del
+   * backend: nunca de acá.
+   */
 
   if (!isOpen) return null;
 
@@ -118,68 +171,113 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
     }
   };
 
-  // Generar QR de cobro
-  const handleGenerateCharge = () => {
-    const numAmount = parseFloat(amount.replace(',', '.'));
-    if (isNaN(numAmount) || numAmount <= 0) return;
+  /**
+   * Crear el cobro de verdad y, sólo si existe, mostrarlo.
+   *
+   * El importe va al backend como decimal exacto —`chargeAmountToDecimal`, que
+   * cuenta con enteros— y el backend devuelve la fila de `payment_requests`. Sin
+   * esa fila no hay cobro, así que **no hay atajo**: si la creación falla, la
+   * pantalla se queda en el importe y dice por qué. Antes, si algo fallaba,
+   * quedaba un QR con la dirección escrita adentro, y eso es lo peor que puede
+   * pasar acá: alguien ve un código que parece cobrable y no lo es.
+   */
+  const handleGenerateCharge = async () => {
+    if (creating) return;
 
-    const now = new Date();
-    const expiresTomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    const expireTimeStr = expiresTomorrow.toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    /*
+     * Sin dirección real no se genera el cobro. El botón queda deshabilitado
+     * mientras `receiveAddress` sea `null`, y este guarda es la segunda línea:
+     * un cobro sin destino real sería pedirle a alguien que mande plata a un
+     * lugar que la app no puede decir que es suyo.
+     */
+    if (receiveAddress === null) return;
 
-    const newTx: TransactionItem = {
-      id: `charge-${Date.now()}`,
-      title: 'Cobro por QR',
-      date: `Hoy, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} hs`,
-      amount: `+ U$ ${amount}`,
-      isPositive: true,
-      type: 'qr_charge',
-      section: 'Hoy',
-      status: 'Pendiente',
-      expiresAt: `Expira mañana a las ${expireTimeStr} hs`,
-      qrPayload: `rewallet://pay?tag=${encodeURIComponent(userTag)}&amount=${amount}`,
-    };
+    let decimal: string;
+    try {
+      decimal = chargeAmountToDecimal(amount);
+    } catch {
+      setFailureCode('AMOUNT_INVALID');
+      return;
+    }
 
-    onAddTransaction(newTx);
+    setCreating(true);
+    setFailureCode(null);
+    try {
+      const created = await createPaymentRequest({ amount: decimal, note: null });
+      setCharge(created);
 
-    confetti({
-      particleCount: 45,
-      spread: 60,
-      origin: { y: 0.7 },
-      colors: ['#000000', '#ffffff', '#10b981'],
-    });
+      const now = new Date();
+      const expireTimeStr = new Date(now.getTime() + 24 * 60 * 60 * 1000).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
 
-    setStep('charge_qr');
+      onAddTransaction({
+        id: `charge-${Date.now()}`,
+        title: 'Cobro por QR',
+        date: `Hoy, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} hs`,
+        amount: `+ U$ ${created.amount}`,
+        isPositive: true,
+        type: 'qr_charge',
+        section: 'Hoy',
+        status: 'Pendiente',
+        expiresAt: `Expira mañana a las ${expireTimeStr} hs`,
+        /*
+         * Lo que va en el QR, tal cual. El movimiento de Actividad y el código
+         * que se muestra en la pantalla apuntan al mismo cobro, y el que está
+         * escrito acá es el que la persona puede copiar.
+         */
+        qrPayload: paymentRequestShareUrl(created.id, origin),
+      });
+
+      confetti({
+        particleCount: 45,
+        spread: 60,
+        origin: { y: 0.7 },
+        colors: ['#000000', '#ffffff', '#10b981'],
+      });
+
+      setStep('charge_qr');
+    } catch (error) {
+      setCharge(null);
+      setFailureCode((error as { code?: string }).code ?? 'PAYMENT_REQUEST_CREATE_FAILED');
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleCopyLink = () => {
-    const link = `https://rewallet.me/pay/${userTag.replace('$', '')}?amount=${amount}`;
-    navigator.clipboard?.writeText(link);
+    if (shareUrl === null) return;
+    void navigator.clipboard?.writeText(shareUrl);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    window.setTimeout(() => setCopied(false), 2000);
   };
 
   const handleShare = () => {
-    const link = `https://rewallet.me/pay/${userTag.replace('$', '')}?amount=${amount}`;
-    if (navigator.share) {
-      navigator
+    if (shareUrl === null) return;
+    if (typeof navigator.share === 'function') {
+      void navigator
         .share({
-          title: `Cobro ReWALLET`,
-          text: `Te envío un enlace de cobro por U$ ${amount}`,
-          url: link,
+          title: 'Cobro de ReWALLET',
+          text: `Te estoy cobrando U$ ${charge?.amount ?? amount}`,
+          url: shareUrl,
         })
-        .catch(() => {});
-    } else {
-      handleCopyLink();
+        .catch(() => {
+          /* Quien cancela el compartir no necesita un error en pantalla. */
+        });
+      return;
     }
+    // Sin `navigator.share` el compartir es copiar, y se dice lo mismo.
+    handleCopyLink();
   };
 
   const handleClose = () => {
     setStep('select_action');
     setAmount('0');
+    setCharge(null);
+    setFailureCode(null);
+    setIsPayScannerOpen(false);
+    setPayForChargeId(null);
     onClose();
   };
 
@@ -210,9 +308,14 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
                 </button>
 
                 {/* Opción 2: Pagar */}
+                {/*
+                  Abre el escáner de verdad. Antes esta opción iba a un visor
+                  dibujado a mano que no leía nada — y una opción del menú que no
+                  hace nada es peor que no tenerla.
+                */}
                 <button
                   type="button"
-                  onClick={() => setStep('pay_scan')}
+                  onClick={() => setIsPayScannerOpen(true)}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
                   Pagar
@@ -295,14 +398,38 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
                 ))}
               </div>
 
+              {/*
+                Sin dirección real, la acción no existe: el botón queda
+                deshabilitado y abajo se dice por qué, en castellano y sin
+                jerga. Antes se podía “cobrar” a una dirección que la app nunca
+                había leído.
+              */}
+              {receiveAddress === null && (
+                <p className="text-[11px] font-semibold text-black/60 text-center leading-snug pb-1">
+                  Todavía no pudimos leer tu dirección de cobro. Cuando la
+                  tengamos, vas a poder generar el código.
+                </p>
+              )}
+
+              {/*
+                Por qué no se pudo cobrar, en las palabras de la pantalla —las
+                mismas que usa `CreateChargeView`, porque es el mismo hecho—.
+                Acá no hay código: si el cobro no se creó, no hay nada que
+                escanear y decirlo es toda la verdad que hay.
+              */}
+              {failureCode !== null && (
+                <p className="text-[11px] font-bold text-black/70 bg-black/10 rounded-xl px-3 py-2 leading-snug mb-2">
+                  {CHARGE_FAILURE_TEXT[failureCode] ?? 'No pudimos crear el cobro.'}
+                </p>
+              )}
+
               <button
                 type="button"
-                disabled={amount === '0'}
-                onClick={handleGenerateCharge}
+                disabled={amount === '0' || receiveAddress === null || creating}
+                onClick={() => void handleGenerateCharge()}
                 className="w-full mt-4 py-4 rounded-2xl bg-black hover:bg-slate-900 text-white font-extrabold text-base shadow-xl active:scale-98 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
               >
-                <QrCode className="w-5 h-5 stroke-[2.5]" />
-                <span>Generar QR de cobro</span>
+                <span>{creating ? 'Generando el cobro…' : 'Generar QR de cobro'}</span>
               </button>
             </div>
           </div>
@@ -335,22 +462,90 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
             <div className="max-w-sm mx-auto w-full my-auto py-4 space-y-5 text-center">
               <div>
                 <span className="text-4xl sm:text-5xl font-black font-display text-black tracking-tight block">
-                  U$ {amount}
+                  U$ {charge?.amount ?? amount}
                 </span>
               </div>
 
-              <div className="bg-white rounded-[32px] p-6 shadow-2xl border-2 border-black/10 max-w-[280px] mx-auto flex items-center justify-center">
-                <div className="relative w-56 h-56 bg-black p-3.5 rounded-[26px] flex items-center justify-center shadow-md">
-                  <div className="w-full h-full bg-white rounded-2xl flex items-center justify-center p-2 relative overflow-hidden">
-                    <QrCode className="w-full h-full text-black stroke-[1.15]" />
-                    <div className="w-12 h-12 rounded-full border-[3px] border-white bg-black shadow-lg flex items-center justify-center absolute">
-                      <span className="font-display font-black text-[#ccff00] text-sm tracking-tighter">
-                        Re
-                      </span>
-                    </div>
-                  </div>
+              {/*
+                EL QR: el mismo link que está escrito abajo, dibujado.
+
+                Antes esto no era un QR: era el ícono de un QR de la librería de
+                íconos, que es un dibujo y no un código. Ninguna cámara lo leía.
+                Ahora los módulos se calculan del link real —el mismo que se
+                copia y el mismo que abre `PayChargeView`— y si el link no se
+                puede codificar no se dibuja nada en su lugar: se avisa abajo y
+                el link sigue disponible.
+              */}
+              {qrMatrix !== null ? (
+                <div className="bg-white rounded-[32px] p-6 shadow-2xl border-2 border-black/10 max-w-[280px] mx-auto flex items-center justify-center">
+                  <svg
+                    viewBox={`0 0 ${qrMatrix.size + 2} ${qrMatrix.size + 2}`}
+                    className="w-56 h-56 rounded-2xl"
+                    role="img"
+                    aria-label="Código QR del cobro"
+                    shapeRendering="crispEdges"
+                  >
+                    <rect width="100%" height="100%" fill="#ffffff" />
+                    <path d={qrSvgPath(qrMatrix)} fill="#000000" />
+                  </svg>
                 </div>
-              </div>
+              ) : (
+                <p className="text-[11px] font-bold text-black/70 bg-black/10 rounded-xl px-3 py-2 leading-snug">
+                  No pudimos dibujar el código. El link de abajo sirve igual: es
+                  el mismo cobro.
+                </p>
+              )}
+
+              {/*
+                El link, escrito, seleccionable y copiable.
+
+                Es el **mismo** cobro que el QR de arriba —mismo id, misma fila—
+                y por eso está en la misma pantalla y no en otra. Si el QR se
+                puede escanear, el texto se puede copiar; si el texto se puede
+                copiar, el QR se puede escanear. Ninguna de las dos
+                presentaciones es la única.
+              */}
+              {shareUrl !== null && (
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-black/50 block">
+                    Link del cobro
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className="text-xs font-bold font-mono text-black/80 break-all px-2 cursor-pointer active:opacity-60 select-all"
+                  >
+                    {shareUrl}
+                  </button>
+                </div>
+              )}
+
+              {/*
+                La dirección de destino, escrita abajo del código y copiable.
+
+                Antes el QR no llevaba ninguna: llevaba el `@user` de la
+                persona, que no es una dirección de blockchain. La red que
+                aparece acá sale de `GET /api/portfolio`, y si no hay dirección
+                real esta pantalla no llega a existir.
+              */}
+              {receiveAddress !== null && (
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-black/50 block">
+                    Cobralo en {receiveAddress.label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(receiveAddress.address);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className="text-xs font-bold font-mono text-black/80 break-all px-2 cursor-pointer active:opacity-60"
+                  >
+                    {receiveAddress.address}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Acciones: Compartir y Copiar Link */}
@@ -388,95 +583,40 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
         </div>
       )}
 
-      {/* =====================================================================
-          4. PAGAR CON QR: ESCANEO AUTOMÁTICO
-         ===================================================================== */}
-      {step === 'pay_scan' && (
-        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between overflow-hidden shadow-2xl">
-          <div className="flex-1 flex flex-col justify-between p-5 h-full animate-in fade-in slide-in-from-right-3 duration-200">
-            {/* Header */}
-            <div className="flex items-center justify-between shrink-0 pt-2">
-              <button
-                onClick={() => setStep('select_action')}
-                type="button"
-                className="w-11 h-11 rounded-full bg-black/10 hover:bg-black/20 text-black flex items-center justify-center active:scale-90 transition-transform cursor-pointer"
-                aria-label="Volver"
-              >
-                <ArrowLeft className="w-5 h-5 stroke-[2.5]" />
-              </button>
-              <h2 className="text-base font-black font-display text-black uppercase tracking-wider">
-                Pagar con QR
-              </h2>
-              <button
-                onClick={handleClose}
-                type="button"
-                className="w-11 h-11 rounded-full bg-black/10 hover:bg-black/20 text-black flex items-center justify-center active:scale-90 transition-transform cursor-pointer"
-                aria-label="Cerrar"
-              >
-                <X className="w-5 h-5 stroke-[2.5]" />
-              </button>
-            </div>
+      {/*
+        =====================================================================
+        PAGAR: EL ESCÁNER REAL, Y EL COBRO QUE SALGA DE ÉL
+        =====================================================================
+        No es un cuarto paso: son dos pantallas que se abren **encima** de este
+        menú, y por eso son banderas y no `step`.
 
-            {/* Visor de Escaneo */}
-            <div className="my-auto max-w-sm mx-auto w-full space-y-6 text-center">
-              <div className="relative w-64 h-64 mx-auto bg-black rounded-[36px] overflow-hidden p-6 flex flex-col items-center justify-center shadow-2xl border-4 border-black">
-                <div className="absolute top-4 left-4 w-7 h-7 border-t-4 border-l-4 border-[#ccff00] rounded-tl-xl" />
-                <div className="absolute top-4 right-4 w-7 h-7 border-t-4 border-r-4 border-[#ccff00] rounded-tr-xl" />
-                <div className="absolute bottom-4 left-4 w-7 h-7 border-b-4 border-l-4 border-[#ccff00] rounded-bl-xl" />
-                <div className="absolute bottom-4 right-4 w-7 h-7 border-b-4 border-r-4 border-[#ccff00] rounded-br-xl" />
+        - `isPayScannerOpen` abre `QrScannerModal` en modo `pay`: el mismo
+          componente —y la misma cámara, la misma linterna, los mismos rechazos— que
+          usa el flujo de envío. Volver cierra el escáner y deja el menú tal como
+          estaba.
+        - `payForChargeId` abre `PayChargeView`, que es la pantalla que paga el
+          cobro. Se monta acá y no en el `App` a propósito: el id **viene de un
+          escaneo**, no de la barra de direcciones, y no debería recorrer la app
+          entera para llegar a una pantalla que sólo existe durante un segundo.
 
-                <div className="absolute inset-x-6 top-1/2 -translate-y-1/2 h-1 bg-[#ccff00] shadow-[0_0_15px_#ccff00] animate-pulse" />
-
-                <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center text-[#F7931A] text-2xl font-black mb-2">
-                  ₿
-                </div>
-                <span className="text-xs font-bold text-white/80">
-                  Escaneando factura...
-                </span>
-              </div>
-            </div>
-
-            <div className="h-4" />
-          </div>
-        </div>
+        `z-[60]` y `z-[70]` son los del escáner y los de la pantalla de pago, por
+        encima de este menú, que es `z-50`.
+      */}
+      {isPayScannerOpen && (
+        <QrScannerModal
+          isOpen
+          mode="pay"
+          onClose={() => setIsPayScannerOpen(false)}
+          onPaymentLink={(chargeId) => {
+            setIsPayScannerOpen(false);
+            setPayForChargeId(chargeId);
+          }}
+        />
       )}
 
-      {/* =====================================================================
-          5. PAGO REALIZADO (SIN DIV DE NUEVO SALDO, SIN BOTÓN X, SOLO BOTÓN LISTO)
-         ===================================================================== */}
-      {step === 'pay_success' && (
-        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between overflow-hidden shadow-2xl">
-          <div className="flex-1 flex flex-col justify-between p-6 h-full animate-in zoom-in-95 duration-200">
-            {/* Sin botón X en la cabecera */}
-            <div className="h-8" />
-
-            {/* Mensaje de Pago Realizado */}
-            <div className="max-w-sm mx-auto w-full my-auto text-center space-y-4 py-4">
-              <div className="w-20 h-20 rounded-full bg-black text-[#ccff00] flex items-center justify-center mx-auto shadow-xl">
-                <CheckCircle2 className="w-10 h-10 stroke-[2.5]" />
-              </div>
-
-              <div className="space-y-1">
-                <h2 className="text-2xl font-black font-display text-black">
-                  ¡Pago realizado!
-                </h2>
-                <span className="text-3xl font-black font-display text-black block tracking-tight">
-                  {paidBtcAmount.toFixed(6)} BTC
-                </span>
-              </div>
-            </div>
-
-            {/* SOLO EL BOTÓN LISTO */}
-            <div className="max-w-sm mx-auto w-full pb-3">
-              <button
-                type="button"
-                onClick={handleClose}
-                className="w-full py-4 rounded-2xl bg-black hover:bg-slate-900 text-white font-extrabold text-sm shadow-xl active:scale-98 transition-all cursor-pointer"
-              >
-                Listo
-              </button>
-            </div>
-          </div>
+      {payForChargeId !== null && (
+        <div className="absolute inset-0 z-[70] w-full max-w-md mx-auto bg-[#f3f4f6]">
+          <PayChargeView id={payForChargeId} onClose={() => setPayForChargeId(null)} />
         </div>
       )}
     </div>

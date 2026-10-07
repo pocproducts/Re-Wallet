@@ -24,13 +24,46 @@
 import { PrivyClient } from '@privy-io/node';
 
 import { mintSession } from './application/session/mintSession';
+import { readPortfolio } from './application/portfolio/readPortfolio';
+import { readDigitalDollars } from './application/portfolio/readDigitalDollars';
+import { readWalletBalance } from './application/portfolio/readWalletBalance';
+import { readKaminoEarnPosition } from './application/portfolio/readKaminoEarnPosition';
+import { readPool } from './application/pool/readPool';
+import { prepareDeposit } from './application/pool/prepareDeposit';
+import { prepareSend } from './application/send/prepareSend';
+import { createPaymentRequest } from './application/payment-requests/createPaymentRequest';
+import { readPaymentRequest } from './application/payment-requests/readPaymentRequest';
+import { payPaymentRequest } from './application/payment-requests/payPaymentRequest';
+import { readDepositInfo } from './application/deposit-info/readDepositInfo';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
+import { ingestPrivyWebhook } from './application/webhooks/ingestPrivyWebhook';
+import { readNotifications } from './application/webhooks/readNotifications';
 import { createDatabase, readEnv } from './infrastructure/db/client';
 import { createPostgresUserStore } from './infrastructure/db/userStore.pg';
 import { createPostgresWalletStore } from './infrastructure/db/walletStore.pg';
+import { createPostgresWebhookEventStore } from './infrastructure/db/webhookEventStore.pg';
+import { createPostgresMovementStore } from './infrastructure/db/movementStore.pg';
+import { createPostgresPaymentRequestStore } from './infrastructure/db/paymentRequestStore.pg';
+import { createPostgresIdempotencyStore } from './infrastructure/db/idempotencyStore.pg';
 import { createPrivyTokenVerifier } from './infrastructure/privy/privyTokenVerifier';
 import { createPrivyUserDirectory } from './infrastructure/privy/privyUserDirectory';
 import { createPrivyWalletOwnershipVerifier } from './infrastructure/privy/privyWalletOwnershipVerifier';
+import { createJsonRpcEvmBalanceReader, DEFAULT_EVM_ENDPOINTS } from './infrastructure/rpc/jsonRpcEvmBalanceReader';
+import {
+  createJsonRpcAavePoolReader,
+  DEFAULT_POOL_ENDPOINTS,
+} from './infrastructure/rpc/jsonRpcAavePoolReader';
+import {
+  createHttpSolanaBalanceReader,
+  DEFAULT_SOLANA_RPC_URL,
+} from './infrastructure/rpc/solanaBalanceReader.http';
+import { createChainlinkPriceFeed } from './infrastructure/rpc/chainlinkPriceFeed';
+import { createHttpKaminoEarnVaultReader } from './infrastructure/rpc/kaminoEarnVaultReader.http';
+import {
+  createHttpKaminoSharePriceFeed,
+  DEFAULT_KAMINO_API_URL,
+} from './infrastructure/rpc/kaminoSharePriceFeed.http';
+import { createHttpSolanaTransferPreparer } from './infrastructure/rpc/solanaTransferPreparer.http';
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
 import { createApp } from './interface/http/app';
 import type { Logger } from './domain/ports/logger';
@@ -40,25 +73,75 @@ export interface Config {
   readonly privyAppSecret: string;
   readonly databaseUrl: string;
   readonly sessionSecret: string;
+  /**
+   * The Privy webhook signing secret. Required, and it fails closed with the
+   * other identities: without it the intake cannot tell a delivery from an
+   * anonymous write, and a Worker that accepts both is worse than a Worker with
+   * no intake at all.
+   */
+  readonly privyWebhookSigningSecret: string;
+  /**
+   * Optional: the endpoints the balance reads use. They have defaults that were
+   * verified by hand, so a missing variable is **not** a startup failure here —
+   * unlike a missing Privy app id or database URL. A public endpoint is a
+   * deployment detail, not an identity, and failing closed on it would make the
+   * whole Worker refuse to boot for a route that has a working default.
+   */
+  readonly monadRpcUrl: string;
+  readonly ethereumRpcUrl: string;
+  readonly solanaRpcUrl: string;
+  /**
+   * Optional: the endpoint the **pool** reads go through.
+   *
+   * Same reasoning as `monadRpcUrl`: a public endpoint is a deployment detail with
+   * a verified default, not an identity. Failing closed on it would stop the whole
+   * Worker from booting for a route that has a working default.
+   */
+  readonly monadPoolRpcUrl: string;
+  /**
+   * Optional: the base URL of Kamino's public API, where the **share price** of a
+   * Kamino Earn vault is read.
+   *
+   * Same reasoning as every other endpoint here: a deployment detail with a
+   * verified default, not an identity. Nothing else about Kamino is read from it —
+   * the shares are read on chain, and the position is never written anywhere.
+   */
+  readonly kaminoApiUrl?: string;
 }
 
 /** The one place that knows which environment variables exist. */
+/** El primer endpoint configurado de una lista, o el nombre de una variable sin valor. */
+const firstCandidate = (candidates: readonly string[]): string => candidates[0] ?? '';
+
 export const readConfig = (env: Record<string, unknown> = process.env as Record<string, unknown>): Config => {
-  const config: Config = {
+  const required = {
     privyAppId: readEnv(env, 'PRIVY_APP_ID'),
     privyAppSecret: readEnv(env, 'PRIVY_APP_SECRET'),
     databaseUrl: readEnv(env, 'DATABASE_URL'),
     sessionSecret: readEnv(env, 'SESSION_SECRET'),
+    privyWebhookSigningSecret: readEnv(env, 'PRIVY_WEBHOOK_SIGNING_SECRET'),
   };
 
-  const missing = Object.entries(config)
+  const missing = Object.entries(required)
     .filter(([, value]) => value.length === 0)
     .map(([key]) => key);
   if (missing.length > 0) {
     throw new Error(`Missing configuration: ${missing.join(', ')}.`);
   }
 
-  return config;
+  return {
+    ...required,
+    monadRpcUrl: readEnv(env, 'MONAD_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.monad),
+    ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.ethereum),
+    // The escape hatch, and it wins: set `SOLANA_RPC_URL` and this line never
+    // reaches the default. The default is the official public Solana RPC
+    // (`api.mainnet-beta.solana.com`), free and aggressively rate-limited, which
+    // answers the indexed account reads the SPL balances are made of — the
+    // previous default answered those with HTTP 403 and no balances at all.
+    solanaRpcUrl: readEnv(env, 'SOLANA_RPC_URL') || DEFAULT_SOLANA_RPC_URL,
+    monadPoolRpcUrl: readEnv(env, 'MONAD_POOL_RPC_URL') || firstCandidate(DEFAULT_POOL_ENDPOINTS),
+    kaminoApiUrl: readEnv(env, 'KAMINO_API_URL') || DEFAULT_KAMINO_API_URL,
+  };
 };
 
 export const buildApp = (config: Config, log: Logger) => {
@@ -72,7 +155,98 @@ export const buildApp = (config: Config, log: Logger) => {
   const directory = createPrivyUserDirectory(privy);
   const ownership = createPrivyWalletOwnershipVerifier(privy);
   const walletStore = createPostgresWalletStore(db);
+  const webhookEvents = createPostgresWebhookEventStore(db);
   const sessions = createJwtSessionCodec({ secret: config.sessionSecret });
+
+  /*
+   * The balance readers. Both URLs are overridable so the deployment can point at
+   * a provider of its own — a public RPC rate-limits, and a rate limit must show
+   * up as a per-chain error rather than as a Worker that cannot boot.
+   */
+  const evm = createJsonRpcEvmBalanceReader({
+    // Una variable de entorno **agrega** un endpoint ahead of the defaults, no
+    // los reemplaza: un override no debería dejar la cadena con una sola URL.
+    endpoints: {
+      monad: [...(config.monadRpcUrl !== DEFAULT_EVM_ENDPOINTS.monad[0] ? [config.monadRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.monad],
+      ethereum: [...(config.ethereumRpcUrl !== DEFAULT_EVM_ENDPOINTS.ethereum[0] ? [config.ethereumRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.ethereum],
+    },
+  });
+  const solana = createHttpSolanaBalanceReader({ url: config.solanaRpcUrl });
+  /*
+   * The Solana **message builder**, over the same endpoint and the same cluster:
+   * reading a lamport balance and compiling a transaction are different jobs, but
+   * they are one conversation with one RPC. A message built for a different
+   * cluster than the catalog names is refused by the use case, not by this file.
+   */
+  const solanaTransfers = createHttpSolanaTransferPreparer({ url: config.solanaRpcUrl });
+
+  /*
+   * The Aave V3 pool on Monad. It reads the same network as the Monad balances but
+   * through its own adapter, because `getReserveData` answers with a struct and a
+   * `bigint` port would be the wrong shape for it.
+   */
+  const aavePool = createJsonRpcAavePoolReader({
+    endpoints:
+      config.monadPoolRpcUrl === DEFAULT_POOL_ENDPOINTS[0]
+        ? DEFAULT_POOL_ENDPOINTS
+        : [config.monadPoolRpcUrl, ...DEFAULT_POOL_ENDPOINTS],
+  });
+
+  /*
+   * One send flow, shared.
+   *
+   * It is built here, once, and handed to both `prepareSend` and the charge
+   * payment: a payment of a charge **is** a send, with the destination resolved on
+   * this side instead of in the body. Two instances would mean two movement stores
+   * and two idempotency stores over the same tables, and the second one would be a
+   * place where the two could disagree about what was already prepared.
+   */
+  const movements = createPostgresMovementStore(db);
+  const idempotency = createPostgresIdempotencyStore(db);
+  const sendFlow = prepareSend({
+    wallets: walletStore,
+    evm,
+    solana,
+    solanaTransfers,
+    movements,
+    idempotency,
+    log,
+  });
+
+  /* The charges, in a table that already existed. No table is created here. */
+  const paymentRequests = createPostgresPaymentRequestStore(db);
+
+  /*
+   * The two reads the total is composed from, built **once** and handed to both
+   * the portfolio and the total: one wallet store, one source of addresses, and
+   * a total whose parts are by construction the same numbers the other screens
+   * already show.
+   */
+  const portfolioRead = readPortfolio({ wallets: walletStore, evm, solana, log });
+  const poolRead = readPool({ wallets: walletStore, pool: aavePool, log });
+
+  /*
+   * The **second venue**: Kamino Earn on Solana.
+   *
+   * The hybrid, in two collaborators. The shares come off the chain, through the
+   * **same** SPL reader the portfolio already uses (`mintBalance`, filtered by the
+   * vault's shares mint) and through the vault account itself, which is read over
+   * the same Solana endpoint. The share price comes from Kamino's public API
+   * through an injected port, because it cannot be computed here — ~99.5 % of this
+   * vault's assets sit in klend cTokens rather than in the vault's own account.
+   *
+   * Nothing is persisted: the position is read live, exactly as the Aave position
+   * is, and `sql/` is not touched by this feature at all.
+   */
+  const kaminoVaults = createHttpKaminoEarnVaultReader({ url: config.solanaRpcUrl });
+  const kaminoSharePrices = createHttpKaminoSharePriceFeed({ baseUrl: config.kaminoApiUrl });
+  const readKaminoEarnOf = readKaminoEarnPosition({
+    wallets: walletStore,
+    vaults: kaminoVaults,
+    solana,
+    prices: kaminoSharePrices,
+    log,
+  });
 
   return createApp({
     mint: mintSession({
@@ -91,6 +265,89 @@ export const buildApp = (config: Config, log: Logger) => {
       log,
     }),
     sessions,
+    // The same wallet store the claim writes through, read through.
+    readPortfolio: portfolioRead,
+    /*
+     * The pool read and the deposit, over the same store the portfolio reads: one
+     * source of addresses, so the position shown on the pool screen belongs to the
+     * wallet the portfolio shows and the deposit signs for.
+     */
+    readPool: poolRead,
+    prepareDeposit: prepareDeposit({ wallets: walletStore, pool: aavePool, log }),
+    /*
+     * The one number. It adds up what those two reads answer and states whether
+     * every part of it could be read; it opens no connection of its own, so
+     * nothing here can disagree with the portfolio or the pool screen.
+     */
+    readDigitalDollars: readDigitalDollars({ readPortfolio: portfolioRead, readPool: poolRead, log }),
+    /*
+     * **The** number, and the price that makes it possible.
+     *
+     * The Chainlink feeds live on Monad, so the price adapter talks to the same
+     * network as the Monad balances, through the same "an override adds a
+     * candidate endpoint ahead of the defaults" rule: a deployment can point at a
+     * provider of its own without leaving itself with a single URL.
+     *
+     * Both channels of a pair are read at **one block**, so the cross-check
+     * compares one instant of the world rather than two reads seconds apart —
+     * which is what made the two MON channels look 0.76% apart when they were
+     * both reading the same $0.028642.
+     */
+    readWalletBalance: readWalletBalance({
+      readPortfolio: portfolioRead,
+      readPool: poolRead,
+      // The second venue. It adds one piece to `investedValue` and to the sum
+      // over it; no bucket and no term of the total is added with it.
+      readKaminoEarn: readKaminoEarnOf,
+      prices: createChainlinkPriceFeed({
+        endpoints:
+          config.monadRpcUrl === DEFAULT_EVM_ENDPOINTS.monad[0]
+            ? DEFAULT_EVM_ENDPOINTS.monad
+            : [config.monadRpcUrl, ...DEFAULT_EVM_ENDPOINTS.monad],
+      }),
+      log,
+    }),
+    /*
+     * El envío. Mismos lectores de saldo que el portfolio —una sola fuente de
+     * saldos— y el mismo catálogo como fuente de verdad de qué activo existe en
+     * qué red. El store de movimientos y el de idempotencia son nuevas filas en
+     * tablas que ya existen; no se crea nada acá.
+     */
+    prepareSend: sendFlow,
+    /*
+     * The deposit catalog and the addresses that go with it, read through the
+     * **same** store. One store, una sola fuente de dirección: si esta ruta
+     * leyera las carteras por otro lado, la dirección que la pantalla muestra
+     * para recibir podría no ser la misma que la que el portfolio lee.
+     */
+    readDepositInfo: readDepositInfo({ wallets: walletStore, log }),
+
+    /*
+     * El link de cobro. Una tabla que ya estaba completa; acá no se crea nada.
+     *
+     * El pago de un cobro llama al **mismo** `sendFlow` de arriba: la única
+     * diferencia es que el destinatario se resuelve adentro del caso de uso, desde
+     * `rewallet.wallets`, y nunca viaja en un cuerpo ni vuelve en una respuesta.
+     */
+    createPaymentRequest: createPaymentRequest({ requests: paymentRequests, log }),
+    readPaymentRequest: readPaymentRequest({ requests: paymentRequests, log }),
+    payPaymentRequest: payPaymentRequest({
+      requests: paymentRequests,
+      // The **same** wallet store the portfolio reads and the send resolves its
+      // sender from: one source of addresses, so the address a charge resolves to
+      // is an address this project already owns.
+      wallets: walletStore,
+      prepareSend: sendFlow,
+      log,
+    }),
+    // Intake and feed share one store: one write path and one read path over the
+    // same rows, so "the feed shows what arrived" is a property of the wiring.
+    ingestWebhook: ingestPrivyWebhook({
+      store: webhookEvents,
+      signingSecret: config.privyWebhookSigningSecret,
+      log,
+    }),
+    readNotifications: readNotifications({ store: webhookEvents, log }),
     log,
   });
 };

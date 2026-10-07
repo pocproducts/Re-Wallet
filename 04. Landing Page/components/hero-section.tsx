@@ -14,6 +14,15 @@ export function HeroSection() {
     <section className="relative w-full px-6 pt-6 pb-12 sm:px-12 lg:px-24 lg:pt-10 lg:pb-16">
       <div className="grid items-center gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:gap-12">
         <div className="flex flex-col items-start text-left">
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5 }}
+            className="mb-6 max-w-lg text-sm leading-relaxed text-foreground lg:text-base font-mono"
+          >
+            {copy.hero.plain}
+          </motion.p>
+
           <motion.h1
             initial={{ opacity: 0, y: 30, filter: "blur(8px)" }}
             animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}

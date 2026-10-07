@@ -6,3 +6,4 @@
 
 # Wrangler: cache y tokens de la cuenta, estado local de la maquina
 .wrangler/
+.codegraph/

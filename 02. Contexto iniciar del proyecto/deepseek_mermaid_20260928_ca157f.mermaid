@@ -1,0 +1,101 @@
+erDiagram
+    CHAINS ||--o{ WALLET_POSITIONS : "extiende"
+    BRIDGE_QUOTES ||--o| BRIDGE_EXECUTIONS : "ejecuta"
+    USERS ||--o| CARDS : "obtiene"
+    CARDS ||--o{ CARD_TRANSACTIONS : "genera"
+    MERCHANTS ||--o{ MERCHANT_API_KEYS : "usa"
+    MERCHANTS ||--o{ PAYMENT_INTENTS : "crea"
+    USERS ||--o| KYC_RECORDS : "completa"
+    KYC_RECORDS ||--o{ AML_ALERTS : "genera"
+
+    CHAINS {
+        integer chain_id PK
+        text name
+        text rpc_url
+        text usdc_address
+        boolean enabled
+    }
+
+    BRIDGE_QUOTES {
+        uuid id PK
+        integer from_chain_id FK
+        integer to_chain_id FK
+        numeric amount_in
+        numeric amount_out
+        integer estimated_time_sec
+        text provider
+    }
+
+    BRIDGE_EXECUTIONS {
+        uuid id PK
+        uuid quote_id FK
+        uuid movement_id FK
+        text tx_hash_source
+        text tx_hash_dest
+        text status
+        timestamptz completed_at
+    }
+
+    CARDS {
+        uuid id PK
+        uuid user_id FK
+        text provider
+        text card_token
+        text last_four
+        text status
+        numeric spending_limit_usd
+    }
+
+    CARD_TRANSACTIONS {
+        uuid id PK
+        uuid card_id FK
+        numeric amount_usd
+        text merchant_name
+        text category
+        text status
+        timestamptz created_at
+    }
+
+    MERCHANTS {
+        uuid id PK
+        text name
+        text email
+        text status
+        timestamptz created_at
+    }
+
+    MERCHANT_API_KEYS {
+        uuid id PK
+        uuid merchant_id FK
+        text key_hash UK
+        text label
+        timestamptz last_used_at
+    }
+
+    PAYMENT_INTENTS {
+        text id PK
+        uuid merchant_id FK
+        numeric amount
+        text currency
+        text status
+        text callback_url
+        timestamptz expires_at
+    }
+
+    KYC_RECORDS {
+        uuid id PK
+        uuid user_id FK
+        text provider
+        text status
+        text verification_level
+        jsonb metadata
+    }
+
+    AML_ALERTS {
+        uuid id PK
+        uuid kyc_record_id FK
+        text severity
+        text rule_triggered
+        text status
+        timestamptz reviewed_at
+    }

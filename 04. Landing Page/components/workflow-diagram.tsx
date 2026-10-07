@@ -4,6 +4,8 @@ import { motion } from "framer-motion"
 import { useEffect, useState } from "react"
 import { useLanguage } from "@/components/language-provider"
 
+/* Counts only: the words come from language-provider, so every label changes
+   in every language. */
 const LEFT_LABELS = ["Send", "Receive", "Save"]
 const RIGHT_LABELS = ["Grow", "Secure", "Global"]
 
@@ -76,7 +78,7 @@ export function WorkflowDiagram() {
         viewBox="0 0 960 280"
         className="h-auto w-full"
         role="img"
-        aria-label="Workflow diagram showing a central digital wallet connected to Send, Receive, Save, Grow, Secure, and Global capabilities"
+        aria-label="Workflow diagram: a central digital wallet connected to sending, receiving and saving capabilities"
       >
         {/* Left lines from center to left labels */}
         {LEFT_LABELS.map((_, i) => {

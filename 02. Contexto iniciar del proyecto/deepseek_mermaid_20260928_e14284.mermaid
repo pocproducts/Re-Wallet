@@ -1,0 +1,29 @@
+flowchart TB
+    START([Usuario abre la app]) --> FETCH["GET /wallet"]
+    FETCH --> LOAD["Backend carga:<br/>- balance USDC<br/>- balance USDT<br/>- aToken balance"]
+
+    LOAD --> COMPOSE["Balance Composer<br/>suma todo a USD"]
+    COMPOSE --> PRICE["Obtener precios<br/>USDC=1<br/>USDT~1<br/>aToken=USDC"]
+
+    PRICE --> CALC["Calcular:<br/>total = USDC + USDT + valor_aToken"]
+    CALC --> RESP["Response:<br/>balance: 20.15<br/>currency: USD"]
+
+    RESP --> UI["UI muestra:<br/>$20.15"]
+
+    UI --> TAP([Usuario toca Enviar])
+    TAP --> SEND["POST /wallet/send"]
+    SEND --> DECIDE{"Backend decide<br/>que asset usar"}
+
+    DECIDE -->|suficiente USDC| USE1["Usar USDC"]
+    DECIDE -->|insuficiente USDC| SWAP["Swap interno<br/>USDT a USDC"]
+    DECIDE -->|insuficiente total| ERROR["Saldo insuficiente"]
+
+    USE1 --> TX["Ejecutar envio"]
+    SWAP --> TX
+    TX --> DONE([Usuario ve:<br/>Enviaste $50])
+
+    style COMPOSE fill:#5B4DFF,color:#fff
+    style DECIDE fill:#FFB020,color:#000
+    style DONE fill:#34C759,color:#fff
+    style ERROR fill:#FF6B5B,color:#fff
+    style SWAP fill:#7A6EFF,color:#fff

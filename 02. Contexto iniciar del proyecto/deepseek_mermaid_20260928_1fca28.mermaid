@@ -1,0 +1,39 @@
+sequenceDiagram
+    autonumber
+    participant U as 👤 Usuario
+    participant W as ⚡ Worker
+    participant DB as 🐘 Neon
+    participant PS as 🔄 Privy Swap API
+    participant G as ⛽ GasService
+    participant PM as 📦 Pimlico
+    participant M as ⛓️ Monad
+
+    Note over U,M: Usuario tiene USDT + USDC<br/>Quiere enviar $50 a @carlos
+
+    U->>W: POST /wallet/send (amount=50)
+    W->>DB: consultar wallet_positions
+    DB-->>W: USDC=10, USDT=45
+
+    W->>W: Balance Composer<br/>USDC insuficiente → swap 40 USDT → USDC
+
+    W->>PS: POST /swap/quote<br/>USDT→USDC, 40
+    PS-->>W: { amountOut: 39.98, priceImpact: 0.05%, validUntil }
+
+    W->>U: 200 { preview: "Enviar $50 a @carlos" }
+    U->>W: confirmar
+
+    W->>PS: POST /swap/execute
+    PS->>G: sendTransaction (approve + swap)
+    G->>PM: bundler + paymaster
+    PM->>M: tx (gas cubierto por usuario en USDC)
+    M-->>PM: confirmada
+    PM-->>PS: txHash
+    PS-->>W: { txHash, amountOut: 39.98 }
+
+    W->>DB: INSERT swap_executions
+    W->>DB: UPDATE wallet_positions
+    W->>DB: INSERT movements (swap invisible)
+    W->>DB: INSERT movements (send)
+
+    W-->>U: 200 { movement, newBalance: $5.00 }
+    Note over U: Usuario ve: "Enviaste $50 a @carlos"<br/>Nunca supo que hubo un swap

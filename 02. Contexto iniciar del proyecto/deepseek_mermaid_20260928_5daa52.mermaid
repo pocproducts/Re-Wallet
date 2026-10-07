@@ -1,0 +1,55 @@
+flowchart TB
+    subgraph NEW3["🆕 NUEVO EN FASE 3"]
+        direction TB
+        N1["Multi-chain<br/>(Ethereum, Base, Polygon)"]
+        N2["Privy Bridge API<br/>(CCTP interno)"]
+        N3["Card Issuing<br/>(Rain / Immersve)"]
+        N4["On-ramp fiat<br/>(Alchemy Pay / MoonPay)"]
+        N5["API pública<br/>para merchants"]
+        N6["KYC + AML"]
+        N7["Multi-tenant"]
+    end
+
+    subgraph CHAINS["⛓️ CAPA DE CHAINS"]
+        direction TB
+        C1["Chain Registry<br/>(Monad, ETH, Base, Polygon)"]
+        C2["Cross-chain Router<br/>(decide ruta óptima)"]
+        C3["Bridge Orchestrator<br/>(CCTP native)"]
+    end
+
+    subgraph CARDS["💳 CAPA DE TARJETAS"]
+        direction TB
+        CD1["Card Provider Integration"]
+        CD2["Virtual Card Issuance"]
+        CD3["Transaction Webhooks"]
+        CD4["Spending Limits"]
+    end
+
+    subgraph MERCHANTS["🏪 CAPA DE MERCHANTS"]
+        direction TB
+        MC1["Merchant Onboarding"]
+        MC2["API Keys + Rate Limits"]
+        MC3["Payment Intents"]
+        MC4["Settlement to Stablecoin"]
+    end
+
+    subgraph COMPLIANCE["🛡️ CAPA DE COMPLIANCE"]
+        direction TB
+        CP1["KYC Provider"]
+        CP2["AML Screening"]
+        CP3["Sanctions Lists"]
+        CP4["Transaction Reports"]
+    end
+
+    N1 --> C1
+    N2 --> C3
+    N3 --> CD1
+    N4 --> C2
+    N5 --> MC1
+    N6 --> CP1
+    N7 --> MC2
+
+    C1 --> C2 --> C3
+    CD1 --> CD2 --> CD3 --> CD4
+    MC1 --> MC2 --> MC3 --> MC4
+    CP1 --> CP2 --> CP3 --> CP4

@@ -60,6 +60,7 @@
  */
 import { WALLET_CHAIN_ORDER } from '../../domain/wallet/chains';
 import type { WalletChain } from '../../domain/wallet/chains';
+import { DEFAULT_EVM_NETWORK } from '../../domain/wallet/evmNetwork';
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 import type { UserDirectory } from '../../domain/ports/user-directory';
@@ -254,6 +255,14 @@ export const claimWalletsFor = (deps: {
           // Privy's address, verbatim. The browser's only has to have agreed.
           address: record.address,
           providerWalletId: record.providerWalletId,
+          /*
+           * The EVM network in use, recorded on the row. Nobody chose one at
+           * login, so it is the default — Ethereum mainnet, which is what the
+           * owner kept on purpose — and the Solana row records no EVM network
+           * because it has none. See `domain/wallet/evmNetwork.ts`: a claim never
+           * invents a second EVM wallet, and this is not one.
+           */
+          evmNetwork: chain === 'ethereum' ? DEFAULT_EVM_NETWORK : null,
         });
       }
 
