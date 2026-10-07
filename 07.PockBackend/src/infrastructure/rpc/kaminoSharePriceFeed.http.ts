@@ -72,6 +72,7 @@ import type {
   KaminoSharePriceResult,
 } from '../../domain/ports/kamino-share-price-feed';
 import { formatExactDecimal, parseExactDecimal } from '../../domain/yield/kaminoEarnVault';
+import { withDeadline, isDeadlineExceeded, type DeadlinePolicy } from './httpDeadline';
 
 /** Kamino's public API. Overridable per environment, like every other endpoint. */
 export const DEFAULT_KAMINO_API_URL = 'https://api.kamino.finance';
@@ -83,11 +84,42 @@ export interface HttpKaminoSharePriceFeedOptions {
   readonly baseUrl?: string;
   /** Injected so this adapter is testable without a network. Defaults to `fetch`. */
   readonly fetchImpl?: typeof fetch;
+  /**
+   * How long the one GET may take. Defaults to {@link KAMINO_SHARE_PRICE_TIMEOUT_MS};
+   * tests replace the schedule to drive the deadline by hand instead of waiting
+   * for it.
+   */
+  readonly deadline?: DeadlinePolicy;
 }
+
+/**
+ * How long the `/stats` GET is given, and why 3 s.
+ *
+ * This is the cheapest call in the file by a wide margin: one GET, one small JSON
+ * document, served from Kamino's public edge with no chain work behind it — no
+ * node, no account walk, no `eth_call`. There is nothing here that honestly takes
+ * seconds, so the bound is tight rather than generous: three seconds is already
+ * longer than a healthy answer by an order of magnitude, and every extra
+ * millisecond of it is a person still looking at a spinner on the yield screen.
+ *
+ * It is the same number the EVM balance read uses, and deliberately so. Both are
+ * single-value reads from healthy public infrastructure — this one is the more
+ * fragile of the two, but "fragile" is not a reason to wait longer, it is a reason
+ * to give up sooner and let the caller say the rate was unreadable rather than
+ * hold the whole balance load open behind it.
+ */
+export const KAMINO_SHARE_PRICE_TIMEOUT_MS = 3_000;
 
 export const createHttpKaminoSharePriceFeed = (options: HttpKaminoSharePriceFeedOptions = {}): KaminoSharePriceFeed => {
   const baseUrl = (options.baseUrl ?? DEFAULT_KAMINO_API_URL).replace(/\/+$/, '');
-  const send = options.fetchImpl ?? fetch;
+  /*
+   * Bound once, so the price and the rate — the two calls below — can neither
+   * outlast their own deadline nor be given a different one by accident.
+   */
+  const send = withDeadline(options.fetchImpl ?? fetch, {
+    timeoutMs: KAMINO_SHARE_PRICE_TIMEOUT_MS,
+    ...options.deadline,
+  });
 
   /**
    * The one document both answers come from, with every failure mapped to its own
@@ -104,6 +136,11 @@ export const createHttpKaminoSharePriceFeed = (options: HttpKaminoSharePriceFeed
     try {
       response = await send(url, { method: 'GET', headers: { accept: 'application/json' } });
     } catch {
+      /*
+       * `RPC_UNAVAILABLE`'s sibling here: the endpoint did not answer, whether it
+       * refused the connection or simply ran out the deadline the wrapper gave
+       * it. Both are `KAMINO_UNAVAILABLE` and neither is anybody's rate of zero.
+       */
       return { unavailable: true };
     }
 
@@ -116,7 +153,12 @@ export const createHttpKaminoSharePriceFeed = (options: HttpKaminoSharePriceFeed
 
     try {
       return { body: (await response.json()) as unknown };
-    } catch {
+    } catch (error) {
+      // A document that stopped mid-answer is Kamino not answering, not Kamino
+      // answering wrong: the two are indistinguishable at this line, and the
+      // difference decides whether an operator looks at this parser or at their
+      // edge.
+      if (isDeadlineExceeded(error)) return { unavailable: true };
       return { malformed: true };
     }
   };

@@ -18,6 +18,7 @@ import { createHttpSolanaTransferPreparer } from '../../src/infrastructure/rpc/s
 import { SolanaPreparationError } from '../../src/domain/ports/solana-transfer-preparer';
 import { SOLANA_MAINNET_NETWORK } from '../../src/domain/send/transfer';
 import { SOLANA_ADDRESS } from '../support/fixtures';
+import type { DeadlinePolicy } from '../../src/infrastructure/rpc/httpDeadline';
 
 const RECIPIENT = '7EYnhQoR9YM3N7UoaKRoA44Uy8JeaZV3qyouov87awMs';
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -243,5 +244,55 @@ describe('createHttpSolanaTransferPreparer — what it refuses', () => {
     expect(failure).toBeInstanceOf(SolanaPreparationError);
     expect((failure as SolanaPreparationError).code).toBe('RPC_UNAVAILABLE');
     expect(SolanaPreparationError.codes).toContain('RPC_UNAVAILABLE');
+  });
+});
+
+describe('a cluster that does not answer', () => {
+  it('refuses the preparation as RPC_UNAVAILABLE, and says the cluster went quiet', async () => {
+    /*
+     * The hung cluster behind the one RPC call this adapter makes, with the
+     * deadline expired by hand rather than waited for. Without the bound the
+     * `getLatestBlockhash` never settles and the person who pressed send is left
+     * with a button that does nothing — the deadline is what turns that into an
+     * answer they can read.
+     */
+    let fire: (() => void) | undefined;
+    const fetchImpl = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init?.signal?.reason instanceof Error ? init.signal.reason : new Error('aborted'));
+        });
+      })) as unknown as typeof fetch;
+
+    const deadline: DeadlinePolicy = {
+      timeoutMs: 5_000,
+      schedule: (_ms, onDeadline) => {
+        fire = onDeadline;
+        return () => {
+          fire = undefined;
+        };
+      },
+    };
+
+    const pending = createHttpSolanaTransferPreparer({
+      fetchImpl,
+      url: 'https://rpc.invalid',
+      deadline,
+    }).prepare({ from: SOLANA_ADDRESS, to: RECIPIENT, amount: 1n, mint: null, decimals: null });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fire?.();
+
+    const failure = await pending.then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    // The existing reason, unchanged, and no raw library error crossing over.
+    expect(failure).toBeInstanceOf(SolanaPreparationError);
+    expect((failure as SolanaPreparationError).code).toBe('RPC_UNAVAILABLE');
+    // The log line names the failure: the cluster was given five seconds and said
+    // nothing, which is a different story from a blockhash that was refused.
+    expect((failure as Error).message).toContain('the endpoint did not answer in 5s');
   });
 });

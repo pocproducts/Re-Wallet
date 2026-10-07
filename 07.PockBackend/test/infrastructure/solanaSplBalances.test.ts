@@ -21,7 +21,11 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { createHttpSolanaBalanceReader } from '../../src/infrastructure/rpc/solanaBalanceReader.http';
+import {
+  createHttpSolanaBalanceReader,
+  DEFAULT_SOLANA_RPC_URL,
+} from '../../src/infrastructure/rpc/solanaBalanceReader.http';
+import type { DeadlinePolicy } from '../../src/infrastructure/rpc/httpDeadline';
 
 const OWNER = '5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9';
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -193,5 +197,83 @@ describe('Solana SPL balance — what is refused', () => {
     const reader = createHttpSolanaBalanceReader({ url: 'https://solana.invalid', fetchImpl });
 
     await expect(reader.mintBalance(OWNER, USDC_MINT)).rejects.toMatchObject({ reason: 'RPC_REJECTED' });
+  });
+});
+
+describe('the default endpoint', () => {
+  it('is the one that answers from this Worker, and it is the URL the read is sent to', async () => {
+    /*
+     * Pinned because the endpoint this adapter falls back to decides whether
+     * Solana is readable at all, and the answer is not obvious: both candidates
+     * were measured from this Worker's own runtime, because a laptop and a
+     * Worker do not get the same answer.
+     *
+     * ```
+     * api.mainnet-beta.solana.com   getBalance               403  "Your IP or provider is blocked"
+     * api.mainnet-beta.solana.com   getTokenAccountsByOwner  403  idem
+     * solana-rpc.publicnode.com     getBalance               200
+     * solana-rpc.publicnode.com     getTokenAccountsByOwner  429  Rate limit exceeded
+     * ```
+     *
+     * The official endpoint refuses Cloudflare outright, so adopting it took the
+     * **native SOL** read down with the indexed one. `publicnode` still answers
+     * the native read from here, which is what this default is for.
+     *
+     * The indexed read is a real limit and this test does not pretend otherwise:
+     * from a Worker, no free keyless Solana endpoint serves
+     * `getTokenAccountsByOwner`, so SPL balances stay unreadable until
+     * `SOLANA_RPC_URL` points at a provider with a key.
+     */
+    expect(DEFAULT_SOLANA_RPC_URL).toBe('https://solana-rpc.publicnode.com');
+
+    let asked: string | undefined;
+    const fetchImpl = (async (input: unknown) => {
+      asked = String(input);
+      return new Response(result([tokenAccount('1500000', 6)]));
+    }) as unknown as typeof fetch;
+
+    // No `url`: this is the configuration the Worker runs with unless the
+    // deployment overrides it.
+    const reader = createHttpSolanaBalanceReader({ fetchImpl });
+    await reader.mintBalance(OWNER, USDC_MINT);
+
+    expect(asked).toBe(DEFAULT_SOLANA_RPC_URL);
+  });
+});
+
+describe('a cluster that does not answer', () => {
+  it('refuses the read as RPC_UNAVAILABLE instead of summing an answer nobody gave', async () => {
+    /*
+     * The hung cluster: the request goes out, nothing comes back, and only the
+     * adapter's own deadline ends it. `expire()` is called by the test rather than
+     * waited for, so the proof that the deadline exists costs no wall time — and
+     * without one this test never settles at all, which is the whole complaint.
+     */
+    let fire: (() => void) | undefined;
+    const fetchImpl = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init?.signal?.reason instanceof Error ? init.signal.reason : new Error('aborted'));
+        });
+      })) as unknown as typeof fetch;
+
+    const deadline: DeadlinePolicy = {
+      timeoutMs: 5_000,
+      schedule: (_ms, onDeadline) => {
+        fire = onDeadline;
+        return () => {
+          fire = undefined;
+        };
+      },
+    };
+
+    const reader = createHttpSolanaBalanceReader({ url: 'https://solana.invalid', fetchImpl, deadline });
+    const pending = reader.mintBalance(OWNER, USDC_MINT);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fire?.();
+
+    // `0n` is what "no accounts" means on this method, so the reason is the whole
+    // assertion: a timeout must never become a sum of nothing.
+    await expect(pending).rejects.toMatchObject({ reason: 'RPC_UNAVAILABLE' });
   });
 });

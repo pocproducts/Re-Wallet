@@ -73,7 +73,50 @@ import { PublicKey } from '@solana/web3.js';
 import { BalanceReadError } from '../../domain/portfolio/errors';
 import type { SolanaBalanceReader } from '../../domain/ports/solana-balance-reader';
 import { isSolanaAddress } from '../../domain/send/recipients';
+import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy } from './httpDeadline';
 
+/**
+ * ── Why the endpoint is the official public Solana RPC ──────────────────────
+ *
+ * Every SPL read this adapter makes is **indexed** — `getTokenAccountsByOwner`
+ * walks an owner's accounts for a mint, and `getTokenAccountBalance` reads an
+ * account the index owns. The endpoint this file used to default to,
+ * `solana-rpc.publicnode.com`, answers both of those with **HTTP 403**:
+ * "Indexed requests require a personal token." `getBalance` still answered 200,
+ * which is why the failure looked so narrow: lamports read fine and every SPL
+ * balance read failed, so the wallet treated Solana USDC as unreadable and hid
+ * it instead of reporting an endpoint that cannot answer.
+ *
+ * ── Why the default is `publicnode` and not the official endpoint ─────────────
+ *
+ * Both were measured **from this Worker's runtime**, not from a laptop, because
+ * that is the only measurement that matters here:
+ *
+ * ```
+ * api.mainnet-beta.solana.com   getBalance               403  "Your IP or provider is blocked"
+ * api.mainnet-beta.solana.com   getTokenAccountsByOwner  403  idem
+ * solana-rpc.publicnode.com     getBalance               200
+ * solana-rpc.publicnode.com     getTokenAccountsByOwner  429  Rate limit exceeded
+ * solana.drpc.org               both                     400  not available on the free plan
+ * solana.api.onfinality.io      both                     429  Too Many Requests
+ * rpc.ankr.com/solana           both                     403  API key is not allowed
+ * ```
+ *
+ * The official endpoint refuses Cloudflare outright, so moving to it took the
+ * **native SOL** down with it — `getBalance` answered 200 before and 403 after.
+ * `publicnode` is the only free endpoint that still answers the native read from
+ * here, so it is the default again.
+ *
+ * What it cannot do is the **indexed** read, and that is a real limit, not a
+ * preference: from a Worker, no free keyless Solana RPC serves
+ * `getTokenAccountsByOwner`. Until {@link DEFAULT_SOLANA_RPC_URL} is pointed at a
+ * provider with a key, SPL balances on Solana read as unreadable and the wallet
+ * hides them — which is the rule the owner asked for, and the reason a Solana
+ * USDC balance is invisible rather than wrong.
+ *
+ * `SOLANA_RPC_URL`, read in `container.ts`, is the override for a real provider
+ * and wins over the constant whenever it is set.
+ */
 export const DEFAULT_SOLANA_RPC_URL = 'https://solana-rpc.publicnode.com';
 
 /** `{"value": 123}` — digits only, so `BigInt` can take them verbatim. */
@@ -116,13 +159,60 @@ export interface HttpSolanaBalanceReaderOptions {
   readonly url?: string;
   /** Injected so this adapter is testable without a network. Defaults to `fetch`. */
   readonly fetchImpl?: typeof fetch;
+  /**
+   * How long one request to the cluster may take. Defaults to
+   * {@link SOLANA_BALANCE_REQUEST_TIMEOUT_MS}; tests replace the schedule to
+   * drive the deadline by hand instead of waiting for it.
+   */
+  readonly deadline?: DeadlinePolicy;
 }
+
+/**
+ * How long one Solana balance request is given, and why 5 s.
+ *
+ * The reads here are small — a lamport count, an amount, a list — except
+ * `getTokenAccountsByOwner`, which asks a public node to walk an owner's whole
+ * account set for a mint and answer every hit as `jsonParsed`: parsed accounts
+ * are the bulky form, and a person who has used a few tokens pays for all of
+ * them in one answer. A node that is doing that work honestly can take a couple
+ * of seconds on a busy public endpoint, and five is where "slow" stops being a
+ * reason to keep somebody's balance screen empty.
+ *
+ * It is the same number the Kamino vault reader uses, and deliberately so — the
+ * two issue the same `jsonParsed` account read to the same public cluster. Past
+ * that, the cluster is not slow, it is not answering, and the answer this adapter
+ * owes is the one reason that says so.
+ */
+export const SOLANA_BALANCE_REQUEST_TIMEOUT_MS = 5_000;
 
 export const createHttpSolanaBalanceReader = (
   options: HttpSolanaBalanceReaderOptions = {},
 ): SolanaBalanceReader => {
   const url = options.url ?? DEFAULT_SOLANA_RPC_URL;
-  const send = options.fetchImpl ?? fetch;
+  /*
+   * Bound once, so no read below — and no read added to this adapter later — can
+   * reach the cluster without a deadline. Per request, not per balance: a
+   * portfolio reads several mints, and one silent method must not consume the
+   * time of the others.
+   */
+  const send = withDeadline(options.fetchImpl ?? fetch, {
+    timeoutMs: SOLANA_BALANCE_REQUEST_TIMEOUT_MS,
+    ...options.deadline,
+  });
+
+  /**
+   * The one mapping every body read of this adapter needs.
+   *
+   * A `text()` that rejects is either our deadline — the cluster answered the
+   * request and then stopped sending, which is silence and belongs to
+   * `RPC_UNAVAILABLE` — or bytes that are not JSON, which is a corrupted answer
+   * and belongs to `RPC_MALFORMED_RESPONSE`. The two are indistinguishable at the
+   * call site, so they are told apart once, here, where the difference is stated.
+   */
+  const bodyFailed = (method: string, error: unknown): BalanceReadError =>
+    isDeadlineExceeded(error)
+      ? new BalanceReadError('RPC_UNAVAILABLE', `solana ${method} ${error.message}`, { cause: error })
+      : new BalanceReadError('RPC_MALFORMED_RESPONSE', `solana ${method} answered with no JSON`, { cause: error });
 
   /** One JSON-RPC call, and the four ways it can go wrong. */
   const call = async (method: string, params: unknown[]): Promise<string> => {
@@ -134,9 +224,11 @@ export const createHttpSolanaBalanceReader = (
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
       });
     } catch (error) {
-      throw new BalanceReadError('RPC_UNAVAILABLE', `solana ${method} did not reach the endpoint`, {
-        cause: error,
-      });
+      throw new BalanceReadError(
+        'RPC_UNAVAILABLE',
+        `solana ${method} ${transportDetail(error, 'did not reach the endpoint')}`,
+        { cause: error },
+      );
     }
 
     if (!response.ok) {
@@ -144,15 +236,18 @@ export const createHttpSolanaBalanceReader = (
     }
 
     // Read the text first: `JSON.parse` would round a lamport or a token amount.
-    const text = await response.text();
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (error) {
+      throw bodyFailed(method, error);
+    }
 
     let body: unknown;
     try {
       body = JSON.parse(text);
     } catch (error) {
-      throw new BalanceReadError('RPC_MALFORMED_RESPONSE', `solana ${method} answered with no JSON`, {
-        cause: error,
-      });
+      throw bodyFailed(method, error);
     }
 
     const payload = body as { error?: unknown } | null;
@@ -231,9 +326,7 @@ export const createHttpSolanaBalanceReader = (
       try {
         body = JSON.parse(text) as { result?: { value?: unknown } };
       } catch (error) {
-        throw new BalanceReadError('RPC_MALFORMED_RESPONSE', 'solana getTokenAccountsByOwner answered with no JSON', {
-          cause: error,
-        });
+        throw bodyFailed('getTokenAccountsByOwner', error);
       }
 
       const value = body?.result?.value;

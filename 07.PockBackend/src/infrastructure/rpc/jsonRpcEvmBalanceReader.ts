@@ -17,7 +17,7 @@
  *
  * ── Why the three failures are kept apart ────────────────────────────────────
  *
- *  - the endpoint did not answer (DNS, TLS, timeout, 5xx, 429) → `RPC_UNAVAILABLE`
+ *  - the endpoint did not answer (DNS, TLS, deadline, 5xx, 429) → `RPC_UNAVAILABLE`
  *  - it answered with an `error` object → `RPC_REJECTED`
  *  - it answered with something that is not a hex quantity → `RPC_MALFORMED_RESPONSE`
  *
@@ -28,6 +28,7 @@
 import { BalanceReadError } from '../../domain/portfolio/errors';
 import type { EvmNetwork } from '../../domain/portfolio/networks';
 import type { EvmBalanceReader } from '../../domain/ports/evm-balance-reader';
+import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy } from './httpDeadline';
 
 /**
  * The public endpoints this POC reads.
@@ -136,11 +137,46 @@ export interface JsonRpcEvmBalanceReaderOptions {
   readonly endpoints?: EvmEndpointCandidates;
   /** Injected so this adapter is testable without a network. Defaults to `fetch`. */
   readonly fetchImpl?: typeof fetch;
+  /**
+   * How long one attempt at one endpoint may take. Defaults to
+   * {@link EVM_BALANCE_REQUEST_TIMEOUT_MS}; tests replace the schedule to drive
+   * the deadline by hand instead of waiting for it.
+   */
+  readonly deadline?: DeadlinePolicy;
 }
+
+/**
+ * How long one `eth_getBalance` / `balanceOf` attempt is given, and why 3 s.
+ *
+ * This is the cheapest read in the codebase: one storage slot, no contract
+ * dispatch beyond a `balanceOf` hop, against the fastest public endpoints this
+ * repository uses — the Ethereum candidates answer in well under a second from a
+ * laptop. Three seconds is set where a slow endpoint is already slow rather than
+ * where a loaded one is merely loaded, and where somebody staring at a balance
+ * screen has already stopped believing the screen.
+ *
+ * It is the same number the Kamino REST feed uses, deliberately: both are
+ * single-value reads from healthy public infrastructure, and splitting them
+ * would be an invented distinction. What the bound buys is bounded, not
+ * generous — past three seconds the endpoint is not slow, it is not answering,
+ * and the next candidate endpoint is a better use of the request than a fourth
+ * second of waiting.
+ */
+export const EVM_BALANCE_REQUEST_TIMEOUT_MS = 3_000;
 
 export const createJsonRpcEvmBalanceReader = (options: JsonRpcEvmBalanceReaderOptions = {}): EvmBalanceReader => {
   const endpoints = options.endpoints ?? DEFAULT_EVM_ENDPOINTS;
-  const send = options.fetchImpl ?? fetch;
+  /*
+   * The deadline is bound here, once, and not at the call sites: `send` is the
+   * only way this adapter leaves the isolate, so no call below can reach an
+   * endpoint without one. The deadline is per **attempt** — a list of three
+   * candidates is three budgets — because a dead first endpoint must not spend
+   * the whole read's time before the second one is even tried.
+   */
+  const send = withDeadline(options.fetchImpl ?? fetch, {
+    timeoutMs: EVM_BALANCE_REQUEST_TIMEOUT_MS,
+    ...options.deadline,
+  });
 
   /** One JSON-RPC call. Throws `BalanceReadError`, never returns a wrong number. */
   const rpc = async (network: EvmNetwork, method: string, params: readonly unknown[]): Promise<bigint> => {
@@ -191,7 +227,7 @@ const callOnce = async (
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
     });
   } catch (error) {
-    throw new BalanceReadError('RPC_UNAVAILABLE', `${network} ${method} did not reach the endpoint`, {
+    throw new BalanceReadError('RPC_UNAVAILABLE', `${network} ${method} ${transportDetail(error, 'did not reach the endpoint')}`, {
       cause: error,
     });
   }
@@ -213,6 +249,21 @@ const callOnce = async (
       // cuando ve trafico de datacenter. El host y la CLASE del cuerpo bastan
       // para distinguir eso de un JSON roto, y son lo unico seguro de escribir:
       // el cuerpo del proveedor no va al log.
+      /*
+       * Un JSON-RPC answer can cortarse a mitad. Desde aqui un plazo agotado y
+       * una respuesta que no es JSON se ven igual — `json()` fallo en los dos
+       * casos — y reportar un endpoint mudo como corrupto es el unico error que
+       * este vocabulario existe para evitar: mandaria a un operador a arreglar
+       * aqui una caida del proveedor.
+       */
+      if (isDeadlineExceeded(error)) {
+        throw new BalanceReadError(
+          'RPC_UNAVAILABLE',
+          `${network} ${method} at ${hostOf(url)} ${error.message}`,
+          { cause: error },
+        );
+      }
+
       const kind = await describeUnparseableBody(response);
       throw new BalanceReadError(
         'RPC_MALFORMED_RESPONSE',

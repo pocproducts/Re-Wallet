@@ -13,8 +13,11 @@ import { formatUnits, USDC_ADDRESS_BY_CHAIN } from '../../src/domain/portfolio/a
 import { BalanceReadError } from '../../src/domain/portfolio/errors';
 import { createJsonRpcEvmBalanceReader } from '../../src/infrastructure/rpc/jsonRpcEvmBalanceReader';
 import { createHttpSolanaBalanceReader } from '../../src/infrastructure/rpc/solanaBalanceReader.http';
+import type { DeadlinePolicy } from '../../src/infrastructure/rpc/httpDeadline';
 
 const ADDRESS = '0x1234567890abcdef1234567890abcdef12345678';
+const OWNER = '5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9';
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const ENDPOINTS = { monad: ['https://monad.invalid'], ethereum: ['https://ethereum.invalid'] };
 
 /** A `fetch` that answers with whatever the test hands it, and records the calls. */
@@ -302,5 +305,87 @@ describe('formatUnits', () => {
 
   it('refuses a negative balance rather than printing one', () => {
     expect(() => formatUnits(-1n, 18)).toThrow(RangeError);
+  });
+});
+
+/**
+ * A hung endpoint, staged: a `fetch` that never settles and only settles when its
+ * signal aborts, plus a deadline the test expires by hand. No network, and no
+ * waiting for wall time.
+ */
+const hungEndpoint = () => {
+  const requests: string[] = [];
+  let fire: (() => void) | undefined;
+
+  const fetchImpl = ((url: string, init?: RequestInit) => {
+    requests.push(String(url));
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(init?.signal?.reason instanceof Error ? init.signal.reason : new Error('aborted'));
+      });
+    });
+  }) as unknown as typeof fetch;
+
+  const deadline: DeadlinePolicy = {
+    timeoutMs: 3_000,
+    schedule: (_ms, onDeadline) => {
+      fire = onDeadline;
+      return () => {
+        fire = undefined;
+      };
+    },
+  };
+
+  return {
+    fetchImpl,
+    deadline,
+    requests,
+    expire: (): void => fire?.(),
+    tick: (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0)),
+  };
+};
+
+describe('an endpoint that does not answer', () => {
+  it('reports a hung EVM node as RPC_UNAVAILABLE, never as a zero balance', async () => {
+    const hung = hungEndpoint();
+    const reader = createJsonRpcEvmBalanceReader({
+      endpoints: ENDPOINTS,
+      fetchImpl: hung.fetchImpl,
+      deadline: hung.deadline,
+    });
+
+    const pending = reader.nativeBalance('monad', ADDRESS);
+    await hung.tick();
+    hung.expire();
+
+    const failure = await pending.then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    // A read that ran out of time told us nothing. It is not `0n`.
+    expect(failure).toBeInstanceOf(BalanceReadError);
+    expect((failure as BalanceReadError).reason).toBe('RPC_UNAVAILABLE');
+    // And the log says the endpoint went quiet, which is a different story from a
+    // name that did not resolve.
+    expect((failure as Error).message).toContain('the endpoint did not answer in 3s');
+  });
+
+  it('reports a hung Solana node as RPC_UNAVAILABLE, never as an empty list', async () => {
+    const hung = hungEndpoint();
+    const reader = createHttpSolanaBalanceReader({
+      url: 'https://solana.invalid',
+      fetchImpl: hung.fetchImpl,
+      deadline: hung.deadline,
+    });
+
+    const pending = reader.mintBalance(OWNER, USDC_MINT);
+    await hung.tick();
+    hung.expire();
+
+    // An empty list is `0n` on this adapter, so a timeout that became one would be
+    // a person told they hold none of a token they hold.
+    await expect(pending).rejects.toMatchObject({ reason: 'RPC_UNAVAILABLE' });
+    expect(hung.requests).toEqual(['https://solana.invalid']);
   });
 });

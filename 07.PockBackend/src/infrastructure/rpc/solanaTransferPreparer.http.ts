@@ -67,7 +67,32 @@ import {
 } from '../../domain/ports/solana-transfer-preparer';
 import { SOLANA_MAINNET_NETWORK } from '../../domain/send/transfer';
 import { isSolanaAddress } from '../../domain/send/recipients';
+import { transportDetail, withDeadline, type DeadlinePolicy } from './httpDeadline';
 
+/**
+ * ── Why the endpoint is `publicnode` ────────────────────────────────────────
+ *
+ * This adapter is handed the same URL as the balance reader — one Worker, one
+ * conversation with one cluster — so the default is the same one and the reason
+ * is the same, measured from this Worker's runtime:
+ *
+ * ```
+ * api.mainnet-beta.solana.com   getBalance               403  "Your IP or provider is blocked"
+ * solana-rpc.publicnode.com     getBalance               200
+ * ```
+ *
+ * The official endpoint refuses Cloudflare outright. `Connection`'s own call
+ * here, `getLatestBlockhash`, is not indexed and answered 200 on `publicnode` and
+ * 403 on the official one, so moving to the official endpoint would have taken
+ * transfer preparation down with the balance read. One constant, one cluster,
+ * one thing that can break.
+ *
+ * What `publicnode` cannot serve from a Worker is the **indexed** read, so a
+ * deployment that needs SPL balances on Solana points `SOLANA_RPC_URL` — read in
+ * `container.ts`, and winning over this constant whenever it is set — at a
+ * provider with a key. No free keyless Solana RPC serves indexed queries from
+ * Cloudflare; that was measured, not assumed.
+ */
 export const DEFAULT_SOLANA_RPC_URL = 'https://solana-rpc.publicnode.com';
 
 export interface HttpSolanaTransferPreparerOptions {
@@ -82,7 +107,30 @@ export interface HttpSolanaTransferPreparerOptions {
    * case refuses a message whose cluster is not the one the catalog names.
    */
   readonly network?: string;
+  /**
+   * How long the cluster may take to answer the blockhash read. Defaults to
+   * {@link SOLANA_PREPARATION_REQUEST_TIMEOUT_MS}; tests replace the schedule to
+   * drive the deadline by hand instead of waiting for it.
+   */
+  readonly deadline?: DeadlinePolicy;
 }
+
+/**
+ * How long the preparation's one RPC call is given, and why 5 s.
+ *
+ * `getLatestBlockhash` is itself cheap — it is a `getBlock`, not an account walk
+ * — so it deserves no more than the balance read's bound, and it gets exactly
+ * it: same public cluster, same kind of honest read, same number, no invented
+ * difference.
+ *
+ * It is not lowered, though, and the reason is who is waiting. Everything else in
+ * this repository renders a screen that can be slow; this one is the first step
+ * of a payment somebody decided to send, and the wait sits between their decision
+ * and the signature they are about to make. Giving up early there turns a cluster
+ * that was one second from answering into a refused transfer, which is a worse
+ * outcome than the one extra second of patience buys.
+ */
+export const SOLANA_PREPARATION_REQUEST_TIMEOUT_MS = 5_000;
 
 const publicKeyOf = (value: string, role: string): PublicKey => {
   if (!isSolanaAddress(value)) {
@@ -134,7 +182,17 @@ export const createHttpSolanaTransferPreparer = (
 ): SolanaTransferPreparer => {
   const url = options.url ?? DEFAULT_SOLANA_RPC_URL;
   const network = options.network ?? SOLANA_MAINNET_NETWORK;
-  const send = options.fetchImpl ?? fetch;
+  /*
+   * The deadline is handed to `Connection` as its `fetch`, so it covers the RPC
+   * call the library makes and this file never has to remember to bound one. That
+   * is the property worth having here: the bytes of the transaction come from the
+   * reference client, and a bound that only covered hand-written calls would be a
+   * bound on the part of this adapter nobody reads.
+   */
+  const send = withDeadline(options.fetchImpl ?? fetch, {
+    timeoutMs: SOLANA_PREPARATION_REQUEST_TIMEOUT_MS,
+    ...options.deadline,
+  });
 
   const connection = new Connection(url, { commitment: 'confirmed', fetch: send });
 
@@ -165,9 +223,11 @@ export const createHttpSolanaTransferPreparer = (
         blockhash = latest.blockhash;
         lastValidBlockHeight = latest.lastValidBlockHeight;
       } catch (error) {
-        throw new SolanaPreparationError('RPC_UNAVAILABLE', 'the solana blockhash could not be read', {
-          cause: error,
-        });
+        throw new SolanaPreparationError(
+          'RPC_UNAVAILABLE',
+          `the solana blockhash ${transportDetail(error, 'could not be read')}`,
+          { cause: error },
+        );
       }
 
       try {

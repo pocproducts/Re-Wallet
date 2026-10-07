@@ -22,6 +22,7 @@ import { createHttpKaminoEarnVaultReader } from '../../src/infrastructure/rpc/ka
 import { createHttpKaminoSharePriceFeed } from '../../src/infrastructure/rpc/kaminoSharePriceFeed.http';
 import { FarmStateUnreadableError } from '../../src/domain/ports/kamino-earn-vault-reader';
 import { BalanceReadError } from '../../src/domain/portfolio/errors';
+import type { DeadlinePolicy } from '../../src/infrastructure/rpc/httpDeadline';
 import { KAMINO_KVAULT_ACCOUNT_BYTES } from '../../src/domain/yield/kaminoEarnVault';
 
 /**
@@ -388,5 +389,98 @@ describe('the share price feed', () => {
       status: 'unreadable',
       reason: 'KAMINO_UNAVAILABLE',
     });
+  });
+});
+
+describe('endpoints that do not answer', () => {
+  /**
+   * The hung endpoint for both adapters: a `fetch` that only settles when its
+   * signal aborts, and a deadline the test expires by hand. No network, and no
+   * waiting for wall time — without the bound these reads never settle at all.
+   */
+  const hungEndpoint = () => {
+    let fire: (() => void) | undefined;
+    const requests: string[] = [];
+
+    const fetchImpl = ((url: string, init?: RequestInit) => {
+      requests.push(String(url));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init?.signal?.reason instanceof Error ? init.signal.reason : new Error('aborted'));
+        });
+      });
+    }) as unknown as typeof fetch;
+
+    const deadline: DeadlinePolicy = {
+      timeoutMs: 5_000,
+      schedule: (_ms, onDeadline) => {
+        fire = onDeadline;
+        return () => {
+          fire = undefined;
+        };
+      },
+    };
+
+    return {
+      fetchImpl,
+      deadline,
+      requests,
+      expire: (): void => fire?.(),
+      tick: (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0)),
+    };
+  };
+
+  it('refuses the vault as RPC_UNAVAILABLE, never as a vault with no account', async () => {
+    const hung = hungEndpoint();
+    const reader = createHttpKaminoEarnVaultReader({ url: 'https://solana.invalid', fetchImpl: hung.fetchImpl, deadline: hung.deadline });
+
+    const pending = reader.vault();
+    await hung.tick();
+    hung.expire();
+
+    /*
+     * This is the distinction the whole file is built on. A missing account is
+     * `RPC_MALFORMED_RESPONSE` — "the address this repository pinned does not
+     * exist" — and a hung cluster is `RPC_UNAVAILABLE`. Reporting the second as
+     * the first would invalidate the pinned vault permanently, on the strength of
+     * a node that simply stopped talking.
+     */
+    await expect(pending).rejects.toMatchObject({ reason: 'RPC_UNAVAILABLE' });
+    expect(hung.requests).toEqual(['https://solana.invalid']);
+  });
+
+  it('reports the share price as KAMINO_UNAVAILABLE, never as a malformed price', async () => {
+    const hung = hungEndpoint();
+    const feed = createHttpKaminoSharePriceFeed({
+      baseUrl: 'https://kamino.invalid',
+      fetchImpl: hung.fetchImpl,
+      deadline: hung.deadline,
+    });
+
+    const pending = feed.sharePrice(VAULT_ADDRESS);
+    await hung.tick();
+    hung.expire();
+
+    // Not `KAMINO_MALFORMED_RESPONSE`, which would send an operator to the decimal
+    // parser instead of to the edge that stopped answering; and not a share price
+    // of anything.
+    await expect(pending).resolves.toEqual({ status: 'unreadable', reason: 'KAMINO_UNAVAILABLE' });
+  });
+
+  it('reports the rate as KAMINO_UNAVAILABLE too — the deadline is the GET, not the question', async () => {
+    const hung = hungEndpoint();
+    const feed = createHttpKaminoSharePriceFeed({
+      baseUrl: 'https://kamino.invalid',
+      fetchImpl: hung.fetchImpl,
+      deadline: hung.deadline,
+    });
+
+    const pending = feed.apy(VAULT_ADDRESS);
+    await hung.tick();
+    hung.expire();
+
+    // The rate's failure never becomes a rate of zero, and never couples the
+    // price's answer to its own.
+    await expect(pending).resolves.toEqual({ status: 'unreadable', reason: 'KAMINO_UNAVAILABLE' });
   });
 });

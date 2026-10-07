@@ -47,8 +47,29 @@ import {
   type KaminoKVaultState,
 } from '../../domain/yield/kaminoEarnVault';
 import { isSolanaAddress } from '../../domain/send/recipients';
+import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy } from './httpDeadline';
 
-/** The default endpoint, the same one the Solana balances already use. */
+/**
+ * The default endpoint, the same one the Solana balances already use.
+ *
+ * One constant, one cluster: a vault position must not be half-readable while
+ * the balances it is a half of read fine. The reason is the same one measured
+ * from this Worker's runtime:
+ *
+ * ```
+ * api.mainnet-beta.solana.com   getMultipleAccounts       403  "Your IP or provider is blocked"
+ * solana-rpc.publicnode.com     getMultipleAccounts       200
+ * ```
+ *
+ * These `getMultipleAccounts` reads are not indexed and they answer 200 on
+ * `publicnode`, so the vault account, the farm and the share mint are readable
+ * today. The owner's shares — `getTokenAccountsByOwner`, which is indexed — are
+ * not: from a Worker, no free keyless Solana endpoint serves indexed queries.
+ *
+ * `SOLANA_RPC_URL` in `container.ts` is the override for a deployment with a
+ * provider key, and it wins over this constant whenever it is set. That is the
+ * one line that makes the whole Solana side readable.
+ */
 export const DEFAULT_SOLANA_RPC_URL = 'https://solana-rpc.publicnode.com';
 
 /** One account as `jsonParsed` answers it: the owner, and the data as base64. */
@@ -86,13 +107,40 @@ export interface HttpKaminoEarnVaultReaderOptions {
   readonly fetchImpl?: typeof fetch;
   /** Overridable so a test can pin a different vault. Defaults to the live one. */
   readonly vaultAddress?: string;
+  /**
+   * How long one request to the cluster may take. Defaults to
+   * {@link KAMINO_VAULT_REQUEST_TIMEOUT_MS}; tests replace the schedule to drive
+   * the deadline by hand instead of waiting for it.
+   */
+  readonly deadline?: DeadlinePolicy;
 }
+
+/**
+ * How long one account read of the vault or the farm is given, and why 5 s.
+ *
+ * This is `getMultipleAccounts` with `jsonParsed`, answered by a public Solana
+ * endpoint: one account, decoded, which is the same shape and the same cluster
+ * as the portfolio's `getTokenAccountsByOwner`, and it gets the same bound for
+ * the same reason — that read is the largest thing either adapter asks for, and
+ * five seconds is where a slow node stops being a reason to keep a yield screen
+ * empty. Two adapters, one number, one reason; inventing a difference between
+ * them would only create a difference nobody could defend.
+ */
+export const KAMINO_VAULT_REQUEST_TIMEOUT_MS = 5_000;
 
 export const createHttpKaminoEarnVaultReader = (
   options: HttpKaminoEarnVaultReaderOptions = {},
 ): KaminoEarnVaultReader => {
   const url = options.url ?? DEFAULT_SOLANA_RPC_URL;
-  const send = options.fetchImpl ?? fetch;
+  /*
+   * Bound once, so neither the vault read nor the farm read can go out without
+   * one — and so a position that is two calls long does not double the wait for
+   * the person watching it.
+   */
+  const send = withDeadline(options.fetchImpl ?? fetch, {
+    timeoutMs: KAMINO_VAULT_REQUEST_TIMEOUT_MS,
+    ...options.deadline,
+  });
   const vaultAddress = options.vaultAddress ?? KAMINO_EARN_VAULT_ADDRESS;
 
   /** One JSON-RPC call, and the same three failures the other reads separate. */
@@ -105,14 +153,30 @@ export const createHttpKaminoEarnVaultReader = (
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
       });
     } catch (error) {
-      throw new BalanceReadError('RPC_UNAVAILABLE', `solana ${method} did not reach the endpoint`, { cause: error });
+      throw new BalanceReadError(
+        'RPC_UNAVAILABLE',
+        `solana ${method} ${transportDetail(error, 'did not reach the endpoint')}`,
+        { cause: error },
+      );
     }
 
     if (!response.ok) {
       throw new BalanceReadError('RPC_UNAVAILABLE', `solana ${method} answered HTTP ${response.status}`);
     }
 
-    const text = await response.text();
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (error) {
+      // An account that stopped mid-answer is silence, not corruption: the same
+      // reason a timeout must never be read as a vault this repository got wrong.
+      if (isDeadlineExceeded(error)) {
+        throw new BalanceReadError('RPC_UNAVAILABLE', `solana ${method} ${error.message}`, { cause: error });
+      }
+      throw new BalanceReadError('RPC_MALFORMED_RESPONSE', `solana ${method} answered with no JSON`, {
+        cause: error,
+      });
+    }
 
     let body: unknown;
     try {
