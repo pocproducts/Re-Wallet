@@ -80,3 +80,26 @@ para que el front firme.
 - Ningún número en pantalla que no venga de una lectura real.
 - Ninguna acción ofrecida que no pueda ejecutarse.
 - 748 tests del backend verdes y `tsc` limpio (mínimo: no romper nada).
+---
+
+## F1 y F2 cerradas el 2026-10-07
+
+- **F1 (lista real)**: la lista sale del catálogo del backend, con red nombrada
+  por fila y saldos y precios de lecturas reales. El botón que decía "compra
+  completada" ya no existe.
+- **Swap apagado del menú**: el botón "Usar" y los botones Comprar / Vender /
+  Cambiar se fueron. Quedan Depositar y Enviar. El código de trade queda
+  estacionado y comentado, porque es la base de F2.
+
+## Lo que F2 necesita, y no es código
+
+1. **Llaves.** 1inch Business es de pago para EVM; Jupiter tiene plan gratuito
+   para Solana. El owner las consigue.
+2. **Un RPC de Solana con llave.** Medido desde el runtime del Worker: ningún
+   endpoint gratuito y sin llave sirve consultas indexadas desde Cloudflare.
+   `SOLANA_RPC_URL` es la válvula: una línea y la parte de Solana queda entera.
+3. **La migración de `swap_quotes` / `swap_executions`** (T5 del task de
+   catálogo): hoy solo existen en un SQL de contexto que nunca se aplicó.
+4. **La verificación de la transacción antes de firmarla.** Es lo primero que
+  hay que escribir y lo que menos obvio es: es la primera vez que la app firma
+   calldata construida por un tercero.
