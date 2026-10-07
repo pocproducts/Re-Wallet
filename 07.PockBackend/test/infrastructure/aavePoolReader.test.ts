@@ -22,6 +22,7 @@ import { keccak256, toBytes } from 'viem';
 /** Los primeros 4 bytes del keccak de una firma, que es como se calcula un selector. */
 const selectorOf = (signature: string): string => keccak256(toBytes(signature)).slice(0, 10);
 import { BalanceReadError } from '../../src/domain/portfolio/errors';
+import type { DeadlinePolicy } from '../../src/infrastructure/rpc/httpDeadline';
 
 /** The transcript of `getReserveData(USDC)` on Monad mainnet, 2026-10-04. */
 const RAW_RESERVE: readonly string[] = [
@@ -155,5 +156,186 @@ describe('the pool adapter', () => {
     }) as unknown as typeof fetch;
     const both = createJsonRpcAavePoolReader({ endpoints: [first, RPC_URL], fetchImpl: dead });
     await expect(both.reserveData()).rejects.toBeInstanceOf(BalanceReadError);
+  });
+});
+
+/**
+ * The edge cache on the two **global** reserve reads.
+ *
+ * `getReserveData(USDC)` and `getReserveConfigurationData(USDC)` are the same
+ * structs for every person, on every route — and this project has exactly one
+ * reserve — so `/api/pool` and `/api/wallet-balance` in the same page load were
+ * asking for two copies of them. The cache reuses them for a short, explicit
+ * TTL and nothing else: every test below moves a **fake clock**, so no assertion
+ * depends on wall time, and the balances are shown to stay uncached.
+ */
+describe('the edge cache on the reserve reads', () => {
+  const clock = (start: number = 1_700_000_000_000) => {
+    const state = { now: start };
+    return {
+      state,
+      advance: (ms: number): void => {
+        state.now += ms;
+      },
+    };
+  };
+
+  it('reuses the reserve inside the TTL and reads again outside it', async () => {
+    const time = clock();
+    const { fetchImpl, requests } = answering(hexOf(RAW_RESERVE));
+    const reader = createJsonRpcAavePoolReader({
+      endpoints: [RPC_URL],
+      fetchImpl,
+      nowMs: () => time.state.now,
+    });
+
+    const first = await reader.reserveData();
+    expect(requests).toHaveLength(1);
+
+    // Fourteen seconds later — inside the fifteen-second TTL.
+    time.advance(14_000);
+    expect(await reader.reserveData()).toEqual(first);
+    expect(requests).toHaveLength(1);
+
+    // One second more and it is read again, from the node, as it always was.
+    time.advance(1_000);
+    expect(await reader.reserveData()).toEqual(first);
+    expect(requests).toHaveLength(2);
+  });
+
+  it('reuses the configuration on its own key, never as the reserve', async () => {
+    const time = clock();
+    const configuration = hexOf(['6', '7500', '7800', '10750', '1000', '1', '1', '0', '1', '0']);
+    const requests: { data?: string }[] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { params: [{ to: string; data: string }, string] };
+      requests.push({ data: body.params[0]?.data });
+      // The two calls are told apart by the selector, so neither key can be
+      // answered with the other's struct.
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          result: body.params[0]?.data.startsWith(selectorOf('getReserveConfigurationData(address)'))
+            ? configuration
+            : hexOf(RAW_RESERVE),
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const reader = createJsonRpcAavePoolReader({ endpoints: [RPC_URL], fetchImpl, nowMs: () => time.state.now });
+
+    const data = await reader.reserveData();
+    const config = await reader.reserveConfiguration();
+    expect(data.totalAToken).toBe(173874477777314n);
+    expect(config.reserveFactorBps).toBe(1000n);
+
+    // Both again, one second later: two requests total, not four.
+    time.advance(1_000);
+    expect((await reader.reserveData()).totalAToken).toBe(173874477777314n);
+    expect((await reader.reserveConfiguration()).reserveFactorBps).toBe(1000n);
+    expect(requests).toHaveLength(2);
+  });
+
+  it('never caches a refusal, so a dead endpoint is retried at once', async () => {
+    const time = clock();
+    let attempts = 0;
+    const failing = (async () => {
+      attempts += 1;
+      throw new Error('socket hang up');
+    }) as unknown as typeof fetch;
+    const reader = createJsonRpcAavePoolReader({ endpoints: [RPC_URL], fetchImpl: failing, nowMs: () => time.state.now });
+
+    await expect(reader.reserveData()).rejects.toMatchObject({ reason: 'RPC_UNAVAILABLE' });
+    // One millisecond later — nowhere near the TTL — it is asked again.
+    time.advance(1);
+    await expect(reader.reserveData()).rejects.toMatchObject({ reason: 'RPC_UNAVAILABLE' });
+    expect(attempts).toBe(2);
+  });
+
+  it('collapses concurrent misses into a single read', async () => {
+    // Two requests arriving together in one isolate must not mean two identical
+    // `eth_call`s.
+    const { fetchImpl, requests } = answering(hexOf(RAW_RESERVE));
+    const reader = createJsonRpcAavePoolReader({ endpoints: [RPC_URL], fetchImpl });
+
+    const [first, second] = await Promise.all([reader.reserveData(), reader.reserveData()]);
+
+    expect(second).toEqual(first);
+    expect(requests).toHaveLength(1);
+  });
+
+  it('caches no money: every balance and allowance is read on every call', async () => {
+    /*
+     * The line the cache does not cross. `erc20Balance`, `nativeBalance` and
+     * `allowance` are the person's own figures, so they go to the node every
+     * single time, whatever the TTL says about the reserve.
+     */
+    const { fetchImpl, requests } = answering('0x');
+    const reader = createJsonRpcAavePoolReader({ endpoints: [RPC_URL], fetchImpl });
+    const token = '0x754704Bc059F8C67012fEd69BC8A327a5aafb603';
+
+    await reader.erc20Balance(token, OWNER);
+    await reader.erc20Balance(token, OWNER);
+    await reader.allowance(token, OWNER, SPENDER);
+    await reader.nativeBalance(OWNER);
+    await reader.nativeBalance(OWNER);
+
+    expect(requests).toHaveLength(5);
+  });
+});
+
+describe('a node that does not answer', () => {
+  it('refuses the reserve as RPC_UNAVAILABLE, and caches the refusal for nobody', async () => {
+    /*
+     * The hung node, with the deadline expired by hand rather than waited for: the
+     * proof that the bound exists costs no wall time, and without one this read
+     * never settles — which is the failure this adapter had.
+     */
+    const requests: string[] = [];
+    let fire: (() => void) | undefined;
+
+    const fetchImpl = ((_url: string, init?: RequestInit) => {
+      requests.push(String(init?.body ?? ''));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init?.signal?.reason instanceof Error ? init.signal.reason : new Error('aborted'));
+        });
+      });
+    }) as unknown as typeof fetch;
+
+    const deadline: DeadlinePolicy = {
+      timeoutMs: 4_000,
+      schedule: (_ms, onDeadline) => {
+        fire = onDeadline;
+        return () => {
+          fire = undefined;
+        };
+      },
+    };
+
+    const reader = createJsonRpcAavePoolReader({ endpoints: [RPC_URL], fetchImpl, deadline });
+
+    const pending = reader.reserveData();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fire?.();
+
+    // Not a zero reserve and not a decode failure: the node answered nothing, and
+    // the reserve is unreadable for exactly that reason.
+    await expect(pending).rejects.toMatchObject({ reason: 'RPC_UNAVAILABLE' });
+
+    /*
+     * And the failed read left nothing behind. The in-flight entry is gone, so the
+     * next caller starts a real read instead of joining a flight that already gave
+     * up — a cache entry must not outlive a request that failed.
+     */
+    const afterFailure = requests.length;
+    const second = reader.reserveData();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests.length).toBeGreaterThan(afterFailure);
+
+    fire?.();
+    await expect(second).rejects.toBeInstanceOf(BalanceReadError);
   });
 });

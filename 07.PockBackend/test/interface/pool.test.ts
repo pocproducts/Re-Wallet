@@ -22,9 +22,12 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { readPool } from '../../src/application/pool/readPool';
+import { readPool, POOL_MEMO_TTL_MS } from '../../src/application/pool/readPool';
+import { readWalletBalance } from '../../src/application/portfolio/readWalletBalance';
 import { prepareDeposit, DepositRejected } from '../../src/application/pool/prepareDeposit';
 import type { AavePoolReader } from '../../src/domain/ports/aave-pool-reader';
+import type { PriceFeed } from '../../src/domain/ports/price-feed';
+import type { ReadPortfolio } from '../../src/application/portfolio/readPortfolio';
 import type { ReserveData } from '../../src/domain/pool/reserveData';
 import type { SessionCodec } from '../../src/domain/ports/session-codec';
 import type { WalletStore } from '../../src/domain/ports/wallet-store';
@@ -126,6 +129,17 @@ interface HarnessOptions {
   readonly wallets?: WalletStore;
   /** Mount the app with the pool use cases absent, to prove the route is absent too. */
   readonly withoutPool?: boolean;
+  /**
+   * Mount `GET /api/wallet-balance` over the **same** `readPool` instance, which
+   * is what the front actually does: both hooks mount, and the balance composes
+   * this use case internally.
+   */
+  readonly withWalletBalance?: boolean;
+  /**
+   * The memo's clock, injected so a TTL assertion costs no wall time. A test
+   * chooses the age of a cached snapshot instead of waiting for it to expire.
+   */
+  readonly nowMs?: () => number;
 }
 
 /**
@@ -138,17 +152,35 @@ const harness = (options: HarnessOptions = {}) => {
   const reader = options.reader ?? fakeReader();
   const wallets = options.wallets ?? twoWalletRows;
   const log = recordingLogger();
+  const pool = readPool({ wallets, pool: reader, log, nowMs: options.nowMs });
+
+  /*
+   * The portfolio and the price feed are stubbed **here only** to isolate the pool
+   * read: the point of this harness option is that both routes reach the same
+   * `readPool` instance, not that the balance arithmetic is exercised again. The
+   * balance's own behaviour is `walletBalance.test.ts`'s subject.
+   */
+  const noChains: ReadPortfolio = async (userId: string) => ({ userId, chains: [] });
+  const noPrices: PriceFeed = {
+    async usdPrice() {
+      return { status: 'unreadable' as const, reason: 'RPC_UNAVAILABLE' as const };
+    },
+  };
 
   const app = createApp({
     mint: async () => ({ token: 'x', expiresAt: EXPIRY, userId: USER_ID, privyDid: DID }),
     sessions: acceptingCodec(),
-    readPool: options.withoutPool === true ? undefined : readPool({ wallets, pool: reader, log }),
+    readPool: options.withoutPool === true ? undefined : pool,
     prepareDeposit: options.withoutPool === true ? undefined : prepareDeposit({ wallets, pool: reader, log }),
+    readWalletBalance:
+      options.withWalletBalance === true
+        ? readWalletBalance({ readPortfolio: noChains, readPool: pool, prices: noPrices, log })
+        : undefined,
     log,
     now: () => new Date('2026-10-04T05:00:00.000Z'),
   });
 
-  return { app, reader, log };
+  return { app, reader, log, readPool: pool };
 };
 
 const getPool = async (app: ReturnType<typeof harness>['app'], query = '') =>
@@ -160,6 +192,188 @@ const postDeposit = async (app: ReturnType<typeof harness>['app'], body: unknown
     headers: { cookie: SESSION_COOKIE, 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
+
+const getWalletBalance = async (app: ReturnType<typeof harness>['app']) =>
+  app.request('/api/wallet-balance', { headers: { cookie: SESSION_COOKIE } });
+
+/**
+ * Every upstream call the pool read makes, counted — including the two reads the
+ * fake reader does not record (`reserveData` and `reserveConfiguration`).
+ *
+ * "One set of upstream calls" is only provable if *all five* are counted: an
+ * assertion on `reader.asked` alone would not notice the reserve being decoded
+ * twice.
+ */
+const countingReader = (options: FakeReaderOptions = {}) => {
+  const inner = fakeReader(options);
+  const calls = { reserve: 0, config: 0, aToken: 0, usdc: 0, gas: 0 };
+
+  const reader: AavePoolReader = {
+    async reserveData() {
+      calls.reserve += 1;
+      return inner.reserveData();
+    },
+    async reserveConfiguration() {
+      calls.config += 1;
+      return inner.reserveConfiguration();
+    },
+    async erc20Balance(token, address) {
+      if (token === A_USDC) calls.aToken += 1;
+      else calls.usdc += 1;
+      return inner.erc20Balance(token, address);
+    },
+    async allowance(token, owner, spender) {
+      return inner.allowance(token, owner, spender);
+    },
+    async nativeBalance(address) {
+      calls.gas += 1;
+      return inner.nativeBalance(address);
+    },
+  };
+
+  return { reader, calls };
+};
+
+/** One set of upstream calls, as the shape an assertion reads best. */
+const oneSetOfCalls = () => ({ reserve: 1, config: 1, aToken: 1, usdc: 1, gas: 1 });
+
+describe('readPool — the memo that makes the front\'s two requests cheap', () => {
+  it('gives two concurrent reads of the same person exactly one set of upstream calls', async () => {
+    /*
+     * The actual duplication, not a synthetic one: `GET /api/pool` and
+     * `GET /api/wallet-balance` are the two requests a page load makes, and they
+     * reach the same `readPool` instance — the balance composes it internally.
+     * Started together, because that is the case that matters and the one an
+     * ordinary TTL would *not* save.
+     */
+    const { reader, calls } = countingReader();
+    const { app } = harness({ reader, withWalletBalance: true });
+
+    const [pool, balance] = await Promise.all([getPool(app), getWalletBalance(app)]);
+
+    expect(pool.status).toBe(200);
+    expect(balance.status).toBe(200);
+    expect(calls).toEqual(oneSetOfCalls());
+  });
+
+  it('reuses one read for a second request inside the TTL, with the same generatedAt', async () => {
+    const { reader, calls } = countingReader();
+    const { app } = harness({ reader });
+
+    const first = (await (await getPool(app)).json()) as { generatedAt: string; apr: { supply: unknown } };
+    const second = (await (await getPool(app)).json()) as { generatedAt: string; apr: { supply: unknown } };
+
+    expect(calls).toEqual(oneSetOfCalls());
+    /*
+     * The reused snapshot keeps the moment the chain was read. Re-stamping it
+     * would publish a fresh `generatedAt` over a figure up to a TTL old.
+     */
+    expect(second.generatedAt).toBe(first.generatedAt);
+    expect(second.apr.supply).toEqual(first.apr.supply);
+  });
+
+  it('reads again once the TTL has passed, on the injected clock', async () => {
+    let clockMs = Date.parse('2026-10-04T05:00:00.000Z');
+    const { reader, calls } = countingReader();
+    const { app } = harness({ reader, nowMs: () => clockMs });
+
+    await getPool(app);
+    clockMs += POOL_MEMO_TTL_MS - 1;
+    await getPool(app);
+    expect(calls).toEqual(oneSetOfCalls());
+
+    clockMs += 1;
+    await getPool(app);
+    expect(calls).toEqual({ reserve: 2, config: 2, aToken: 2, usdc: 2, gas: 2 });
+  });
+
+  it('never memoizes a refusal: the very next request reads again', async () => {
+    /*
+     * Mutated on purpose: the same use case instance has to recover the moment
+     * the chain does, without waiting for anything to expire.
+     */
+    const options: FakeReaderOptions = { fail: { reserve: 'endpoint died' } };
+    const { reader, calls } = countingReader(options);
+    const { app } = harness({ reader });
+
+    const refused = (await (await getPool(app)).json()) as { reserve: { status: string; reason: string } };
+    expect(refused.reserve).toEqual({ status: 'unreadable', reason: 'RPC_UNAVAILABLE' });
+
+    delete options.fail?.reserve;
+    const recovered = (await (await getPool(app)).json()) as { reserve: { status: string } };
+
+    expect(recovered.reserve.status).toBe('ok');
+    // Two reads, not one: a refusal served twice would be a coincidence, a
+    // refusal republished for five seconds would be a stuck screen.
+    expect(calls.reserve).toBe(2);
+  });
+
+  it('does not memoize a position that could not be read either', async () => {
+    const options: FakeReaderOptions = { fail: { aToken: 'reverted' } };
+    const { reader, calls } = countingReader(options);
+    const { app } = harness({ reader });
+
+    const refused = (await (await getPool(app)).json()) as {
+      position: { aTokenBalance: { status: string } };
+      apr: { supply: { status: string } };
+    };
+    expect(refused.position.aTokenBalance.status).toBe('unreadable');
+
+    delete options.fail?.aToken;
+    const recovered = (await (await getPool(app)).json()) as {
+      position: { aTokenBalance: { status: string } };
+    };
+    expect(recovered.position.aTokenBalance.status).toBe('ok');
+    expect(calls.aToken).toBe(2);
+  });
+
+  it('lets a thrown refusal travel to both callers without remembering it', async () => {
+    const failing: WalletStore = {
+      findByUserId: async () => {
+        throw new Error('connection reset');
+      },
+      save: async () => {},
+    };
+    const { reader, calls } = countingReader();
+    const { app } = harness({ reader, wallets: failing });
+
+    const [first, second] = await Promise.all([getPool(app), getPool(app)]);
+
+    expect(first.status).toBe(502);
+    expect(second.status).toBe(502);
+    // The read never started: the wallet rows are read before any chain call.
+    expect(calls).toEqual({ reserve: 0, config: 0, aToken: 0, usdc: 0, gas: 0 });
+  });
+
+  it('keys on the person, not on the caller: a different user is a different read', async () => {
+    const otherAddress = '0x1111111111111111111111111111111111111111';
+    const wallets: WalletStore = {
+      findByUserId: async (userId: string) => [
+        {
+          address: userId === USER_ID ? EVM_ADDRESS : otherAddress,
+          providerWalletId: 'wallet-evm-1',
+          chain: 'ethereum',
+          evmNetwork: 'eip155:1',
+        },
+      ],
+      save: async () => {},
+    };
+    const { reader, calls } = countingReader();
+    const { readPool: read } = harness({ reader, wallets });
+
+    const mine = await read(USER_ID);
+    const theirs = await read('user-b');
+
+    /*
+     * One read each. The memo is keyed on the user id the caller proved, and the
+     * row for that id is the only address that can be described — so a second
+     * person is a second read, never a hit on the first person's snapshot.
+     */
+    expect(calls).toEqual({ reserve: 2, config: 2, aToken: 2, usdc: 2, gas: 2 });
+    expect(mine.position.address).toBe(EVM_ADDRESS);
+    expect(theirs.position.address).toBe(otherAddress);
+  });
+});
 
 describe('GET /api/pool', () => {
   it('refuses a request without a session', async () => {

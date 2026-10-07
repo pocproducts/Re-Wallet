@@ -38,6 +38,7 @@ import {
   type ReserveData,
 } from '../../domain/pool/reserveData';
 import type { AavePoolReader, ReserveConfiguration } from '../../domain/ports/aave-pool-reader';
+import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy } from './httpDeadline';
 
 /** A 32-byte word holding an `address`, from a plain 20-byte address. */
 const addressWord = (address: string): string => {
@@ -93,7 +94,67 @@ export interface JsonRpcAavePoolReaderOptions {
   readonly endpoints?: readonly string[];
   /** Injected so this adapter is testable with no network. Defaults to `fetch`. */
   readonly fetchImpl?: typeof fetch;
+  /**
+   * Injected clock, in Unix **milliseconds**. A test chooses the age of a cached
+   * reserve instead of waiting for it to expire, so no assertion in this
+   * repository depends on wall time.
+   */
+  readonly nowMs?: () => number;
+  /**
+   * How long a successful reserve read may be reused, in milliseconds. Defaults
+   * to {@link AAVE_RESERVE_CACHE_TTL_MS}.
+   */
+  readonly reserveCacheTtlMs?: number;
+  /**
+   * How long one `eth_call` attempt at one endpoint may take. Defaults to
+   * {@link AAVE_POOL_REQUEST_TIMEOUT_MS}; tests replace the schedule to drive
+   * the deadline by hand instead of waiting for it.
+   */
+  readonly deadline?: DeadlinePolicy;
 }
+
+/**
+ * How long one pool `eth_call` is given, and why 4 s.
+ *
+ * `getReserveData` and `getReserveConfigurationData` are not storage reads of one
+ * slot: each walks several slots of the reserve — decimals, LTV, thresholds, the
+ * factor, and then the live liquidity, utilisation and both borrow indexes — and
+ * a public endpoint serves them from state it may not hold in memory. It is the
+ * most expensive **read** this repository makes on an EVM node, and it is the
+ * read behind the pool screen, so the bound is a second wider than the plain
+ * balance read's and not much wider than that: the balance screen and this one
+ * are answered by the same person waiting on the same request, and a bound that
+ * protected the pool screen but not the balance would just move the stall.
+ *
+ * It is the same number the Chainlink feed uses, and deliberately so — both are a
+ * handful of state-only `eth_call`s against the same kind of public Monad
+ * endpoint, and neither of them is one slot.
+ */
+export const AAVE_POOL_REQUEST_TIMEOUT_MS = 4_000;
+
+/**
+ * How long `getReserveData` / `getReserveConfigurationData` are reused, and why
+ * that is acceptable.
+ *
+ * These two reads are **global**: the USDC reserve on Aave V3 on Monad is the same
+ * struct for every person, on every request, on every route. Nothing in either
+ * answer depends on who asked, and this project has exactly one reserve — so
+ * caching them cannot leak one person's balance into another's answer, because
+ * they are not balances.
+ *
+ * Fifteen seconds, against what the reserve actually does: `reserveConfiguration`
+ * (decimals, LTV, reserve factor) only changes through a governance action, and
+ * `reserveData` moves the figures the pool screen paints — utilisation, the two
+ * APRs, `lastUpdateTimestamp` — at the pace of blocks. Fifteen seconds is a
+ * handful of blocks: long enough for a page load that asks `/api/pool` and
+ * `/api/wallet-balance` to share one read instead of two, short enough that the
+ * reserve on screen is not a screenshot from a minute ago.
+ *
+ * **No money is cached.** `erc20Balance`, `nativeBalance` and `allowance` are the
+ * person's own figures and are read through on every single call, which is the
+ * line this cache does not cross.
+ */
+export const AAVE_RESERVE_CACHE_TTL_MS = 15_000;
 
 export const DEFAULT_POOL_ENDPOINTS: readonly string[] = [DEFAULT_MONAD_POOL_RPC_URL];
 
@@ -101,7 +162,72 @@ export const createJsonRpcAavePoolReader = (
   options: JsonRpcAavePoolReaderOptions = {},
 ): AavePoolReader => {
   const endpoints = options.endpoints ?? DEFAULT_POOL_ENDPOINTS;
-  const send = options.fetchImpl ?? fetch;
+  /*
+   * Bound once, so no `eth_call` below can go out without a deadline. Per attempt,
+   * not per read: an endpoint that does not answer must not spend the budget of
+   * the one after it.
+   */
+  const send = withDeadline(options.fetchImpl ?? fetch, {
+    timeoutMs: AAVE_POOL_REQUEST_TIMEOUT_MS,
+    ...options.deadline,
+  });
+  const nowMs = options.nowMs ?? ((): number => Date.now());
+  const reserveTtlMs = options.reserveCacheTtlMs ?? AAVE_RESERVE_CACHE_TTL_MS;
+
+  /**
+   * The edge cache for the two **global** reserve reads.
+   *
+   * It is a plain `Map` in this closure, which in a Worker is one map per isolate:
+   * two fixed keys, so nothing grows without bound, and an entry is deleted the
+   * moment it is found expired rather than being swept. There is no eviction
+   * policy to get wrong because there are only ever two things to evict.
+   *
+   * Two rules the rest of this repository cares about are encoded here:
+   *
+   *  - **a cache failure is never a read failure.** Nothing below can throw; if
+   *    the map misbehaves the read is simply performed, and if the source refuses
+   *    the caller sees exactly the `BalanceReadError` it saw before the cache
+   *    existed.
+   *  - **a failure is never cached.** Only a reserve that was read is remembered,
+   *    so one refused endpoint call is retried by the very next request instead of
+   *    being republished for fifteen seconds.
+   *
+   * Concurrent misses share the read in flight, because a warm isolate serves
+   * every request at once and two callers arriving together must not mean two
+   * identical `eth_call`s.
+   */
+  const reserveCache = new Map<'data' | 'configuration', { readonly value: unknown; readonly storedAtMs: number }>();
+  const reserveInFlight = new Map<'data' | 'configuration', Promise<unknown>>();
+
+  const memoized = <T>(key: 'data' | 'configuration', read: () => Promise<T>): Promise<T> => {
+    const now = nowMs();
+    const entry = reserveCache.get(key);
+
+    if (entry !== undefined) {
+      if (now - entry.storedAtMs < reserveTtlMs) return Promise.resolve(entry.value as T);
+      reserveCache.delete(key);
+    }
+
+    const pending = reserveInFlight.get(key);
+    if (pending !== undefined) return pending as Promise<T>;
+
+    const flight: Promise<T> = read().then(
+      (value) => {
+        reserveInFlight.delete(key);
+        reserveCache.set(key, { value, storedAtMs: nowMs() });
+        return value;
+      },
+      (error: unknown) => {
+        // Read through and let the failure travel unchanged: a cache that could
+        // not store an answer is not a reason to invent one.
+        reserveInFlight.delete(key);
+        throw error;
+      },
+    );
+
+    reserveInFlight.set(key, flight);
+    return flight;
+  };
 
   /** One `eth_call`, answered as the hex string the node sent. */
   const call = async (to: string, data: string): Promise<string> => {
@@ -143,7 +269,9 @@ export const createJsonRpcAavePoolReader = (
         }),
       });
     } catch (error) {
-      throw new BalanceReadError('RPC_UNAVAILABLE', 'the pool endpoint did not answer', { cause: error });
+      throw new BalanceReadError('RPC_UNAVAILABLE', `the pool endpoint ${transportDetail(error, 'did not answer')}`, {
+        cause: error,
+      });
     }
 
     if (!response.ok) {
@@ -154,6 +282,12 @@ export const createJsonRpcAavePoolReader = (
     try {
       body = await response.json();
     } catch (error) {
+      // A body that stopped mid-answer is our deadline, not a broken answer: the
+      // two are indistinguishable here, and calling a silent endpoint a corrupt
+      // one would send an operator to this file to fix a provider outage.
+      if (isDeadlineExceeded(error)) {
+        throw new BalanceReadError('RPC_UNAVAILABLE', `the pool endpoint ${error.message}`, { cause: error });
+      }
       throw new BalanceReadError('RPC_MALFORMED_RESPONSE', 'the pool endpoint answered with no JSON', {
         cause: error,
       });
@@ -183,12 +317,27 @@ export const createJsonRpcAavePoolReader = (
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] }),
       });
     } catch (error) {
-      throw new BalanceReadError('RPC_UNAVAILABLE', 'the pool endpoint did not answer', { cause: error });
+      throw new BalanceReadError('RPC_UNAVAILABLE', `the pool endpoint ${transportDetail(error, 'did not answer')}`, {
+        cause: error,
+      });
     }
     if (!response.ok) {
       throw new BalanceReadError('RPC_UNAVAILABLE', `the pool endpoint answered HTTP ${response.status}`);
     }
-    const body = (await response.json()) as { result?: unknown };
+    let body: { result?: unknown };
+    try {
+      body = (await response.json()) as { result?: unknown };
+    } catch (error) {
+      // Same rule as above, on the one read whose answer is a number: an expired
+      // deadline is silence, and silence is `RPC_UNAVAILABLE`, never a corrupted
+      // hex string — which would otherwise read as a bug in this adapter.
+      if (isDeadlineExceeded(error)) {
+        throw new BalanceReadError('RPC_UNAVAILABLE', `the pool endpoint ${error.message}`, { cause: error });
+      }
+      throw new BalanceReadError('RPC_MALFORMED_RESPONSE', 'eth_getBalance answered with no JSON', {
+        cause: error,
+      });
+    }
     if (typeof body.result !== 'string' || !/^0x[0-9a-fA-F]*$/.test(body.result)) {
       throw new BalanceReadError('RPC_MALFORMED_RESPONSE', 'eth_getBalance answered with no hex string');
     }
@@ -196,13 +345,11 @@ export const createJsonRpcAavePoolReader = (
   };
 
   return {
-    async reserveData(): Promise<ReserveData> {
-      return decodeReserveData(await call(AAVE_V3_MONAD.dataProvider, reserveDataCall(AAVE_V3_MONAD.asset)));
-    },
+    reserveData: (): Promise<ReserveData> =>
+      memoized('data', async () => decodeReserveData(await call(AAVE_V3_MONAD.dataProvider, reserveDataCall(AAVE_V3_MONAD.asset)))),
 
-    async reserveConfiguration(): Promise<ReserveConfiguration> {
-      return decodeConfiguration(await call(AAVE_V3_MONAD.dataProvider, RESERVE_CONFIGURATION_CALL));
-    },
+    reserveConfiguration: (): Promise<ReserveConfiguration> =>
+      memoized('configuration', async () => decodeConfiguration(await call(AAVE_V3_MONAD.dataProvider, RESERVE_CONFIGURATION_CALL))),
 
     erc20Balance: (token, address) =>
       call(token, `${BALANCE_OF_SELECTOR}${addressWord(address)}`).then((result) =>

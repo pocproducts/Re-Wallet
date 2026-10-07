@@ -77,8 +77,11 @@
  * **same injected port** as the share price and with the same scale discipline:
  * a decimal string whose exponent is the count of its own fractional digits.
  *
- * It is read **after** the shares, and it is reported **separately** from them,
- * because a rate this code cannot read is not a balance it cannot read. A vault
+ * It is **decided** after the shares, and it is reported **separately** from them,
+ * because a rate this code cannot read is not a balance it cannot read. The two
+ * Kamino GETs are *started* at the same moment — they fetch the same document, so
+ * there is no reason to wait for one to ask for the other — but the rate's answer
+ * is only read once the balance is settled. A vault
  * publishing nonsense where its yield should be must not turn a position of
  * $1,000 into a position of zero, so `status` still says `ok` and the value is
  * still exact; what becomes `unreadable` is `apy`, and the composition decides
@@ -201,6 +204,19 @@ const reasonOf = (error: unknown): KaminoPositionFailure => {
   return error instanceof BalanceReadError ? error.reason : 'RPC_UNAVAILABLE';
 };
 
+/**
+ * A read that either answered or said why it did not.
+ *
+ * Settling instead of throwing is what makes several reads startable together
+ * without one of them owning the fate of the others: the verdict is taken by the
+ * code below, in the order it has always been taken in.
+ */
+const settled = <T>(read: Promise<T>): Promise<{ readonly ok: T } | { readonly error: unknown }> =>
+  read.then(
+    (value) => ({ ok: value }) as const,
+    (error: unknown) => ({ error }) as const,
+  );
+
 export const readKaminoEarnPosition = (deps: ReadKaminoEarnPositionDeps): ReadKaminoEarnPosition => {
   const log = deps.log ?? noopLogger;
   const vaultAddress = deps.vaultAddress ?? KAMINO_EARN_VAULT_ADDRESS;
@@ -224,13 +240,52 @@ export const readKaminoEarnPosition = (deps: ReadKaminoEarnPositionDeps): ReadKa
     }
     const address = row.address;
 
-    /* ── 1. The vault's own account: which mint, and which farm ────────────── */
+    /* ── 1. Everything independent, asked at once ────────────────────────── */
 
-    const vault = await deps.vaults.vault().catch((error: unknown) => {
-      log.error('kamino_earn.vault_failed', { error, reason: reasonOf(error), detail: String(error) });
-      return null;
-    });
-    if (vault === null) return { status: 'unreadable', reason: 'VAULT_LAYOUT_UNREADABLE', shares: null };
+    /*
+     * Four questions, three of which cannot wait for the fourth:
+     *
+     *  - the **vault account** names the shares mint, so the share read below does
+     *    wait for it. Nothing else needs the vault account.
+     *  - the **farm** state is addressed by a constant farm address and this
+     *    person's wallet, both known before the first request leaves.
+     *  - the **share price** and the **APY** are Kamino's own figures about a
+     *    vault address this file already holds.
+     *
+     * They are therefore all started here and settled below, which turns five
+     * serial round trips into two: one hop for everything that is independent,
+     * plus the one hop that genuinely depends on the shares mint.
+     *
+     * ── The two Kamino GETs are concurrent, not one fetch ──────────────────
+     *
+     * `/stats` carries both fields, so a single fetch could answer both, and that
+     * is **deliberately not done**: the adapter keeps the two GETs as the price
+     * of keeping the two answers independent — a rate this code cannot parse must
+     * not make somebody's share price unreadable. Coupling them would put a hole
+     * in a balance because of a yield field. So they run concurrently instead and
+     * the independence is kept.
+     *
+     * Each is settled into `{ok}|{error}` as it is started, so a rejection is a
+     * state this function decides on and not an unhandled rejection in a request
+     * nobody awaits.
+     */
+    const vaultRead = settled(deps.vaults.vault());
+    const stakedRead = settled(deps.vaults.stakedShares(KAMINO_EARN_VAULT_FARM_ADDRESS, address));
+    const priceRead = settled(deps.prices.sharePrice(vaultAddress));
+    const rateRead = settled(deps.prices.apy(vaultAddress));
+
+    /* ── 2. The vault's own account: which mint, and which farm ────────────── */
+
+    const vaultAnswer = await vaultRead;
+    if (!('ok' in vaultAnswer)) {
+      log.error('kamino_earn.vault_failed', {
+        error: vaultAnswer.error,
+        reason: reasonOf(vaultAnswer.error),
+        detail: String(vaultAnswer.error),
+      });
+      return { status: 'unreadable', reason: 'VAULT_LAYOUT_UNREADABLE', shares: null };
+    }
+    const vault = vaultAnswer.ok;
 
     /*
      * ── 2. The shares, from the **shares mint** — not from the wallet ────────
@@ -240,11 +295,11 @@ export const readKaminoEarnPosition = (deps: ReadKaminoEarnPositionDeps): ReadKa
      * else. The person's other tokens cannot enter it: the question is asked
      * about one mint, and the mint is read out of the vault account rather than
      * assumed to be the token mint.
+     *
+     * This is the **one** read that waits, because it cannot be asked until the
+     * vault account has said which mint the shares live in.
      */
-    const unstaked = await deps.solana.mintBalance(address, vault.sharesMint).then(
-      (value) => ({ ok: value } as const),
-      (error: unknown) => ({ error } as const),
-    );
+    const unstaked = await settled(deps.solana.mintBalance(address, vault.sharesMint));
     if (!('ok' in unstaked)) {
       log.error('kamino_earn.shares_unreadable', {
         error: unstaked.error,
@@ -256,10 +311,7 @@ export const readKaminoEarnPosition = (deps: ReadKaminoEarnPositionDeps): ReadKa
 
     /* ── 3. The shares staked in the farm, which the wallet cannot show ────── */
 
-    const staked = await deps.vaults.stakedShares(KAMINO_EARN_VAULT_FARM_ADDRESS, address).then(
-      (value) => ({ ok: value } as const),
-      (error: unknown) => ({ error } as const),
-    );
+    const staked = await stakedRead;
     if (!('ok' in staked)) {
       /*
        * The farm exists and its user state could not be read. The shares in the
@@ -290,10 +342,7 @@ export const readKaminoEarnPosition = (deps: ReadKaminoEarnPositionDeps): ReadKa
 
     /* ── 4. What one share is worth — asked for, never computed ────────────── */
 
-    const answered = await deps.prices.sharePrice(vaultAddress).then(
-      (value) => ({ ok: value } as const),
-      (error: unknown) => ({ error } as const),
-    );
+    const answered = await priceRead;
 
     /** The price, or `null`. Never a throw: the union already carries a reason. */
     const price: KaminoSharePrice | null =
@@ -344,14 +393,13 @@ export const readKaminoEarnPosition = (deps: ReadKaminoEarnPositionDeps): ReadKa
     /* ── 5. The vault's rate — asked for on the same port, and separately ──── */
 
     /*
-     * Read **after** the balance has already been settled, and never allowed to
-     * change it: a rate this code cannot read is a hole in the *yield*, not in
-     * somebody's money. Both answers can be right or wrong on their own.
+     * Asked in the same breath as the price above, and **decided** here, after
+     * the balance has already been settled: a rate this code cannot read is a
+     * hole in the *yield*, not in somebody's money, and the concurrency does not
+     * change that, because nothing about this answer reaches `shares` or `value`.
+     * Both answers can be right or wrong on their own.
      */
-    const rateAnswered = await deps.prices.apy(vaultAddress).then(
-      (value) => ({ ok: value } as const),
-      (error: unknown) => ({ error } as const),
-    );
+    const rateAnswered = await rateRead;
 
     const apy: KaminoApy | null =
       'ok' in rateAnswered && rateAnswered.ok.status === 'ok' ? rateAnswered.ok.value : null;

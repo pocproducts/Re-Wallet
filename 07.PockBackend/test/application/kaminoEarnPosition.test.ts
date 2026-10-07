@@ -365,6 +365,60 @@ describe('the Kamino Earn position', () => {
     expect(nonPositive.status).toBe('unreadable');
   });
 
+  it('asks the vault, the farm and the two Kamino documents at once', async () => {
+    /*
+     * Four questions, none of which needs another's answer: the vault account
+     * (which names the shares mint), the farm state (a constant farm and this
+     * wallet), and the two figures Kamino publishes about a vault address this
+     * file already holds.
+     *
+     * The barrier is what makes this an assertion about **concurrency** rather
+     * than about timing: nothing answers until all four are outstanding, so an
+     * implementation that asked them one after the other could not get past the
+     * first. `overlapped` records how many reads were in flight *when each one
+     * answered*, which is the number a serial implementation gets wrong.
+     */
+    const issued: string[] = [];
+    const overlapped: number[] = [];
+    let open = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const together = async <T>(what: string, answer: T): Promise<T> => {
+      issued.push(what);
+      if (issued.length === 4) open();
+      await Promise.race([gate, new Promise<void>((resolve) => setTimeout(resolve, 50))]);
+      overlapped.push(issued.length);
+      return answer;
+    };
+
+    const solana = solanaReader({ [VAULT.sharesMint]: 1_000_000n });
+    const vaults: KaminoEarnVaultReader = {
+      vault: () => together('vault', VAULT),
+      stakedShares: () => together('farm', 500_000n),
+    };
+    const prices: KaminoSharePriceFeed = {
+      sharePrice: () => together('price', { status: 'ok', value: LIVE_PRICE } as KaminoSharePriceResult),
+      apy: () => together('apy', { status: 'ok', value: LIVE_APY } as KaminoApyResult),
+    };
+
+    const position = await readKaminoEarnPosition({
+      wallets: twoWalletRows,
+      vaults,
+      solana: solana.reader,
+      prices,
+      log: recordingLogger(),
+    })(USER_ID, NOW);
+
+    expect(new Set(issued)).toEqual(new Set(['vault', 'farm', 'price', 'apy']));
+    expect(overlapped).toEqual([4, 4, 4, 4]);
+    // And the overlap did not cost the position a single figure.
+    expect(position.status).toBe('ok');
+    if (position.status !== 'ok') return;
+    expect(position.shares.raw).toBe(1_500_000n);
+    expect(position.value.raw).toBe((1_500_000n * LIVE_PRICE.raw).toString());
+  });
+
   it('reports a vault account it cannot decode as unreadable, with its own reason', async () => {
     const { read } = readPosition({ vault: vaultReader({ vaultFails: true }) });
 

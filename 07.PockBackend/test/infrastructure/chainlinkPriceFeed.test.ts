@@ -31,7 +31,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { DECIMALS_SELECTOR, LATEST_ROUND_DATA_SELECTOR } from '../../src/domain/price/chainlinkMonad';
-import { createChainlinkPriceFeed } from '../../src/infrastructure/rpc/chainlinkPriceFeed';
+import { createChainlinkPriceFeed, PRICE_CACHE_TTL_SECONDS } from '../../src/infrastructure/rpc/chainlinkPriceFeed';
+import type { DeadlinePolicy } from '../../src/infrastructure/rpc/httpDeadline';
 
 const RPC_URL = 'https://rpc.example.invalid';
 
@@ -609,5 +610,187 @@ describe('answers that are not answers', () => {
     const result = await feedWith(fetchImpl).usdPrice('MON');
     expect(result).toEqual({ status: 'unreadable', reason: 'RPC_UNAVAILABLE' });
     expect('value' in result).toBe(false);
+  });
+});
+
+/**
+ * The edge cache: **same reads, fewer of them.**
+ *
+ * A Chainlink round is global — the same number for every person, on every route,
+ * on every request — so the second read of a pair in the same Worker isolate was
+ * a read of the same block through the same nodes. What the cache must not become
+ * is a way of serving a price this adapter would have refused, which is why every
+ * case here moves a **fake clock** rather than waiting.
+ */
+describe('the edge cache on the price feed', () => {
+  /** The clock the test moves. No assertion in this file waits for wall time. */
+  const clock = (start: number = NOW) => {
+    const state = { now: start };
+    return {
+      state,
+      advance: (seconds: number): void => {
+        state.now += seconds;
+      },
+    };
+  };
+
+  const feedWithClock = (
+    fetchImpl: typeof fetch,
+    state: { now: number },
+    cacheTtlSeconds: number = PRICE_CACHE_TTL_SECONDS,
+  ) => createChainlinkPriceFeed({ fetchImpl, nowSeconds: () => state.now, endpoints: [RPC_URL], cacheTtlSeconds });
+
+  it('reuses a price inside the TTL and reads again once it is outside it', async () => {
+    const time = clock();
+    const { fetchImpl, requests } = healthyMon();
+    const feed = feedWithClock(fetchImpl, time.state);
+
+    const first = await feed.usdPrice('MON');
+    const afterFirst = requests.length;
+
+    // Nine seconds later — inside the ten-second TTL — nothing goes on the wire.
+    time.advance(9);
+    const cached = await feed.usdPrice('MON');
+    expect(cached).toEqual(first);
+    expect(requests.length).toBe(afterFirst);
+
+    // Ten seconds later the entry is out, and the price is read again.
+    time.advance(1);
+    const refetched = await feed.usdPrice('MON');
+    expect(requests.length).toBeGreaterThan(afterFirst);
+    expect(refetched).toEqual(first);
+  });
+
+  it('refuses to serve an entry whose round has aged past its own staleness rule', async () => {
+    /*
+     * The TTL here is an hour — far longer than the adapter would accept a round
+     * for. It still must not serve one, because the cache is allowed to reuse a
+     * price only while that price is a price this adapter would have published.
+     */
+    const time = clock();
+    const { fetchImpl } = healthyMon();
+    const feed = feedWithClock(fetchImpl, time.state, 86_400); // a day: the TTL cannot be what stops this
+
+    expect((await feed.usdPrice('MON')).status).toBe('ok');
+
+    // The round is 30 s old at `NOW`; past `MAX_PRICE_AGE_SECONDS` it is refused.
+    time.advance(3601);
+    const aged = await feed.usdPrice('MON');
+
+    expect(aged).toEqual({ status: 'unreadable', reason: 'STALE' });
+  });
+
+  it('never caches a refusal, so a blip is not republished for the whole TTL', async () => {
+    const time = clock();
+    const { fetchImpl, requests } = healthyMon({ svr: { round: { rpcError: true } } });
+    const feed = feedWithClock(fetchImpl, time.state);
+
+    expect(await feed.usdPrice('MON')).toEqual({ status: 'unreadable', reason: 'RPC_REJECTED' });
+    const afterRefusal = requests.length;
+
+    // One second later — deep inside the TTL — the read happens again.
+    time.advance(1);
+    expect((await feed.usdPrice('MON')).status).toBe('unreadable');
+    expect(requests.length).toBeGreaterThan(afterRefusal);
+  });
+
+  it('collapses concurrent misses into a single read of the pair', async () => {
+    // A warm Worker isolate serves every request at once, so two callers arriving
+    // together must not mean two identical sets of `eth_call`s.
+    const { fetchImpl, requests } = healthyMon();
+    const feed = feedWithClock(fetchImpl, clock().state);
+
+    const [first, second, third] = await Promise.all([
+      feed.usdPrice('MON'),
+      feed.usdPrice('MON'),
+      feed.usdPrice('MON'),
+    ]);
+
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+    // One block pin and one `decimals()`+round per channel: five calls, not fifteen.
+    expect(requests).toHaveLength(5);
+  });
+
+  it('caches each pair on its own key', async () => {
+    // MON and BTC are different pairs; one of them being cached says nothing about
+    // the other, and a bug that shared an entry would show up as BTC priced in
+    // MON's cents.
+    const time = clock();
+    const { fetchImpl } = endpointAnswering({
+      [PROXIES.MON]: { decimals: decimalsOf(8), round: roundData(MON_PRIMARY_ANSWER) },
+      [PROXIES.MON_SVR]: { decimals: decimalsOf(18), round: roundData(MON_SVR_ANSWER) },
+      [PROXIES.BTC]: { decimals: decimalsOf(8), round: roundData(BTC_PRIMARY_ANSWER) },
+      [PROXIES.BTC_SVR]: { decimals: decimalsOf(18), round: roundData(BTC_SVR_ANSWER) },
+    });
+    const feed = feedWithClock(fetchImpl, time.state);
+
+    const monPrice = await feed.usdPrice('MON');
+    time.advance(1);
+    const btcPrice = await feed.usdPrice('BTC');
+
+    expect(monPrice.status).toBe('ok');
+    expect(btcPrice.status).toBe('ok');
+    if (monPrice.status !== 'ok' || btcPrice.status !== 'ok') return;
+    expect(monPrice.value.usd).toBe('0.028642');
+    expect(btcPrice.value.usd).toBe('85623.908621');
+  });
+});
+
+describe('a node that does not answer', () => {
+  it('refuses the price as RPC_UNAVAILABLE, and pins nothing in flight', async () => {
+    /*
+     * The hung node, with the deadline expired by hand rather than waited for:
+     * proving the bound exists costs no wall time, and without one this read never
+     * settles at all — the screen that never resolves this file exists to prevent.
+     */
+    const requests: string[] = [];
+    let fire: (() => void) | undefined;
+
+    const fetchImpl = ((_url: string, init?: RequestInit) => {
+      requests.push(String(init?.body ?? ''));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init?.signal?.reason instanceof Error ? init.signal.reason : new Error('aborted'));
+        });
+      });
+    }) as unknown as typeof fetch;
+
+    const deadline: DeadlinePolicy = {
+      timeoutMs: 4_000,
+      schedule: (_ms, onDeadline) => {
+        fire = onDeadline;
+        return () => {
+          fire = undefined;
+        };
+      },
+    };
+
+    const feed = createChainlinkPriceFeed({ fetchImpl, nowSeconds: () => NOW, endpoints: [RPC_URL], deadline });
+
+    const pending = feed.usdPrice('MON');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fire?.();
+
+    /*
+     * `RPC_UNAVAILABLE`, not `RPC_MALFORMED_RESPONSE`: the node said nothing, and
+     * "we could not read this pair" is a different operator problem from "this
+     * adapter decoded a round wrong". A refusal is never a price of zero.
+     */
+    expect(await pending).toEqual({ status: 'unreadable', reason: 'RPC_UNAVAILABLE' });
+
+    /*
+     * And the failed read left nothing behind. The in-flight entry is dropped when
+     * the read settles, so the next caller starts a real read rather than joining
+     * a flight that has already given up — an entry must not outlive the request
+     * that failed, or one hung node would blank this price for the isolate.
+     */
+    const afterFailure = requests.length;
+    const second = feed.usdPrice('MON');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests.length).toBeGreaterThan(afterFailure);
+
+    fire?.();
+    expect(await second).toEqual({ status: 'unreadable', reason: 'RPC_UNAVAILABLE' });
   });
 });

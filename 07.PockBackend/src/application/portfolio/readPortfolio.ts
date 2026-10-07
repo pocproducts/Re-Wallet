@@ -150,9 +150,20 @@ export const readPortfolio = (deps: ReadPortfolioDeps): ReadPortfolio => {
    * state, and the loop continues. Not `0`, never: a zero renders as an empty
    * wallet, and an empty wallet is the answer that costs a person their money.
    *
+   * ── Every read of a chain is issued at once, and decided in catalog order ──
+   *
+   * The reads of one chain are independent of each other, so they are **started
+   * together** and settled together: the coin, the mints, nothing waiting for
+   * anything else. Two hops on the critical path become one, and the number of
+   * round trips stops growing with the number of assets a chain holds.
+   *
+   * Starting them together does not change **which** read decides the outcome:
+   * the verdict is still taken in the catalog's own order below, so a chain that
+   * cannot be reached still reports the coin's failure and not a mint's.
+   *
    * ── The coin decides the chain; a mint decides only itself ────────────────
    *
-   * The chain's own coin is read first, **outside** the per-asset `try`: if it
+   * The chain's own coin is decided first, **outside** the per-asset branch: if it
    * cannot be read, the chain could not be reached, and that is the per-chain
    * error this use case has always answered.
    *
@@ -176,36 +187,75 @@ export const readPortfolio = (deps: ReadPortfolioDeps): ReadPortfolio => {
     // the mint a read is asked for is the mint the catalog declared.
     const tokens = specs.flatMap((spec) => (spec.token === undefined ? [] : [{ spec, token: spec.token }]));
 
-    if (native !== undefined) {
-      const raw =
-        chain === 'solana' ? await deps.solana.lamports(address) : await deps.evm.nativeBalance(chain, address);
-      assets.push(toAsset(native, raw));
+    /*
+     * A read that either answered or said why it did not. Settling into this
+     * shape instead of throwing is what lets several reads be started together
+     * **and** lets one of them fail without taking the others with it: a rejected
+     * promise from the coin does not stop the mints from being answered.
+     */
+    type Settled<T> = { readonly ok: T } | { readonly error: unknown };
+
+    const settled = <T>(read: Promise<T>): Promise<Settled<T>> =>
+      read.then(
+        (value) => ({ ok: value }) as const,
+        (error: unknown) => ({ error }) as const,
+      );
+
+    /*
+     * Issued together, settled below. Nothing here waits for anything else: the
+     * coin and each mint are separate account spaces on separate chains' clocks,
+     * and ordering them only made the page wait for the sum of their latencies
+     * instead of the slowest of them.
+     */
+    const [nativeRead, tokenReads] = await Promise.all([
+      native === undefined
+        ? Promise.resolve<Settled<bigint> | null>(null)
+        : settled(chain === 'solana' ? deps.solana.lamports(address) : deps.evm.nativeBalance(chain, address)),
+      /*
+       * Settled **individually** on purpose: one `Promise.all` over raw reads
+       * would reject as a whole and lose the other mints' answers with it, which
+       * is the isolation this file exists to keep.
+       */
+      Promise.all(
+        tokens.map(({ token }) =>
+          settled(
+            chain === 'solana'
+              ? deps.solana.mintBalance(address, token)
+              : deps.evm.erc20Balance(chain, token, address),
+          ),
+        ),
+      ),
+    ]);
+
+    // Verdict first, in the catalog's own order: the coin's failure is the chain's.
+    if (native !== undefined && nativeRead !== null) {
+      if (!('ok' in nativeRead)) throw nativeRead.error;
+      assets.push(toAsset(native, nativeRead.ok));
     }
 
-    for (const { spec, token } of tokens) {
-      try {
-        const raw =
-          chain === 'solana'
-            ? await deps.solana.mintBalance(address, token)
-            : await deps.evm.erc20Balance(chain, token, address);
-        assets.push(toAsset(spec, raw));
-      } catch (error) {
-        if (chain !== 'solana') throw error;
-
-        /*
-         * The provider's own words go to the log; the response carries the code.
-         * The coin read on this same wallet stays standing next to it.
-         */
-        log.error(`portfolio.asset_read_failed:${chain}`, {
-          chain,
-          address,
-          symbol: spec.symbol,
-          error,
-          reason: reasonOf(error),
-          detail: messageOf(error),
-        });
-        assets.push(toUnreadableAsset(spec, reasonOf(error)));
+    for (const [index, { spec }] of tokens.entries()) {
+      const read = tokenReads[index] as Settled<bigint>;
+      if ('ok' in read) {
+        assets.push(toAsset(spec, read.ok));
+        continue;
       }
+
+      // EVM keeps the chain-level behaviour it has always had, unchanged.
+      if (chain !== 'solana') throw read.error;
+
+      /*
+       * The provider's own words go to the log; the response carries the code.
+       * The coin read on this same wallet stays standing next to it.
+       */
+      log.error(`portfolio.asset_read_failed:${chain}`, {
+        chain,
+        address,
+        symbol: spec.symbol,
+        error: read.error,
+        reason: reasonOf(read.error),
+        detail: messageOf(read.error),
+      });
+      assets.push(toUnreadableAsset(spec, reasonOf(read.error)));
     }
 
     log.log('portfolio.chain_read', { chain, address, assets: assets.length });
@@ -230,40 +280,53 @@ export const readPortfolio = (deps: ReadPortfolioDeps): ReadPortfolio => {
     const addressByWalletChain = new Map(rows.map((row) => [row.chain, row.address]));
     log.log('portfolio.start', { userId, at: now.toISOString(), rows: rows.length });
 
-    const chains: PortfolioChainState[] = [];
+    /*
+     * The chains together, and each one's `catch` still its own.
+     *
+     * `Promise.all` over the catalog keeps the **order** of `PORTFOLIO_CHAINS` in
+     * the response, because it settles positions, not completion order — so the
+     * array a screen renders is byte-for-byte what it was when this was a `for`.
+     * And the isolation is untouched: every chain settles into a state here, and
+     * a chain that could not be read becomes `error` with its own reason while
+     * every other chain stands.
+     *
+     * Waiting for them one at a time made a three-chain portfolio cost the **sum**
+     * of three independent RPC latencies. It is the same sum of the same reads,
+     * asked together.
+     */
+    const chains = await Promise.all(
+      PORTFOLIO_CHAINS.map(async (chain): Promise<PortfolioChainState> => {
+        // `monad` and `ethereum` both resolve to the `ethereum` row: one EVM
+        // address, read on two networks. There is no second EVM wallet to look for.
+        const address = addressByWalletChain.get(WALLET_CHAIN_FOR[chain]);
 
-    for (const chain of PORTFOLIO_CHAINS) {
-      // `monad` and `ethereum` both resolve to the `ethereum` row: one EVM address,
-      // read on two networks. There is no second EVM wallet to look for.
-      const address = addressByWalletChain.get(WALLET_CHAIN_FOR[chain]);
+        if (address === undefined) {
+          log.log('portfolio.no_wallet', { userId, chain });
+          return { chain, status: 'no_wallet' };
+        }
 
-      if (address === undefined) {
-        log.log('portfolio.no_wallet', { userId, chain });
-        chains.push({ chain, status: 'no_wallet' });
-        continue;
-      }
-
-      try {
-        chains.push(await readChain(chain, address));
-      } catch (error) {
-        /*
-         * The provider's own words go to the log. The response carries the code.
-         *
-         * `error` alone prints `{ reason, name }` and **not** the message, which is
-         * where the endpoint and what it answered live. A log that omits the
-         * message is a log that cannot tell anyone why a chain is unreadable: two
-         * rounds of diagnosis were spent on that.
-         */
-        log.error(`portfolio.chain_failed:${chain}`, {
-          userId,
-          chain,
-          error,
-          reason: reasonOf(error),
-          detail: messageOf(error),
-        });
-        chains.push({ chain, status: 'error', error: { code: 'CHAIN_READ_FAILED', reason: reasonOf(error) } });
-      }
-    }
+        try {
+          return await readChain(chain, address);
+        } catch (error) {
+          /*
+           * The provider's own words go to the log. The response carries the code.
+           *
+           * `error` alone prints `{ reason, name }` and **not** the message, which is
+           * where the endpoint and what it answered live. A log that omits the
+           * message is a log that cannot tell anyone why a chain is unreadable: two
+           * rounds of diagnosis were spent on that.
+           */
+          log.error(`portfolio.chain_failed:${chain}`, {
+            userId,
+            chain,
+            error,
+            reason: reasonOf(error),
+            detail: messageOf(error),
+          });
+          return { chain, status: 'error', error: { code: 'CHAIN_READ_FAILED', reason: reasonOf(error) } };
+        }
+      }),
+    );
 
     return { userId, chains };
   };

@@ -70,6 +70,7 @@ import {
   type PriceChannel,
 } from '../../domain/price/priceRules';
 import type { PricedAsset, PriceFeed, PriceFeedFailure, PriceResult } from '../../domain/ports/price-feed';
+import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy } from './httpDeadline';
 export interface ChainlinkPriceFeedOptions {
   /**
    * Candidate endpoints, tried in order. A public endpoint rate-limiting is not
@@ -86,20 +87,99 @@ export interface ChainlinkPriceFeedOptions {
    * without waiting an hour.
    */
   readonly nowSeconds?: () => number;
+  /**
+   * How long a successful price read may be **reused** for, in seconds.
+   *
+   * Defaults to {@link PRICE_CACHE_TTL_SECONDS}. It is an option and not an
+   * environment variable on purpose: the bound is a property of the staleness
+   * rule below it, and a deployment that disagreed with it would be able to
+   * serve a price this adapter would have refused.
+   */
+  readonly cacheTtlSeconds?: number;
+  /**
+   * How long one request to one price-feed endpoint may take. Defaults to
+   * {@link PRICE_FEED_REQUEST_TIMEOUT_MS}; tests replace the schedule to drive
+   * the deadline by hand instead of waiting for it.
+   */
+  readonly deadline?: DeadlinePolicy;
 }
+
+/**
+ * How long one request to one price-feed endpoint is given, and why 4 s.
+ *
+ * A price read is several requests: one `eth_blockNumber`, then a `decimals()`
+ * and a `latestRoundData()` per channel of the pair, all at the pinned block.
+ * They are `eth_call`s into small proxy contracts on public Monad endpoints, so
+ * a healthy node answers each in a fraction of this — but the read pays it up to
+ * five times, and a node that is slow rather than down would spend the whole
+ * price read inside the first two of them.
+ *
+ * Four seconds is the same bound the Aave pool reader uses, and deliberately so:
+ * both are a handful of state-only `eth_call`s against the same kind of public
+ * Monad endpoint. It is a second wider than the plain balance read because a
+ * price is composed of more calls than a balance, and it is not wider than that
+ * because the person watching a loading price is watching the same clock as the
+ * person watching a loading balance.
+ *
+ * Per **request**, not per price read: a price read that has already pinned a
+ * block and read one channel is not made more correct by waiting five seconds
+ * for the next one, and an endpoint that is not answering is not going to start.
+ */
+export const PRICE_FEED_REQUEST_TIMEOUT_MS = 4_000;
+
+/**
+ * How long a successful Chainlink read is reused, and why that is short enough.
+ *
+ * Ten seconds, against the staleness limit this adapter already applies
+ * `MAX_PRICE_AGE_SECONDS`, 3600, from `domain/price/priceRules.ts`). The cache
+ * can therefore add at most ten seconds to the age of the worst price it will
+ * serve — under 0.3 % of the limit it is already refused at — and it buys the
+ * thing the balance page was missing: `/api/wallet-balance` and any other route in the same Worker isolate
+ * stop re-reading the same pair, on the same block, from the same nodes.
+ *
+ * It is also far below the rate at which the underlying answer can change
+ * meaning: the rounds themselves refresh on the feed's own heartbeat, and the
+ * cross-check compares two channels of **one** pinned block, so re-reading sooner
+ * mostly re-reads the same instant.
+ */
+export const PRICE_CACHE_TTL_SECONDS = 10;
+
+/**
+ * The most entries kept at once, and why the bound is redundant.
+ *
+ * `PricedAsset` is a closed union of four symbols, so the cache cannot grow past
+ * four entries by construction. The cap is stated anyway because "it cannot grow"
+ * is a claim about today's type and not a property anyone would notice breaking:
+ * a new asset would raise this number rather than start an unbounded `Map` in an
+ * isolate that never restarts.
+ */
+const MAX_CACHED_PRICES = 8;
 
 export const DEFAULT_PRICE_FEED_ENDPOINTS: readonly string[] = [DEFAULT_MONAD_RPC_URL];
 
 /** `uint8` cannot exceed this, so any larger answer is not a decimals call. */
 const UINT8_MAX = 255n;
 
+/** The successful member of the port's union, and the only thing ever cached. */
+type OkPriceResult = Extract<PriceResult, { readonly status: 'ok' }>;
+
 /** One `eth_call`, answered as the hex string the node sent. */
 export const createChainlinkPriceFeed = (
   options: ChainlinkPriceFeedOptions = {},
 ): PriceFeed => {
   const endpoints = options.endpoints ?? DEFAULT_PRICE_FEED_ENDPOINTS;
-  const send = options.fetchImpl ?? fetch;
+  /*
+   * Bound once. Every call below — the block tag and each channel's `decimals()`
+   * and round — goes out through this, so no read of this adapter can reach a
+   * node without a deadline, and none of them can pin the in-flight entry below
+   * for as long as the endpoint feels like.
+   */
+  const send = withDeadline(options.fetchImpl ?? fetch, {
+    timeoutMs: PRICE_FEED_REQUEST_TIMEOUT_MS,
+    ...options.deadline,
+  });
   const nowSeconds = options.nowSeconds ?? ((): number => Math.floor(Date.now() / 1000));
+  const ttlSeconds = options.cacheTtlSeconds ?? PRICE_CACHE_TTL_SECONDS;
 
   /**
    * One JSON-RPC method, answered as the hex string the node sent, or the reason
@@ -142,7 +222,9 @@ export const createChainlinkPriceFeed = (
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
       });
     } catch (error) {
-      throw new PriceFeedError('RPC_UNAVAILABLE', 'the price feed endpoint did not answer', { cause: error });
+      throw new PriceFeedError('RPC_UNAVAILABLE', `the price feed endpoint ${transportDetail(error, 'did not answer')}`, {
+        cause: error,
+      });
     }
 
     if (!response.ok) {
@@ -153,6 +235,16 @@ export const createChainlinkPriceFeed = (
     try {
       body = await response.json();
     } catch (error) {
+      /*
+       * A round that stopped mid-answer is our deadline, not a bad round. From
+       * here the two are indistinguishable, and the difference is the whole
+       * vocabulary: `RPC_MALFORMED_RESPONSE` is a statement about this adapter,
+       * and filing a node that stopped talking as one would turn a provider
+       * outage into a bug report against the cross-check.
+       */
+      if (isDeadlineExceeded(error)) {
+        throw new PriceFeedError('RPC_UNAVAILABLE', `the price feed endpoint ${error.message}`, { cause: error });
+      }
       throw new PriceFeedError('RPC_MALFORMED_RESPONSE', 'the price feed endpoint answered with no JSON', {
         cause: error,
       });
@@ -307,7 +399,88 @@ export const createChainlinkPriceFeed = (
     };
   };
 
+  /* ── The edge cache: same reads, fewer of them ──────────────────────────── */
+
+  /*
+   * A Chainlink round is **global**. It is the same number for every person, on
+   * every request, and nothing about it depends on who asked — so reading it once
+   * per request was reading the same block twice for the same page load, once for
+   * `/api/pool` and once for `/api/wallet-balance`.
+   *
+   * The entry carries the **age it had when it was cached** in two parts, and
+   * both matter on a hit:
+   *
+   *  - `cachedAtSeconds` — how long ago *this* adapter fetched it, which is what
+   *    the TTL is measured against.
+   *  - `value.updatedAt` — the round's own timestamp from `latestRoundData`, which
+   *    is what the staleness rule is really about.
+   *
+   * So a hit is served only if it is **younger than the TTL** *and* the round it
+   * carries is still fresh under `isStale` against the current clock. An entry
+   * whose round has aged past the adapter's own limit is dropped and read through
+   * instead: the cache can only ever hand back a price this adapter would have
+   * published, never one it would have refused.
+   *
+   * A refusal is **not** cached. An `unreadable` answer is a statement about a
+   * moment in time, and repeating it for ten seconds would turn a blip into an
+   * outage; the next request reads through and gets a real answer.
+   */
+  const cache = new Map<PricedAsset, { readonly result: OkPriceResult; readonly cachedAtSeconds: number }>();
+
+  /**
+   * The reads currently in flight, so a burst of concurrent misses costs **one**
+   * set of RPC calls rather than one per caller. This is a Worker isolate:
+   * every request a warm isolate serves runs here at once.
+   *
+   * Entries are removed the moment the read settles, so this map holds at most
+   * one entry per asset and cannot accumulate.
+   */
+  const inFlight = new Map<PricedAsset, Promise<PriceResult>>();
+
+  const cachedPriceOf = (asset: PricedAsset): Promise<PriceResult> => {
+    const now = nowSeconds();
+    const entry = cache.get(asset);
+
+    if (entry !== undefined) {
+      if (now - entry.cachedAtSeconds < ttlSeconds && !isStale(entry.result.value.updatedAt, now)) {
+        return Promise.resolve(entry.result);
+      }
+      // Expired by the TTL or by the adapter's own freshness rule: dropped, so a
+      // stale entry cannot be served by a later request either.
+      cache.delete(asset);
+    }
+
+    const pending = inFlight.get(asset);
+    if (pending !== undefined) return pending;
+
+    const flight: Promise<PriceResult> = priceOf(asset).then(
+      (result) => {
+        inFlight.delete(asset);
+        if (result.status === 'ok') {
+          // Insertion-ordered eviction: the oldest key goes first. Bounded by
+          // construction and by `MAX_CACHED_PRICES`; see the note on it.
+          while (cache.size >= MAX_CACHED_PRICES) {
+            const oldest = cache.keys().next();
+            if (oldest.done === true) break;
+            cache.delete(oldest.value);
+          }
+          cache.set(asset, { result, cachedAtSeconds: nowSeconds() });
+        }
+        return result;
+      },
+      (error: unknown) => {
+        // A cache that cannot store is not a read that failed: the rejection is
+        // passed straight through, exactly as an uncached `priceOf` would.
+        inFlight.delete(asset);
+        throw error;
+      },
+    );
+
+    inFlight.set(asset, flight);
+    return flight;
+  };
+
   return {
-    usdPrice: priceOf,
+    usdPrice: cachedPriceOf,
   };
 };

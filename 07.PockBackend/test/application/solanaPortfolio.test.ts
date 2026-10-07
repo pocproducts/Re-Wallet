@@ -209,6 +209,120 @@ describe('readPortfolio — Solana SPL tokens', () => {
   });
 });
 
+describe('readPortfolio — the reads are issued together, and still decided apart', () => {
+  /**
+   * A read that records having been **asked for** and answers only once `expected`
+   * reads are in flight.
+   *
+   * The barrier is what makes this a test of concurrency rather than of timing: a
+   * reader that answered instantly would let a serial implementation pass by
+   * accident. Here nothing answers until every read is outstanding, so a
+   * serial implementation cannot get past the first one — and the short timer
+   * means it fails fast, with a count, instead of hanging until the suite times
+   * out.
+   */
+  const together = <T>(expected: number, answer: (index: number) => T) => {
+    const issued: number[] = [];
+    /*
+     * How many reads were **in flight** when this one got its answer. A serial
+     * implementation leaves `1` here for the first read, no matter how many reads
+     * it eventually gets to — which is what the assertion looks at, and why it is
+     * taken at the moment of the answer rather than at the end of the call.
+     */
+    const overlapped: number[] = [];
+    let open = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+
+    return {
+      issued,
+      overlapped,
+      read: async (): Promise<T> => {
+        const index = issued.length;
+        issued.push(index);
+        if (issued.length === expected) open();
+        await Promise.race([gate, new Promise<void>((resolve) => setTimeout(resolve, 50))]);
+        overlapped.push(issued.length);
+        return answer(index);
+      },
+    };
+  };
+
+  it('asks every chain and every asset at the same time', async () => {
+    // Six reads: three chains, two assets each. The number is the catalog's own,
+    // so a chain gaining an asset has to be counted here too.
+    const reads = together(6, () => 1n);
+    const solana: SolanaBalanceReader = {
+      lamports: reads.read,
+      tokenAmount: async () => 0n,
+      mintBalance: reads.read,
+    };
+    const evm: EvmBalanceReader = {
+      nativeBalance: reads.read,
+      erc20Balance: reads.read,
+    };
+
+    const portfolio = await readPortfolio({ wallets, evm, solana })(USER_ID, new Date(0));
+
+    expect(reads.issued).toHaveLength(6);
+    // The load-bearing assertion: every read was still outstanding when each of
+    // them answered, which is what "asked at the same time" means.
+    expect(reads.overlapped).toEqual([6, 6, 6, 6, 6, 6]);
+    // And every chain still reported: overlap did not cost anybody a figure.
+    expect(portfolio.chains.map((chain) => chain.status)).toEqual(['ok', 'ok', 'ok']);
+  });
+
+  it('keeps one chain failing from taking the other two down', async () => {
+    // Ethereum is down. Monad and Solana must not be — and the failure keeps its
+    // own reason, on its own chain, exactly as it did when the chains were read
+    // one after the other.
+    const failing: EvmBalanceReader = {
+      nativeBalance: async (chain) => {
+        if (chain === 'ethereum') throw new BalanceReadError('RPC_REJECTED', 'the endpoint rejected it');
+        return 7n;
+      },
+      erc20Balance: async (chain) => {
+        if (chain === 'ethereum') throw new BalanceReadError('RPC_REJECTED', 'the endpoint rejected it');
+        return 9n;
+      },
+    };
+    const solana = solanaReader({ lamports: 4_000_000_000n, mints: { [USDC_MINT]: 1_500_000n } });
+
+    const portfolio = await readPortfolio({ wallets, evm: failing, solana })(USER_ID, new Date(0));
+
+    const byChain = new Map(portfolio.chains.map((chain) => [chain.chain, chain]));
+    expect(byChain.get('monad')?.status).toBe('ok');
+    expect(byChain.get('solana')?.status).toBe('ok');
+    expect(byChain.get('ethereum')).toEqual({
+      chain: 'ethereum',
+      status: 'error',
+      error: { code: 'CHAIN_READ_FAILED', reason: 'RPC_REJECTED' },
+    });
+    // The two healthy chains kept their exact figures.
+    const solanaChain = byChain.get('solana');
+    expect(solanaChain?.status === 'ok' ? solanaChain.assets[0] : undefined).toMatchObject({ raw: '4000000000' });
+  });
+
+  it('reports the chains in the catalog order, whatever order they answered in', async () => {
+    // Overlap must not reorder the response: the screen reads `chains[]` positionally.
+    const slowFirst = together(6, (index) => (index === 0 ? 0n : BigInt(index + 1)));
+    const solana: SolanaBalanceReader = {
+      lamports: async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        return 1n;
+      },
+      tokenAmount: async () => 0n,
+      mintBalance: slowFirst.read,
+    };
+    const evm: EvmBalanceReader = { nativeBalance: slowFirst.read, erc20Balance: slowFirst.read };
+
+    const portfolio = await readPortfolio({ wallets, evm, solana })(USER_ID, new Date(0));
+
+    expect(portfolio.chains.map((chain) => chain.chain)).toEqual(['monad', 'ethereum', 'solana']);
+  });
+});
+
 describe('readPortfolio — the real adapter, over a fake endpoint', () => {
   /*
    * The two halves together, because the rule they carry lives between them: the

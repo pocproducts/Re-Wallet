@@ -500,6 +500,23 @@ export const readWalletBalance = (deps: ReadWalletBalanceDeps): ReadWalletBalanc
     }
 
     const priceByAsset = new Map<PricedAsset, PriceFeedFailure | PriceDetail>();
+
+    /*
+     * The second venue, **started here** and settled at the venue section below.
+     *
+     * It does not depend on the prices: it reads its own shares on chain and its
+     * own share price from Kamino, and the price phase cannot change a single one
+     * of its figures. Awaiting it after the prices made a balance page pay for
+     * the Kamino position *after* the oracle round trips it never had to wait for,
+     * so the two now overlap instead of queueing.
+     *
+     * Started, not awaited: nothing below reads it, so the only thing this buys
+     * is the overlap — the venue is still settled, and still filed, in the same
+     * place and with the same rules as before.
+     */
+    const kaminoRead =
+      deps.readKaminoEarn === undefined ? null : kaminoVenue(log, deps.readKaminoEarn, userId, now);
+
     await Promise.all(
       [...wanted].map(async (asset) => {
         /*
@@ -610,10 +627,10 @@ export const readWalletBalance = (deps: ReadWalletBalanceDeps): ReadWalletBalanc
     /*
      * The Kamino venue is read **once** — its pieces and its rate come out of the
      * same read, so a screen cannot show a position from one instant and a yield
-     * from another.
+     * from another. It was started alongside the price phase above; here it is
+     * simply awaited.
      */
-    const kamino =
-      deps.readKaminoEarn === undefined ? null : await kaminoVenue(log, deps.readKaminoEarn, userId, now);
+    const kamino = kaminoRead === null ? null : await kaminoRead;
 
     const investedPieces: BalancePiece[] = [
       ...aaveVenue(log, snapshot, priceByAsset),

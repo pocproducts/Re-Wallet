@@ -116,6 +116,19 @@ export interface PoolSnapshot {
 export interface ReadPoolDeps {
   readonly wallets: WalletStore;
   readonly pool: AavePoolReader;
+  /**
+   * The memo's clock, in Unix **milliseconds**. Injected, never reached for
+   * directly, so no assertion in this repository waits for a real second to
+   * pass. It defaults to `Date.now()`.
+   *
+   * Deliberately **not** the `now` argument of the returned function — see the
+   * memo for why those two must not be the same thing.
+   */
+  readonly nowMs?: () => number;
+  /** How long a fully readable snapshot may be reused. Defaults to {@link POOL_MEMO_TTL_MS}. */
+  readonly memoTtlMs?: number;
+  /** How many users one isolate remembers at once. Defaults to {@link POOL_MEMO_MAX_ENTRIES}. */
+  readonly memoMaxEntries?: number;
   readonly log?: Logger;
 }
 
@@ -166,7 +179,7 @@ const evmAddressFrom = async (wallets: WalletStore, userId: string): Promise<str
 export const readPool = (deps: ReadPoolDeps): ReadPool => {
   const log = deps.log ?? noopLogger;
 
-  return async (userId: string, now: Date = new Date()): Promise<PoolSnapshot> => {
+  const readOnce = async (userId: string, now: Date): Promise<PoolSnapshot> => {
     const address = await evmAddressFrom(deps.wallets, userId);
 
     /*
@@ -328,7 +341,165 @@ export const readPool = (deps: ReadPoolDeps): ReadPool => {
       },
     };
   };
+
+  const nowMs = deps.nowMs ?? ((): number => Date.now());
+  const ttlMs = Math.max(0, deps.memoTtlMs ?? POOL_MEMO_TTL_MS);
+  const maxEntries = Math.max(1, deps.memoMaxEntries ?? POOL_MEMO_MAX_ENTRIES);
+
+  /*
+   * THE MEMO. One read per person per {@link POOL_MEMO_TTL_MS}, and two callers
+   * who arrive together share the read already in flight.
+   *
+   * ── Why it exists at all: the front asks twice ─────────────────────────────
+   *
+   * On every page load the front mounts both `usePool` and `useWalletBalance`, and
+   * `GET /api/wallet-balance` composes this very use case internally. So one
+   * person, opening one screen, pays for the whole Aave read — one Postgres read
+   * plus five RPCs — **twice**, on two concurrent requests. This is what makes
+   * the second one free.
+   *
+   * That it happens is a **front-end question** — one screen, one read, and no
+   * second fetch for a number the first response already carries — and it is
+   * deliberately not fixed here: what this use case returns is not negotiable to
+   * a caller that mounted two of them. This memo is the cheap half of the answer,
+   * and it stays correct even if the front never stops asking twice.
+   *
+   * ── Why the freshness is keyed on wall time and never on the `now` argument ──
+   *
+   * `now` is **the use case's clock**: it is stamped into `generatedAt`, so it is
+   * a claim about the answer the caller wants to publish, and the caller owns it.
+   * The lifetime of a cache entry is not a claim about anything, and letting the
+   * same parameter decide both would make the cache's life controllable by whoever
+   * controls the stamp: a caller that freezes its clock never sees an entry expire
+   * and keeps reading a position from the moment it was frozen, and a caller that
+   * passes a date an hour ahead gets a hit forever. Neither is a bug anybody
+   * would notice until somebody's balance was quietly stale.
+   *
+   * So freshness is decided by `deps.nowMs` — an injected wall clock, defaulted to
+   * `Date.now()` — and the `now` a caller passes only ever reaches the payload.
+   * The tests inject that clock instead of sleeping.
+   *
+   * ── The other consequence, which is honest rather than convenient ────────────
+   *
+   * A reused snapshot carries the `generatedAt` of the read that produced it. It
+   * is **not** re-stamped to "now": the answer says when the chain was read, and
+   * five seconds of truth is worth more than a timestamp that is prettier than the
+   * data behind it.
+   */
+  const memo = new Map<string, { readonly value: PoolSnapshot; readonly storedAtMs: number }>();
+  /** The reads in flight, so two simultaneous callers share one and not two. */
+  const inFlight = new Map<string, Promise<PoolSnapshot>>();
+
+  /*
+   * **Bounded, in an isolate with no eviction budget.** A Worker has a memory
+   * limit and nothing ever tells this code that a user is gone, so the map is
+   * capped at {@link POOL_MEMO_MAX_ENTRIES} and overflow evicts the oldest
+   * insertion. That is crude on purpose: the scenario this memo exists for is one
+   * page load, so the working set is "the handful of people with an open tab",
+   * and an LRU would be a second data structure to keep correct for a difference
+   * nobody can observe. Oldest-first is `Map`'s own iteration order, so the whole
+   * policy is three lines.
+   */
+  const remember = (userId: string, value: PoolSnapshot): void => {
+    if (memo.size >= maxEntries) {
+      const oldest = memo.keys().next();
+      if (!oldest.done) memo.delete(oldest.value);
+    }
+    memo.set(userId, { value, storedAtMs: nowMs() });
+  };
+
+  return async (userId: string, now: Date = new Date()): Promise<PoolSnapshot> => {
+    const at = nowMs();
+    const entry = memo.get(userId);
+    if (entry !== undefined) {
+      if (at - entry.storedAtMs < ttlMs) return entry.value;
+      // Expired: dropped here rather than swept, so an entry nobody asks about
+      // costs nothing to keep around either.
+      memo.delete(userId);
+    }
+
+    const pending = inFlight.get(userId);
+    if (pending !== undefined) return pending;
+
+    /*
+     * The read itself, wrapped so that the map never holds the outcome of a
+     * refusal: the in-flight entry is removed on both paths, and a snapshot that
+     * is not an answer is never stored below.
+     */
+    const flight = readOnce(userId, now).then(
+      (value) => {
+        inFlight.delete(userId);
+        if (isAnAnswer(value)) remember(userId, value);
+        return value;
+      },
+      (error: unknown) => {
+        inFlight.delete(userId);
+        throw error;
+      },
+    );
+    inFlight.set(userId, flight);
+    return flight;
+  };
 };
+
+/**
+ * Whether a snapshot is an **answer** rather than an absence, and therefore
+ * whether it may be reused.
+ *
+ * A snapshot with an `unreadable` anywhere in it is this file's own vocabulary
+ * for "we could not read that", and a memo that remembers one for five seconds
+ * turns a provider hiccup into a screen that stays stuck: the person keeps being
+ * shown a refusal that the chain may already have stopped giving. So the rule is
+ * the strictest one that is still simple — nothing `unreadable` is stored.
+ *
+ * `apr`, `totals` and `lastUpdate` need no separate test: every one of them is
+ * derived from the reserve, and `reserve.status === 'ok'` is exactly the
+ * statement that it answered and decoded.
+ */
+const isAnAnswer = (snapshot: PoolSnapshot): boolean =>
+  snapshot.reserve.status === 'ok' &&
+  snapshot.reconciliation.status === 'ok' &&
+  snapshot.position.aTokenBalance.status === 'ok' &&
+  snapshot.position.availableUsdc.status === 'ok' &&
+  snapshot.position.gasBalance.status === 'ok';
+
+/**
+ * How long a **readable** pool snapshot of one person may be reused, and why that
+ * is acceptable.
+ *
+ * This is the only cache in the read path that holds somebody's **own money**, and
+ * it is deliberately the shortest one in the repository. The edge caches in the
+ * adapters are longer because they hold what nobody owns: a reserve that is the
+ * same struct for every person, an oracle round for a dollar-pegged pair. Here the
+ * figure is a deposit, so the staleness cost is the person's, and it is paid in
+ * the one currency they cannot undo — a balance that has moved and a screen that
+ * has not noticed yet.
+ *
+ * Five seconds, chosen against the two durations that matter:
+ *
+ *  - **Longer than the duplication it exists for.** The two concurrent requests a
+ *    page load makes are the same read starting together, so they land inside the
+ *    same window by construction. Seconds would be plenty for that.
+ *  - **Shorter than a person's own refresh.** Nobody reloads because their balance
+ *    took five seconds to appear; and a person who has just deposited and hits
+ *    reload sees the new position on the very next load, not on the next poll.
+ *
+ * Anything longer starts to describe this product as a ticker; anything shorter
+ * stops covering the page load this was written for.
+ */
+export const POOL_MEMO_TTL_MS = 5_000;
+
+/**
+ * How many people one isolate remembers, and why the cap is this size.
+ *
+ * An entry is one snapshot of one person — a dozen small objects and their
+ * strings, comfortably under a kilobyte each. Two hundred of them is a couple of
+ * hundred kilobytes against a Worker isolate's memory ceiling, which is far more
+ * than the working set of an app whose users each keep one tab open, and it is a
+ * number that is easy to reason about rather than one tuned to a measurement this
+ * repository has not taken. Overflow evicts the oldest insertion.
+ */
+export const POOL_MEMO_MAX_ENTRIES = 200;
 
 /** The scale every percentage in this response uses: one unit is `0.0001%`. */
 export const POOL_PERCENT_SCALE = APR_PERCENT_SCALE;
