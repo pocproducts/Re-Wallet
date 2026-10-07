@@ -1,7 +1,13 @@
+<<<<<<< HEAD
 import React, { useMemo, useState } from 'react';
 
 import { splitUsdDisplay } from '../../services/portfolio';
 import { usePortfolio, type PortfolioView } from '../../hooks/usePortfolio';
+=======
+import React, { useState } from 'react';
+
+import { formatApr } from '../../config/markets';
+>>>>>>> origin/main
 import {
   Bug,
   Bell,
@@ -16,12 +22,15 @@ import { UserProfileData } from '../../types';
 
 interface WalletViewProps {
   profile: UserProfileData | null;
+<<<<<<< HEAD
   /**
    * Los saldos leídos de la cadena. Viene del hook del `App` para que la
    * lectura sea **una por sesión**: si cada pantalla montara el suyo, abrir y
    * cerrar la lista de cripto sería una lectura de blockchain por cada apertura.
    */
   portfolio?: PortfolioView;
+=======
+>>>>>>> origin/main
   onOpenProfile?: () => void;
   onNavigateToInvestments?: () => void;
   onNavigateToActivity?: () => void;
@@ -30,6 +39,7 @@ interface WalletViewProps {
   onOpenScanner?: () => void;
   onOpenBugModal?: () => void;
   onOpenNotifications?: () => void;
+<<<<<<< HEAD
   /**
    * Hay avisos que esta persona todavía no vio en su última visita.
    *
@@ -37,12 +47,17 @@ interface WalletViewProps {
    * la prop, no hay punto — un punto falso es peor que ningún punto.
    */
   hasUnreadNotifications?: boolean;
+=======
+>>>>>>> origin/main
   onOpenAavePools?: () => void;
 }
 
 export const WalletView: React.FC<WalletViewProps> = ({
   profile,
+<<<<<<< HEAD
   portfolio,
+=======
+>>>>>>> origin/main
   onOpenProfile,
   onNavigateToInvestments,
   onOpenAction,
@@ -50,11 +65,15 @@ export const WalletView: React.FC<WalletViewProps> = ({
   onOpenScanner,
   onOpenBugModal,
   onOpenNotifications,
+<<<<<<< HEAD
   hasUnreadNotifications,
+=======
+>>>>>>> origin/main
   onOpenAavePools,
 }) => {
   const [showBalance, setShowBalance] = useState<boolean>(true);
 
+<<<<<<< HEAD
   /*
    * El saldo grande es el de los dólares digitales, leído de la cadena.
    *
@@ -73,6 +92,8 @@ export const WalletView: React.FC<WalletViewProps> = ({
    */
   const balanceLabel = usd === null ? 'Sin lectura' : 'Dólares digitales';
 
+=======
+>>>>>>> origin/main
   // Derivar el handle de usuario como $joadata o $nombre
   const userTag = profile?.nombre
     ? '$' + profile.nombre.toLowerCase().replace(/\s+/g, '').slice(0, 10)
@@ -117,6 +138,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
           <button
             onClick={onOpenNotifications}
             type="button"
+<<<<<<< HEAD
             aria-label={hasUnreadNotifications ? 'Notificaciones: hay avisos nuevos' : 'Notificaciones'}
             title={hasUnreadNotifications ? 'Notificaciones: hay avisos nuevos' : 'Notificaciones'}
             className="w-11 h-11 flex items-center justify-center text-black hover:opacity-75 active:scale-90 transition-all cursor-pointer relative"
@@ -137,6 +159,13 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#ccff00] border border-black"
               />
             )}
+=======
+            aria-label="Notificaciones"
+            title="Notificaciones"
+            className="w-11 h-11 flex items-center justify-center text-black hover:opacity-75 active:scale-90 transition-all cursor-pointer relative"
+          >
+            <Bell className="w-5 h-5 stroke-[2.2]" />
+>>>>>>> origin/main
           </button>
         </div>
       </div>
@@ -168,7 +197,11 @@ export const WalletView: React.FC<WalletViewProps> = ({
           <div className="space-y-4">
             {/* Selector de moneda y Ojo */}
             <div className="flex items-center gap-2 text-slate-800">
+<<<<<<< HEAD
               <span className="text-sm font-semibold">{balanceLabel}</span>
+=======
+              <span className="text-sm font-semibold">Pesos</span>
+>>>>>>> origin/main
               <button
                 onClick={() => setShowBalance(!showBalance)}
                 type="button"
@@ -185,6 +218,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
             {/* Saldo Grande */}
             <div className="flex items-baseline font-display">
+<<<<<<< HEAD
               {/*
                * Tres estados, y ninguno se disfraza de otro:
                *   • sin lectura todavía o cadena caída → puntos, como el balance oculto
@@ -219,13 +253,28 @@ export const WalletView: React.FC<WalletViewProps> = ({
               detalle del pool— pero dice lo que es verdad: todavía no hay
               rendimiento. El número vuelve con T5, desde el backend.
             */}
+=======
+              <span className="text-4xl font-extrabold text-black tracking-tight">
+                {showBalance ? '$0' : '••••'}
+              </span>
+              <span className="text-2xl font-bold text-slate-300 ml-0.5">
+                {showBalance ? ',00' : ''}
+              </span>
+            </div>
+
+            {/* Píldora de Rendimiento Anual Verde Lima Fluo -> Lleva a Pool USDC View */}
+>>>>>>> origin/main
             <div>
               <button
                 onClick={onOpenAavePools}
                 type="button"
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#ccff00] hover:bg-[#b8e600] text-black text-xs font-bold shadow-sm active:scale-95 transition-all cursor-pointer"
               >
+<<<<<<< HEAD
                 <span>Todavía no hay rendimiento</span>
+=======
+                <span>Rindiendo {formatApr()}% anual</span>
+>>>>>>> origin/main
                 <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
               </button>
             </div>

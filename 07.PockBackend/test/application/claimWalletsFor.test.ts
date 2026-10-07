@@ -22,10 +22,13 @@ import type { OwnedWallet, WalletOwnershipVerifier } from '../../src/domain/port
 import type { NewUserProfile } from '../../src/domain/ports/user-store';
 import type { KnownWallet, WalletStore } from '../../src/domain/ports/wallet-store';
 import { FIRST_CHAIN, SECOND_CHAIN, WALLET_CHAIN_ORDER } from '../../src/domain/wallet/chains';
+<<<<<<< HEAD
 import {
   DEFAULT_EVM_NETWORK,
   ETHEREUM_MAINNET_NETWORK_ID,
 } from '../../src/domain/wallet/evmNetwork';
+=======
+>>>>>>> origin/main
 import { DID, EVM_ADDRESS, recordingLogger, SOLANA_ADDRESS, USER_ID } from '../support/fixtures';
 import { inMemoryUserStore, seedUser } from '../support/userStore';
 
@@ -236,6 +239,7 @@ describe('claimWalletsFor', () => {
 
     expect(writes.map((wallet) => wallet.chain)).toEqual(['ethereum', 'solana']);
     expect(writes).toEqual([
+<<<<<<< HEAD
       {
         chain: 'ethereum',
         address: EVM_ADDRESS,
@@ -243,6 +247,10 @@ describe('claimWalletsFor', () => {
         evmNetwork: ETHEREUM_MAINNET_NETWORK_ID,
       },
       { chain: 'solana', address: SOLANA_ADDRESS, providerWalletId: SOLANA_WALLET_ID, evmNetwork: null },
+=======
+      { chain: 'ethereum', address: EVM_ADDRESS, providerWalletId: EVM_WALLET_ID },
+      { chain: 'solana', address: SOLANA_ADDRESS, providerWalletId: SOLANA_WALLET_ID },
+>>>>>>> origin/main
     ]);
     expect(result.written).toBe(2);
     expect(result.wallets.map((wallet) => wallet.chain)).toEqual(['ethereum', 'solana']);
@@ -290,6 +298,7 @@ describe('claimWalletsFor', () => {
     expect(writes.map((wallet) => wallet.chain)).toEqual(['solana']);
   });
 
+<<<<<<< HEAD
   it('records the EVM network in use as Ethereum mainnet, and claims no network for Solana', async () => {
     // Nobody chose a network at login, so the EVM row is written on the default
     // the owner decided: Ethereum stays, Monad is added. The Solana row records
@@ -302,6 +311,8 @@ describe('claimWalletsFor', () => {
     expect(writes.map((wallet) => wallet.evmNetwork)).toEqual(['eip155:1', null]);
   });
 
+=======
+>>>>>>> origin/main
   it('resolves the same users row the session wrote, instead of a second one', async () => {
     const { users, profiles } = createUsers();
     const { store } = createStore();

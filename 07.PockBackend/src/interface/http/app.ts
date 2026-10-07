@@ -16,10 +16,14 @@
 import { Hono } from 'hono';
 
 import type { MintSession } from '../../application/session/mintSession';
+<<<<<<< HEAD
 import type { ReadPortfolio } from '../../application/portfolio/readPortfolio';
 import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
 import type { IngestPrivyWebhook } from '../../application/webhooks/ingestPrivyWebhook';
 import type { ReadNotifications } from '../../application/webhooks/readNotifications';
+=======
+import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
+>>>>>>> origin/main
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 import type { SessionCodec } from '../../domain/ports/session-codec';
@@ -27,10 +31,14 @@ import type { TokenVerifier } from '../../domain/ports/token-verifier';
 import { SESSION_COOKIE_NAME } from './cookie';
 import { createAuthRoutes } from './routes/auth';
 import { createDiagnosticsRoutes } from './routes/diagnostics';
+<<<<<<< HEAD
 import { createNotificationsRoutes } from './routes/notifications';
 import { createPortfolioRoutes } from './routes/portfolio';
 import { createWalletsRoutes } from './routes/wallets';
 import { createWebhookRoutes } from './routes/webhooks';
+=======
+import { createWalletsRoutes } from './routes/wallets';
+>>>>>>> origin/main
 
 export interface AppDeps {
   readonly mint: MintSession;
@@ -38,11 +46,14 @@ export interface AppDeps {
   /** Present in production; the wallets route needs the same verifier. */
   readonly verify?: TokenVerifier;
   readonly claim?: ClaimWalletsFor;
+<<<<<<< HEAD
   /** Absent when no chain readers are wired: the route is then not there. */
   readonly readPortfolio?: ReadPortfolio;
   /** Absent when no signing secret is wired: the intake is then not there. */
   readonly ingestWebhook?: IngestPrivyWebhook;
   readonly readNotifications?: ReadNotifications;
+=======
+>>>>>>> origin/main
   readonly cookieName?: string;
   readonly now?: () => Date;
   readonly log?: Logger;
@@ -84,6 +95,7 @@ export const createApp = (deps: AppDeps) => {
     app.route('/api/wallets', createWalletsRoutes({ verify: deps.verify, claim: deps.claim, log }));
   }
 
+<<<<<<< HEAD
   /*
    * `/api/portfolio` is mounted when the chain readers are wired. Same reasoning
    * as the claim route: a portfolio route that answered "balances are not
@@ -129,6 +141,8 @@ export const createApp = (deps: AppDeps) => {
     );
   }
 
+=======
+>>>>>>> origin/main
   // TEMPORARY. Removed together with the browser-side Privy problem it explains.
   app.route('/api/diagnostics', createDiagnosticsRoutes({ log }));
 

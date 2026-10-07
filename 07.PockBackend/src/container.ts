@@ -24,6 +24,7 @@
 import { PrivyClient } from '@privy-io/node';
 
 import { mintSession } from './application/session/mintSession';
+<<<<<<< HEAD
 import { readPortfolio } from './application/portfolio/readPortfolio';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
 import { ingestPrivyWebhook } from './application/webhooks/ingestPrivyWebhook';
@@ -40,6 +41,15 @@ import {
   createHttpSolanaBalanceReader,
   DEFAULT_SOLANA_RPC_URL,
 } from './infrastructure/rpc/solanaBalanceReader.http';
+=======
+import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
+import { createDatabase, readEnv } from './infrastructure/db/client';
+import { createPostgresUserStore } from './infrastructure/db/userStore.pg';
+import { createPostgresWalletStore } from './infrastructure/db/walletStore.pg';
+import { createPrivyTokenVerifier } from './infrastructure/privy/privyTokenVerifier';
+import { createPrivyUserDirectory } from './infrastructure/privy/privyUserDirectory';
+import { createPrivyWalletOwnershipVerifier } from './infrastructure/privy/privyWalletOwnershipVerifier';
+>>>>>>> origin/main
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
 import { createApp } from './interface/http/app';
 import type { Logger } from './domain/ports/logger';
@@ -49,6 +59,7 @@ export interface Config {
   readonly privyAppSecret: string;
   readonly databaseUrl: string;
   readonly sessionSecret: string;
+<<<<<<< HEAD
   /**
    * The Privy webhook signing secret. Required, and it fails closed with the
    * other identities: without it the intake cannot tell a delivery from an
@@ -74,26 +85,43 @@ const firstCandidate = (candidates: readonly string[]): string => candidates[0] 
 
 export const readConfig = (env: Record<string, unknown> = process.env as Record<string, unknown>): Config => {
   const required = {
+=======
+}
+
+/** The one place that knows which environment variables exist. */
+export const readConfig = (env: Record<string, unknown> = process.env as Record<string, unknown>): Config => {
+  const config: Config = {
+>>>>>>> origin/main
     privyAppId: readEnv(env, 'PRIVY_APP_ID'),
     privyAppSecret: readEnv(env, 'PRIVY_APP_SECRET'),
     databaseUrl: readEnv(env, 'DATABASE_URL'),
     sessionSecret: readEnv(env, 'SESSION_SECRET'),
+<<<<<<< HEAD
     privyWebhookSigningSecret: readEnv(env, 'PRIVY_WEBHOOK_SIGNING_SECRET'),
   };
 
   const missing = Object.entries(required)
+=======
+  };
+
+  const missing = Object.entries(config)
+>>>>>>> origin/main
     .filter(([, value]) => value.length === 0)
     .map(([key]) => key);
   if (missing.length > 0) {
     throw new Error(`Missing configuration: ${missing.join(', ')}.`);
   }
 
+<<<<<<< HEAD
   return {
     ...required,
     monadRpcUrl: readEnv(env, 'MONAD_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.monad),
     ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.ethereum),
     solanaRpcUrl: readEnv(env, 'SOLANA_RPC_URL') || DEFAULT_SOLANA_RPC_URL,
   };
+=======
+  return config;
+>>>>>>> origin/main
 };
 
 export const buildApp = (config: Config, log: Logger) => {
@@ -107,6 +135,7 @@ export const buildApp = (config: Config, log: Logger) => {
   const directory = createPrivyUserDirectory(privy);
   const ownership = createPrivyWalletOwnershipVerifier(privy);
   const walletStore = createPostgresWalletStore(db);
+<<<<<<< HEAD
   const webhookEvents = createPostgresWebhookEventStore(db);
   const sessions = createJwtSessionCodec({ secret: config.sessionSecret });
 
@@ -125,6 +154,10 @@ export const buildApp = (config: Config, log: Logger) => {
   });
   const solana = createHttpSolanaBalanceReader({ url: config.solanaRpcUrl });
 
+=======
+  const sessions = createJwtSessionCodec({ secret: config.sessionSecret });
+
+>>>>>>> origin/main
   return createApp({
     mint: mintSession({
       verify,
@@ -142,6 +175,7 @@ export const buildApp = (config: Config, log: Logger) => {
       log,
     }),
     sessions,
+<<<<<<< HEAD
     // The same wallet store the claim writes through, read through.
     readPortfolio: readPortfolio({ wallets: walletStore, evm, solana, log }),
     // Intake and feed share one store: one write path and one read path over the
@@ -152,6 +186,8 @@ export const buildApp = (config: Config, log: Logger) => {
       log,
     }),
     readNotifications: readNotifications({ store: webhookEvents, log }),
+=======
+>>>>>>> origin/main
     log,
   });
 };

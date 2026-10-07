@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import React, { useMemo, useState } from 'react';
 
 /*
@@ -7,6 +8,11 @@ import React, { useMemo, useState } from 'react';
  */
 import { splitUsdDisplay } from '../../services/portfolio';
 import type { PortfolioView } from '../../hooks/usePortfolio';
+=======
+import React, { useState } from 'react';
+
+import { formatApr } from '../../config/markets';
+>>>>>>> origin/main
 import {
   ArrowLeft,
   HelpCircle,
@@ -20,13 +26,17 @@ interface DigitalDollarsViewProps {
   onOpenAavePools?: () => void;
   onOpenDeposit?: () => void;
   onOpenSend?: () => void;
+<<<<<<< HEAD
   /** Saldos de la cadena, leídos una vez por sesión en el `App`. */
   portfolio?: PortfolioView;
+=======
+>>>>>>> origin/main
 }
 
 export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
   onBack,
   onOpenAavePools,
+<<<<<<< HEAD
   portfolio,
 }) => {
   const [showInfoModal, setShowInfoModal] = useState(false);
@@ -49,6 +59,11 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
     [portfolio?.usdcTotal],
   );
 
+=======
+}) => {
+  const [showInfoModal, setShowInfoModal] = useState(false);
+
+>>>>>>> origin/main
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans">
       {/* =========================================================================
@@ -91,6 +106,7 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
               DÓLARES DIGITALES — USDC
             </span>
             <div className="text-4xl sm:text-5xl font-extrabold font-display text-black tracking-tight">
+<<<<<<< HEAD
               {usd === null ? '••••' : `${usd.whole}${usd.cents}`}
             </div>
             {/*
@@ -102,6 +118,10 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
                 {portfolio.usdcNote}
               </p>
             )}
+=======
+              U$0,82
+            </div>
+>>>>>>> origin/main
           </div>
         </div>
 
@@ -124,6 +144,7 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
             </button>
           </div>
 
+<<<<<<< HEAD
           {/* =
             ESTA TARJETA NO MUESTRA NINGÚN NÚMERO, Y ESO ES LO VERDADERO.
 
@@ -145,28 +166,53 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
             </span>
             <span className="text-sm font-semibold text-slate-500">
               sin cifra todavía
+=======
+          <div className="flex items-baseline gap-2">
+            {/* El signo lo trae el número, no la pantalla. Ver la nota en AavePoolsView. */}
+            <span className="text-3xl sm:text-4xl font-black font-display text-black tracking-tight">
+              {formatApr()}%
+            </span>
+            <span className="text-sm font-semibold text-slate-500">
+              del pool de Aave
+>>>>>>> origin/main
             </span>
           </div>
 
           <div className="space-y-3 pt-3 border-t border-slate-100 text-sm">
             <div className="flex items-center justify-between">
+<<<<<<< HEAD
               <span className="text-slate-400 font-medium">Conectado a Aave</span>
               <span className="font-extrabold text-black">
                 Todavía no
+=======
+              <span className="text-slate-400 font-medium">Trabajando para vos</span>
+              <span className="font-extrabold text-black font-mono">
+                $150 . 198 . 641
+>>>>>>> origin/main
               </span>
             </div>
 
             <div className="flex items-center justify-between">
+<<<<<<< HEAD
               <span className="text-slate-400 font-medium">Tu dinero en el pool</span>
               <span className="font-extrabold text-black">
                 No depositás nada
+=======
+              <span className="text-slate-400 font-medium">Prestado</span>
+              <span className="font-extrabold text-black font-mono">
+                89%
+>>>>>>> origin/main
               </span>
             </div>
 
             <div className="flex items-center justify-between">
               <span className="text-slate-400 font-medium">Podés sacar</span>
               <span className="font-extrabold text-black">
+<<<<<<< HEAD
                 No hay depósito
+=======
+                Ahora
+>>>>>>> origin/main
               </span>
             </div>
           </div>
@@ -197,9 +243,13 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
             TEXTO LEGAL / EXPLICATIVO AL PIE
            ===================================================================== */}
         <p className="text-center text-[11px] text-slate-400 leading-relaxed px-4 pt-2 font-medium">
+<<<<<<< HEAD
           Todavía no estamos conectados a Aave, así que la tasa no sale de la
           cadena todavía. Tu rendimiento es cero porque no hay nada depositado, no
           porque el pool rinda poco.
+=======
+          La tasa del pool sale de la cadena. El rendimiento que vos ganás depende de cuánto tengas acá, y todavía no tenés nada depositado.
+>>>>>>> origin/main
         </p>
       </div>
 
@@ -230,11 +280,15 @@ export const DigitalDollarsView: React.FC<DigitalDollarsViewProps> = ({
 
             <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-1">
               <p>
+<<<<<<< HEAD
                 <p className="font-medium">
                 Generan rendimientos pasivos automáticos conectándose a los pools
                 descentralizados de Aave V3. Eso es lo que van a hacer cuando la
                 conexión esté; hoy todavía no hay conexión.
               </p>
+=======
+                Generan rendimientos pasivos automáticos segundo a segundo conectándose a los pools descentralizados de Aave V3.
+>>>>>>> origin/main
               </p>
             </div>
 

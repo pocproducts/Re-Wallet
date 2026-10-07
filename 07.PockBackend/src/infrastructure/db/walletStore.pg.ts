@@ -12,12 +12,17 @@
  * `('ethereum','solana')`. That is exactly why the creation order is EVM first —
  * writing them the other way round produces an error the database catches.
  *
+<<<<<<< HEAD
  * ── `ON CONFLICT DO NOTHING` ──────────────────────────────────────────────────
+=======
+ * ── Why `ON CONFLICT DO NOTHING` ──────────────────────────────────────────────
+>>>>>>> origin/main
  *
  * `UNIQUE (user_id, chain_type)` means a second write for the same pair is a
  * constraint violation. The caller already holds a valid address from Privy, and
  * the row it wanted exists, so swallowing the duplicate is the correct outcome —
  * the constraint is the last line of defence against two overlapping logins.
+<<<<<<< HEAD
  *
  * ── `evm_network` is a column, not a row ──────────────────────────────────────
  *
@@ -29,6 +34,11 @@
 import { WALLET_CHAIN_ORDER } from '../../domain/wallet/chains';
 import type { WalletChain } from '../../domain/wallet/chains';
 import { DEFAULT_EVM_NETWORK, toEvmNetworkId } from '../../domain/wallet/evmNetwork';
+=======
+ */
+import { WALLET_CHAIN_ORDER } from '../../domain/wallet/chains';
+import type { WalletChain } from '../../domain/wallet/chains';
+>>>>>>> origin/main
 import type { KnownWallet, WalletStore } from '../../domain/ports/wallet-store';
 import type { Database } from './client';
 
@@ -36,7 +46,10 @@ interface WalletRow {
   readonly address: string;
   readonly provider_wallet_id: string | null;
   readonly chain_type: string;
+<<<<<<< HEAD
   readonly evm_network: string;
+=======
+>>>>>>> origin/main
 }
 
 /**
@@ -52,7 +65,11 @@ const toWalletChain = (value: string): WalletChain | null =>
 export const createPostgresWalletStore = (db: Database): WalletStore => ({
   async findByUserId(userId: string): Promise<readonly KnownWallet[]> {
     const rows = (await db`
+<<<<<<< HEAD
       SELECT address, provider_wallet_id, chain_type, evm_network
+=======
+      SELECT address, provider_wallet_id, chain_type
+>>>>>>> origin/main
         FROM rewallet.wallets
        WHERE user_id = ${userId}
        ORDER BY created_at ASC
@@ -62,6 +79,7 @@ export const createPostgresWalletStore = (db: Database): WalletStore => ({
       const row = raw as WalletRow;
       const chain = toWalletChain(row.chain_type);
       if (chain === null) return [];
+<<<<<<< HEAD
 
       /*
        * The column is only an answer on an EVM row. On a Solana row it holds the
@@ -78,10 +96,14 @@ export const createPostgresWalletStore = (db: Database): WalletStore => ({
         chain,
         evmNetwork,
       }];
+=======
+      return [{ address: row.address, providerWalletId: row.provider_wallet_id, chain }];
+>>>>>>> origin/main
     });
   },
 
   async save(userId: string, wallet: KnownWallet): Promise<void> {
+<<<<<<< HEAD
     /*
      * La columna se escribe siempre, nunca se deja al `DEFAULT` de la base.
      *
@@ -96,6 +118,11 @@ export const createPostgresWalletStore = (db: Database): WalletStore => ({
     await db`
       INSERT INTO rewallet.wallets (user_id, address, provider_wallet_id, chain_type, evm_network)
       VALUES (${userId}, ${wallet.address}, ${wallet.providerWalletId}, ${wallet.chain}, ${evmNetwork})
+=======
+    await db`
+      INSERT INTO rewallet.wallets (user_id, address, provider_wallet_id, chain_type)
+      VALUES (${userId}, ${wallet.address}, ${wallet.providerWalletId}, ${wallet.chain})
+>>>>>>> origin/main
       ON CONFLICT (user_id, chain_type) DO NOTHING
     `;
   },

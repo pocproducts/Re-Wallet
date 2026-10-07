@@ -60,7 +60,10 @@
  */
 import { WALLET_CHAIN_ORDER } from '../../domain/wallet/chains';
 import type { WalletChain } from '../../domain/wallet/chains';
+<<<<<<< HEAD
 import { DEFAULT_EVM_NETWORK } from '../../domain/wallet/evmNetwork';
+=======
+>>>>>>> origin/main
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 import type { UserDirectory } from '../../domain/ports/user-directory';
@@ -255,6 +258,7 @@ export const claimWalletsFor = (deps: {
           // Privy's address, verbatim. The browser's only has to have agreed.
           address: record.address,
           providerWalletId: record.providerWalletId,
+<<<<<<< HEAD
           /*
            * The EVM network in use, recorded on the row. Nobody chose one at
            * login, so it is the default — Ethereum mainnet, which is what the
@@ -263,6 +267,8 @@ export const claimWalletsFor = (deps: {
            * invents a second EVM wallet, and this is not one.
            */
           evmNetwork: chain === 'ethereum' ? DEFAULT_EVM_NETWORK : null,
+=======
+>>>>>>> origin/main
         });
       }
 

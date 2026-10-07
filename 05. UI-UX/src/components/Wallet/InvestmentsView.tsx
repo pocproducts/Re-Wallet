@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import React, { useMemo, useState } from 'react';
+=======
+import React, { useState } from 'react';
+>>>>>>> origin/main
 import {
   Search,
   Bell,
@@ -7,19 +11,26 @@ import {
   EyeOff,
   ChevronRight,
 } from 'lucide-react';
+<<<<<<< HEAD
 import { splitUsdDisplay } from '../../services/portfolio';
 import type { PortfolioView } from '../../hooks/usePortfolio';
+=======
+>>>>>>> origin/main
 import { UserProfileData } from '../../types';
 
 interface InvestmentsViewProps {
   profile: UserProfileData | null;
+<<<<<<< HEAD
   /** Saldos de la cadena, leídos una vez por sesión en el `App`. */
   portfolio?: PortfolioView;
+=======
+>>>>>>> origin/main
   onOpenProfile?: () => void;
   onNavigateToWallet?: () => void;
   onOpenSearch?: () => void;
   onOpenBugModal?: () => void;
   onOpenNotifications?: () => void;
+<<<<<<< HEAD
   /**
    * Hay avisos que esta persona todavía no vio en su última visita.
    *
@@ -27,24 +38,33 @@ interface InvestmentsViewProps {
    * la prop, no hay punto — un punto falso es peor que ningún punto.
    */
   hasUnreadNotifications?: boolean;
+=======
+>>>>>>> origin/main
   onOpenDigitalDollars?: () => void;
   onOpenCryptoList?: () => void;
 }
 
 export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
   profile,
+<<<<<<< HEAD
   portfolio,
+=======
+>>>>>>> origin/main
   onOpenProfile,
   onNavigateToWallet,
   onOpenSearch,
   onOpenBugModal,
   onOpenNotifications,
+<<<<<<< HEAD
   hasUnreadNotifications,
+=======
+>>>>>>> origin/main
   onOpenDigitalDollars,
   onOpenCryptoList,
 }) => {
   const [showBalance, setShowBalance] = useState<boolean>(true);
 
+<<<<<<< HEAD
   /*
    * Los saldos de esta pantalla.
    *
@@ -76,6 +96,8 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
   const cryptoBalanceIsZero =
     portfolio?.status === 'ready' && portfolio.cryptoBalanceIsZero === true;
 
+=======
+>>>>>>> origin/main
   const userTag = profile?.nombre
     ? '$' + profile.nombre.toLowerCase().replace(/\s+/g, '').slice(0, 10)
     : '$joadata';
@@ -119,6 +141,7 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
           <button
             onClick={onOpenNotifications}
             type="button"
+<<<<<<< HEAD
             aria-label={hasUnreadNotifications ? 'Notificaciones: hay avisos nuevos' : 'Notificaciones'}
             title={hasUnreadNotifications ? 'Notificaciones: hay avisos nuevos' : 'Notificaciones'}
             className="w-11 h-11 flex items-center justify-center text-black hover:opacity-75 active:scale-90 transition-all cursor-pointer relative"
@@ -139,6 +162,13 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
                 className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#ccff00] border border-black"
               />
             )}
+=======
+            aria-label="Notificaciones"
+            title="Notificaciones"
+            className="w-11 h-11 flex items-center justify-center text-black hover:opacity-75 active:scale-90 transition-all cursor-pointer relative"
+          >
+            <Bell className="w-5 h-5 stroke-[2.2]" />
+>>>>>>> origin/main
           </button>
         </div>
       </div>
@@ -187,6 +217,7 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
           {/* Importe U$20,15 */}
           <div className="flex items-baseline font-display">
             <span className="text-4xl font-extrabold text-black tracking-tight">
+<<<<<<< HEAD
               {showBalance ? (balanceIsZero ? 'U$0,00' : '—') : '••••'}
             </span>
           </div>
@@ -200,6 +231,18 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
                 ? 'No tenés saldos en ninguna billetera.'
                 : 'Sin precio de mercado, sin total'
               : '≈ ••••••••'}
+=======
+              {showBalance ? 'U$20' : '••••'}
+            </span>
+            <span className="text-2xl font-bold text-slate-300 ml-0.5">
+              {showBalance ? ',15' : ''}
+            </span>
+          </div>
+
+          {/* Equivalente en pesos ≈ $31.640,71 */}
+          <p className="text-xs font-semibold text-slate-400 font-mono tracking-tight pt-1">
+            {showBalance ? '≈ $31.640,71' : '≈ ••••••••'}
+>>>>>>> origin/main
           </p>
         </div>
       </div>
@@ -228,7 +271,14 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 block">Bitcoin & Crypto</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
+<<<<<<< HEAD
                 {showBalance ? (cryptoBalanceIsZero ? 'U$0,00' : '—') : '••'}
+=======
+                {showBalance ? 'U$20' : '••'}
+              </span>
+              <span className="text-sm font-bold text-slate-300 ml-0.5">
+                {showBalance ? ',15' : ''}
+>>>>>>> origin/main
               </span>
             </div>
           </div>
@@ -258,10 +308,17 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 block">Dólares digitales</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
+<<<<<<< HEAD
                 {!showBalance || usd === null ? '••' : usd.whole}
               </span>
               <span className="text-sm font-bold text-slate-300 ml-0.5">
                 {!showBalance || usd === null ? '' : usd.cents}
+=======
+                {showBalance ? 'U$0' : '••'}
+              </span>
+              <span className="text-sm font-bold text-slate-300 ml-0.5">
+                {showBalance ? ',00002' : ''}
+>>>>>>> origin/main
               </span>
             </div>
           </div>

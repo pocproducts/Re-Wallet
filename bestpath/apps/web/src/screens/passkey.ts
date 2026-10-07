@@ -6,7 +6,14 @@ import { detectBiometricLabel } from './shared';
 Router.register('passkey', {
   transition:'forward',
   render(params: any = {}){
-    const mode = params.mode || 'onboarding';
+    // THE DEFAULT IS 'login', and it used to be 'onboarding'. That single word
+    // is what locked a real user out: any navigation to this screen that forgot
+    // to say which ceremony it wanted got a REGISTER button, `signupWithPasskey`
+    // refuses a credential that already exists, and the user is told their
+    // fingerprint reader is broken. The two ceremonies are not
+    // interchangeable — one asserts an existing credential, the other creates
+    // one — and the harmless default is the one that can only ever fail.
+    const mode = params.mode === 'onboarding' ? 'onboarding' : 'login';
     const isLogin = mode === 'login';
     const platform = detectBiometricLabel();
 

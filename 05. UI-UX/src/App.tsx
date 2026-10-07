@@ -3,7 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+<<<<<<< HEAD
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+=======
+import React, { useState, useEffect } from 'react';
+>>>>>>> origin/main
 import { BottomNavbar } from './components/Navigation/BottomNavbar';
 import { WalletView } from './components/Wallet/WalletView';
 import { InvestmentsView } from './components/Wallet/InvestmentsView';
@@ -17,26 +21,36 @@ import { DigitalDollarsView } from './components/Investments/DigitalDollarsView'
 import { CryptoAssetsListView } from './components/Investments/CryptoAssetsListView';
 import { LoginGate } from './components/Auth/LoginGate';
 import { useSessionGate } from './hooks/useSessionGate';
+<<<<<<< HEAD
 import { useNotifications } from './hooks/useNotifications';
 import { usePortfolio } from './hooks/usePortfolio';
 import { useUserWallets } from './hooks/useUserWallets';
 import { ChargeQrModal, type ChargeReceiveAddress } from './components/Charge/ChargeQrModal';
 import { NavTab, TransactionItem } from './types';
 import { relativeTimeLabel, treatmentFor, NOTIFICATIONS_UNAVAILABLE_CODE } from './services/notifications';
+=======
+import { useUserWallets } from './hooks/useUserWallets';
+import { ChargeQrModal } from './components/Charge/ChargeQrModal';
+import { NavTab, TransactionItem } from './types';
+>>>>>>> origin/main
 import {
   X,
   Search,
   Bell,
   Loader2,
+<<<<<<< HEAD
   RefreshCw,
   User,
   ShieldCheck,
   Wallet,
   Link2,
+=======
+>>>>>>> origin/main
 } from 'lucide-react';
 
 const TRANSACTIONS_STORAGE_KEY = 'rewallet_transactions_data';
 
+<<<<<<< HEAD
 /*
  * El ícono de cada categoría. Es el **único** mapa de categoría→pintura que
  * existe: si mañana el backend emite otra, cae en `other` (`Bell`) y se muestra
@@ -50,6 +64,8 @@ const CATEGORY_ICONS = {
   bell: Bell,
 } as const;
 
+=======
+>>>>>>> origin/main
 export default function App() {
   /*
    * La puerta y el perfil salen de acá. `App` ya no lleva ningún flag de
@@ -74,6 +90,7 @@ export default function App() {
    * que se muestra, no un muro. Lo único que cambia es el aviso de abajo.
    */
   const { status: walletsStatus } = useUserWallets(sessionStatus === 'authenticated');
+<<<<<<< HEAD
 
   /*
    * Los saldos se leen UNA vez por sesión, acá y no en cada pantalla.
@@ -94,6 +111,8 @@ export default function App() {
    * recarga a mano.
    */
   const notifications = useNotifications(sessionStatus === 'authenticated');
+=======
+>>>>>>> origin/main
   const [walletsWarningDismissed, setWalletsWarningDismissed] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<NavTab>('wallet');
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
@@ -110,6 +129,7 @@ export default function App() {
   const [isDigitalDollarsOpen, setIsDigitalDollarsOpen] = useState(false);
   const [isCryptoListOpen, setIsCryptoListOpen] = useState(false);
 
+<<<<<<< HEAD
   /*
    * Actividad arranca **vacía**.
    *
@@ -126,6 +146,69 @@ export default function App() {
    */
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
 
+=======
+  // Saldo mock de Bitcoin
+  const [btcBalance, setBtcBalance] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem('rewallet_btc_balance');
+      return stored ? parseFloat(stored) : 0.000186;
+    } catch {
+      return 0.000186;
+    }
+  });
+
+  const handleUpdateBtcBalance = (newVal: number) => {
+    setBtcBalance(newVal);
+    try {
+      localStorage.setItem('rewallet_btc_balance', newVal.toString());
+    } catch (e) {
+      console.warn('Error saving btc balance:', e);
+    }
+  };
+
+  // Lista de transacciones en actividad con persistencia
+  const [transactions, setTransactions] = useState<TransactionItem[]>([
+    {
+      id: 'tx-1',
+      title: 'Compra de Cryptos',
+      date: '25 de Septiembre',
+      amount: '- 4.000,00 ARS',
+      isPositive: false,
+      type: 'ars',
+      section: 'Hoy',
+    },
+    {
+      id: 'tx-2',
+      title: 'Compra de Cryptos',
+      date: '25 de Septiembre',
+      amount: '+ 7,193689 TRX',
+      isPositive: true,
+      type: 'trx',
+      section: 'Hoy',
+    },
+    {
+      id: 'tx-3',
+      title: 'Compra de Cryptos',
+      date: '24 de Septiembre',
+      amount: '+ 18,93880759 DOGE',
+      isPositive: true,
+      type: 'doge',
+      section: 'Anteriores',
+    },
+    {
+      id: 'tx-4',
+      title: 'Compra de Cryptos',
+      date: '24 de Septiembre',
+      amount: '- 3.000,00 ARS',
+      isPositive: false,
+      type: 'ars',
+      section: 'Anteriores',
+    },
+  ]);
+
+  // Cargar las transacciones mock guardadas. El perfil **no** se carga de acá:
+  // viene de Privy.
+>>>>>>> origin/main
   useEffect(() => {
     try {
       const storedTx = localStorage.getItem(TRANSACTIONS_STORAGE_KEY);
@@ -154,6 +237,7 @@ export default function App() {
   };
 
   /*
+<<<<<<< HEAD
    * La dirección de cobro: la primera red real que el backend reportó.
    *
    * Antes el modal de cobrar usaba un saldo de Bitcoin escrito a mano y un
@@ -171,6 +255,11 @@ export default function App() {
    * Lo que se mantiene es lo mismo que estaba antes —transacciones y posición
    * en las pestañas— porque nada de eso es identidad. El saldo mock que
    * también se mantenía acá ya no existe.
+=======
+   * Cerrar sesión: primero el backend (borra la cookie) y después la de Privy.
+   * Lo que se mantiene es lo mismo que estaba antes —transacciones, saldo y
+   * posición en las pestañas— porque nada de eso es identidad.
+>>>>>>> origin/main
    */
   const handleSignOut = () => {
     void signOut().then(() => {
@@ -184,6 +273,7 @@ export default function App() {
     });
   };
 
+<<<<<<< HEAD
   /*
    * Un 401 en el feed de avisos significa que esta persona **ya no tiene
    * sesión** —la cookie era la que autorizaba la lectura—, no que los avisos
@@ -226,6 +316,8 @@ export default function App() {
     markNotificationsSeen();
   }, [isNotificationsOpen, notificationsStatus, markNotificationsSeen]);
 
+=======
+>>>>>>> origin/main
   // Handle visual del usuario ($joaquin / $joadata)
   const userTag = profile?.nombre
     ? '$' + profile.nombre.toLowerCase().replace(/\s+/g, '').slice(0, 10)
@@ -366,7 +458,10 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <WalletView
                         profile={profile}
+<<<<<<< HEAD
                         portfolio={portfolio}
+=======
+>>>>>>> origin/main
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToInvestments={() => setCurrentTab('investments')}
                         onNavigateToActivity={() => setCurrentTab('activity')}
@@ -375,7 +470,10 @@ export default function App() {
                         onOpenScanner={() => setIsScannerOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
+<<<<<<< HEAD
                         hasUnreadNotifications={notifications.hasUnread}
+=======
+>>>>>>> origin/main
                         onOpenAavePools={() => setIsAavePoolsOpen(true)}
                       />
                     </div>
@@ -386,13 +484,19 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <InvestmentsView
                         profile={profile}
+<<<<<<< HEAD
                         portfolio={portfolio}
+=======
+>>>>>>> origin/main
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onNavigateToWallet={() => setCurrentTab('wallet')}
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
+<<<<<<< HEAD
                         hasUnreadNotifications={notifications.hasUnread}
+=======
+>>>>>>> origin/main
                         onOpenDigitalDollars={() => setIsDigitalDollarsOpen(true)}
                         onOpenCryptoList={() => setIsCryptoListOpen(true)}
                       />
@@ -409,7 +513,10 @@ export default function App() {
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
+<<<<<<< HEAD
                         hasUnreadNotifications={notifications.hasUnread}
+=======
+>>>>>>> origin/main
                       />
                     </div>
                   )}
@@ -439,7 +546,13 @@ export default function App() {
         <ChargeQrModal
           isOpen={isChargeModalOpen}
           onClose={() => setIsChargeModalOpen(false)}
+<<<<<<< HEAD
           receiveAddress={receiveAddress}
+=======
+          userTag={userTag}
+          btcBalance={btcBalance}
+          onUpdateBtcBalance={handleUpdateBtcBalance}
+>>>>>>> origin/main
           onAddTransaction={handleAddTransaction}
           onNavigateToActivity={() => {
             setIsChargeModalOpen(false);
@@ -461,7 +574,11 @@ export default function App() {
             LAYOUTS DE 3ER NIVEL (PANTALLA COMPLETA SIN HEADER SUPERIOR NI BOTTOM NAVBAR)
            ========================================================================= */}
 
+<<<<<<< HEAD
         {/* 1. Rendimientos Pools de Aave V3 (3er nivel desde Inversiones -> Ver más) */}
+=======
+        {/* 1. Rendimientos Pools de Aave V3 (3er nivel desde píldora 20.77% anual o ver más) */}
+>>>>>>> origin/main
         {isAavePoolsOpen && (
           <AavePoolsView
             onBack={() => setIsAavePoolsOpen(false)}
@@ -472,7 +589,10 @@ export default function App() {
         {isDigitalDollarsOpen && (
           <DigitalDollarsView
             onBack={() => setIsDigitalDollarsOpen(false)}
+<<<<<<< HEAD
             portfolio={portfolio}
+=======
+>>>>>>> origin/main
             onOpenAavePools={() => {
               setIsDigitalDollarsOpen(false);
               setIsAavePoolsOpen(true);
@@ -485,7 +605,10 @@ export default function App() {
           <CryptoAssetsListView
             onBack={() => setIsCryptoListOpen(false)}
             userTag={userTag}
+<<<<<<< HEAD
             portfolio={portfolio}
+=======
+>>>>>>> origin/main
           />
         )}
 
@@ -568,6 +691,7 @@ export default function App() {
           </div>
         )}
 
+<<<<<<< HEAD
         {/*
          * MODAL DE NOTIFICACIONES — lo que pasó en esta cuenta, y nada más.
          *
@@ -582,6 +706,10 @@ export default function App() {
          * leer las noticias" son hechos distintos y se ven distintos.
          */}
         {isNotificationsOpen && !notifications.signedOut && (
+=======
+        {/* Modal de Notificaciones */}
+        {isNotificationsOpen && (
+>>>>>>> origin/main
           <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center px-4 pb-4 safe-top-12 animate-in fade-in duration-200">
             <div className="w-full max-w-sm bg-white rounded-[32px] p-5 shadow-2xl relative space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -593,6 +721,7 @@ export default function App() {
                     Notificaciones
                   </h3>
                 </div>
+<<<<<<< HEAD
                 <div className="flex items-center gap-1">
                   {/*
                    * Recargar a mano. No hay push: el feed se lee al abrir la app
@@ -715,6 +844,43 @@ export default function App() {
                   })}
                 </div>
               )}
+=======
+                <button
+                  onClick={() => setIsNotificationsOpen(false)}
+                  type="button"
+                  className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-black hover:bg-slate-200 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/*
+               * "Face ID Activo" se fue de acá.
+               *
+               * Decía, con un tilde verde, que la sesión biométrica estaba
+               * protegida — y no había **nada** detrás: era un texto fijo que se
+               * mostrara que la passkey existiera o no. La Hoja 1 prohibe que la
+               * persona vea un estado que el sistema no comprobó, y una
+               * notificación con tilde verde es la forma más cara de mentir:
+               * nadie la cuestiona.
+               *
+               * No se reemplaza con otro avisofixed: se deja de avisar. Cuando
+               * el flujo de Privy esté probado y sepamos leer del usuario si
+               * tiene una passkey, se vuelve a mostrar **derivado de ese dato**.
+               */}
+              <div className="space-y-2.5 text-xs">
+
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-2.5">
+                  <div className="w-4 h-4 rounded-full bg-[#ccff00] text-black font-bold flex items-center justify-center text-[11px] shrink-0 mt-0.5">
+                    $
+                  </div>
+                  <div>
+                    <span className="font-bold text-black block">Rendimiento Activo (20.77%)</span>
+                    <span className="text-slate-500 text-[11px]">Tus fondos en pesos están generando rendimiento anual diario.</span>
+                  </div>
+                </div>
+              </div>
+>>>>>>> origin/main
             </div>
           </div>
         )}

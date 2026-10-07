@@ -165,6 +165,15 @@ export const toStorePatch = (session: ApiSession): Partial<AppState> => {
     // strings and "no email yet" is the empty string here, not the word null.
     recoveryEmail: session.user.email ?? '',
     recoveryPhone: session.user.phone ?? '',
+    // The wallet ADDRESS, not the balance, and it was missing here. It used to
+    // reach the store through exactly one door: `toPositionPatch`, which reads
+    // it off a yield position. A user who had just registered had no position,
+    // so `walletAddress` stayed '' and the profile answered "Se genera al crear
+    // tu cuenta" about a wallet that already existed on-chain and in the
+    // response we were holding. The address is public by construction — it is
+    // printed on an explorer — so it belongs in the store, and it is not a
+    // credential: `stripSessionOwned` owns `session` alone, deliberately.
+    walletAddress: wallet.address,
     balance: toBalance(wallet),
     hasReceivedFunds: toHasReceivedFunds(wallet),
     yieldStartedAt: toYieldStartedAt(wallet),

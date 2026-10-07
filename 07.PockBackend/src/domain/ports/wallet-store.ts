@@ -14,12 +14,16 @@
  * case, which is the only place that knows about both.
  */
 import type { WalletChain } from '../wallet/chains';
+<<<<<<< HEAD
 import type { EvmNetworkId } from '../wallet/evmNetwork';
+=======
+>>>>>>> origin/main
 
 export interface KnownWallet {
   readonly providerWalletId: string | null;
   readonly address: string;
   readonly chain: WalletChain;
+<<<<<<< HEAD
   /**
    * Which EVM network this person operates on, as CAIP-2. `null` on a non-EVM
    * row, and `null` on an EVM row whose stored value is not one we support —
@@ -27,6 +31,8 @@ export interface KnownWallet {
    * `../wallet/evmNetwork.ts`.
    */
   readonly evmNetwork: EvmNetworkId | null;
+=======
+>>>>>>> origin/main
 }
 
 export interface WalletStore {

@@ -1,10 +1,16 @@
 import React from 'react';
 import { ArrowLeft, ShieldCheck } from 'lucide-react';
 
+<<<<<<< HEAD
+=======
+import { formatApr } from '../../config/markets';
+
+>>>>>>> origin/main
 interface AavePoolsViewProps {
   onBack: () => void;
 }
 
+<<<<<<< HEAD
 /*
  * ESTA PANTALLA NO MUESTRA NINGÚN NÚMERO DEL POOL, Y ESO ES LO VERDADERO.
  *
@@ -24,6 +30,8 @@ interface AavePoolsViewProps {
  * Cuando T5 conecte el pool, esta pantalla recibe la lectura y los espacios
  * vuelven a ser cifras. El lugar de cada una no cambia: cambia de dónde sale.
  */
+=======
+>>>>>>> origin/main
 export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
   return (
     <div className="absolute inset-0 z-50 bg-[#f0f2f5] flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans">
@@ -58,6 +66,7 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
         <div className="bg-white rounded-[28px] p-5 shadow-xs space-y-3 border border-slate-100">
           <div className="flex items-baseline">
             {/*
+<<<<<<< HEAD
               El guion va en `text-slate-300` y al lado, en palabras, está "sin
               cifra todavía": es lo que impide que se lea como un cero. La tasa
               real, cuando exista, entra acá con su signo adentro del número,
@@ -83,13 +92,40 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
             </span>
             <span className="text-xs text-slate-500 font-medium">
               Todavía no leemos la cadena
+=======
+              El signo NO va escrito acá. Va adentro del número que trae
+              `formatApr()`, y es a propósito: la tasa no siempre es positiva, y
+              un `+` fijo de esta pantalla mostraría `+-0,50%` el día que el pool
+              deje de rendir. La promesa del producto es que el dinero rinde; si
+              un día no rinde, el número lo dice solo y sin que nadie le grite.
+            */}
+            <span className="text-4xl sm:text-[42px] font-black font-display tracking-tight text-black">
+              {formatApr()}%
+            </span>
+            <span className="text-sm font-semibold text-slate-600 ml-2">
+              anual
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-600 font-bold text-[11px] tracking-wide">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              ACTUALIZADO AHORA
+            </span>
+            <span className="text-xs text-slate-500 font-medium">
+              Se actualiza solo
+>>>>>>> origin/main
             </span>
           </div>
 
           <div className="bg-[#f8f9fa] rounded-2xl p-3 text-[11px] text-slate-600 leading-relaxed font-normal">
+<<<<<<< HEAD
             Todavía no estamos conectados a Aave, así que no hay tasa que
             mostrarte. Tu rendimiento es cero porque no depositás nada, no porque
             el pool rinda poco.
+=======
+            Esto es lo que está ganando tu dinero ahora mismo.
+>>>>>>> origin/main
           </div>
         </div>
 
@@ -102,11 +138,18 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
             </span>
           </div>
 
+<<<<<<< HEAD
           {/* Las IPPIs están, y las tres muestran que no hay dato. */}
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-[#f8f9fa] rounded-2xl p-3 py-3.5 text-center flex flex-col justify-center">
               <span className="text-xs sm:text-[13px] font-extrabold text-slate-500 font-display tracking-tight">
                 Sin datos
+=======
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-[#f8f9fa] rounded-2xl p-3 py-3.5 text-center flex flex-col justify-center">
+              <span className="text-xs sm:text-[13px] font-extrabold text-black font-display tracking-tight">
+                $150.198.641
+>>>>>>> origin/main
               </span>
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-1">
                 AHÍ ESTÁ
@@ -114,8 +157,13 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
             </div>
 
             <div className="bg-[#f8f9fa] rounded-2xl p-3 py-3.5 text-center flex flex-col justify-center">
+<<<<<<< HEAD
               <span className="text-xs sm:text-[13px] font-extrabold text-slate-500 font-display tracking-tight">
                 Sin datos
+=======
+              <span className="text-sm sm:text-base font-extrabold text-black font-display">
+                89%
+>>>>>>> origin/main
               </span>
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-1">
                 EN USO
@@ -123,8 +171,13 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
             </div>
 
             <div className="bg-[#f8f9fa] rounded-2xl p-3 py-3.5 text-center flex flex-col justify-center">
+<<<<<<< HEAD
               <span className="text-xs sm:text-[13px] font-extrabold text-slate-500 font-display tracking-tight">
                 No depositás nada
+=======
+              <span className="text-sm sm:text-base font-extrabold text-slate-400 font-display">
+                —
+>>>>>>> origin/main
               </span>
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-1">
                 VOS TENÉS
@@ -141,19 +194,31 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
 
           <div className="flex items-center justify-between py-1">
             <span className="text-xs font-medium text-slate-700">Cuánto ganaste</span>
+<<<<<<< HEAD
             <span className="text-xs font-bold text-slate-500">Nada todavía</span>
+=======
+            <span className="text-xs font-bold text-slate-400">—</span>
+>>>>>>> origin/main
           </div>
 
           <div className="border-t border-slate-100" />
 
           <div className="flex items-center justify-between py-1">
             <span className="text-xs font-medium text-slate-700">Rendimiento acumulado</span>
+<<<<<<< HEAD
             <span className="text-xs font-bold text-slate-500">Cero: no depositás nada</span>
           </div>
 
           <p className="text-[11px] text-slate-500 leading-relaxed font-normal pt-1">
             Tu rendimiento se calcula con los movimientos de cada día, así que no
             cambia de un día para otro.
+=======
+            <span className="text-xs font-bold text-slate-400">—</span>
+          </div>
+
+          <p className="text-[11px] text-slate-500 leading-relaxed font-normal pt-1">
+            Tu rendimiento se calcula con los movimientos de cada día, así que no cambia de un día para otro.
+>>>>>>> origin/main
           </p>
         </div>
 
@@ -165,11 +230,16 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
 
           <div className="flex items-center justify-between py-1">
             <span className="text-xs font-medium text-slate-700">Podés sacar tu dinero</span>
+<<<<<<< HEAD
             <span className="text-xs font-bold text-slate-500">No hay depósito</span>
+=======
+            <span className="text-xs font-bold text-slate-400">—</span>
+>>>>>>> origin/main
           </div>
 
           <div className="border-t border-slate-100" />
 
+<<<<<<< HEAD
           {/*
             Antes, acá, decía "Cuando quieras / Sin esperas ni costos". Son
             promesas sobre un contrato que todavía no conectamos, y una promesa de
@@ -182,13 +252,25 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
               <span className="text-xs font-bold text-slate-500 block">Todavía no se puede retirar</span>
               <span className="text-[11px] text-slate-400 font-medium block -mt-0.5">
                 Porque no depositás nada
+=======
+          <div className="flex items-center justify-between py-1">
+            <span className="text-xs font-medium text-slate-700">Cuándo</span>
+            <div className="text-right">
+              <span className="text-xs font-bold text-black block">Cuando quieras</span>
+              <span className="text-[11px] text-slate-400 font-medium block -mt-0.5">
+                Sin esperas ni costos
+>>>>>>> origin/main
               </span>
             </div>
           </div>
 
           <p className="text-[11px] text-slate-500 leading-relaxed font-normal pt-1">
+<<<<<<< HEAD
             No podemos decirte todavía cuándo vas a poder sacar tu dinero: eso lo
             contesta el contrato del pool, y todavía no lo estamos leyendo.
+=======
+            Tu dinero está disponible cuando lo necesites. No hay esperas, ni bloqueos, ni penalizaciones.
+>>>>>>> origin/main
           </p>
         </div>
 
@@ -201,7 +283,12 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
           <div className="flex items-center justify-between py-1">
             <span className="text-xs font-medium text-slate-700">Tu ganancia</span>
             <div className="text-right">
+<<<<<<< HEAD
               <span className="text-xs font-extrabold text-slate-500 font-display">Sin cifra todavía</span>
+=======
+              <span className="text-xs font-extrabold text-black font-display">{formatApr()}</span>
+              <span className="text-[11px] font-semibold text-slate-500 ml-1">anual</span>
+>>>>>>> origin/main
             </div>
           </div>
 
@@ -210,7 +297,12 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
           <div className="flex items-center justify-between py-1">
             <span className="text-xs font-medium text-slate-700">Lo que te cuesta</span>
             <div className="text-right">
+<<<<<<< HEAD
               <span className="text-xs font-bold text-slate-500">Sin cifra todavía</span>
+=======
+              <span className="text-xs font-bold text-slate-400">—</span>
+              <span className="text-[11px] font-semibold text-slate-400 ml-1">anual</span>
+>>>>>>> origin/main
             </div>
           </div>
 
@@ -219,7 +311,14 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
           <div className="flex items-center justify-between py-1">
             <span className="text-xs font-medium text-slate-700">En uso</span>
             <div className="text-right">
+<<<<<<< HEAD
               <span className="text-xs font-bold text-slate-500 block">Sin datos</span>
+=======
+              <div>
+                <span className="text-xs font-extrabold text-black font-display">89,21</span>
+                <span className="text-[11px] font-semibold text-slate-500 ml-0.5">%</span>
+              </div>
+>>>>>>> origin/main
               <span className="text-[11px] text-slate-400 font-medium block -mt-0.5">
                 del dinero depositado
               </span>
@@ -230,6 +329,7 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
 
           <div className="flex items-center justify-between py-1">
             <span className="text-xs font-medium text-slate-700">Respaldo</span>
+<<<<<<< HEAD
             <span className="text-xs font-bold text-slate-500">Sin datos</span>
           </div>
 
@@ -237,11 +337,16 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
             Cuando haya conexión, acá va a estar de dónde sale cada número. Nada
             de esto se escribe a mano.
           </p>
+=======
+            <span className="text-xs font-bold text-slate-400">—</span>
+          </div>
+>>>>>>> origin/main
         </div>
 
         {/* CARD 6: ESTADO DEL POOL */}
         <div className="bg-white rounded-[28px] p-5 shadow-xs space-y-3.5 border border-slate-100 mb-6">
           <span className="text-xs font-bold text-slate-600 tracking-wider uppercase font-display block">
+<<<<<<< HEAD
             ESTADO ACTUAL
           </span>
 
@@ -259,6 +364,18 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
                 className="bg-[#f4f7fa] text-slate-500 font-medium text-[11px] py-1.5 px-2 rounded-full text-center flex items-center justify-center gap-1"
               >
                 <span className="w-1 h-1 rounded-full bg-slate-300" />
+=======
+            SIEMPRE DISPONIBLE
+          </span>
+
+          <div className="grid grid-cols-4 gap-2">
+            {['Seguro', 'Sin esperas', 'Sin comisiones', 'Todos los días'].map((status) => (
+              <div
+                key={status}
+                className="bg-[#f4f7fa] text-slate-700 font-medium text-[11px] py-1.5 px-2 rounded-full text-center flex items-center justify-center gap-1"
+              >
+                <span className="w-1 h-1 rounded-full bg-slate-400" />
+>>>>>>> origin/main
                 <span>{status}</span>
               </div>
             ))}
@@ -281,4 +398,8 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack }) => {
       </div>
     </div>
   );
+<<<<<<< HEAD
 };
+=======
+};
+>>>>>>> origin/main

@@ -4,6 +4,7 @@ import { PrivyProvider } from '@privy-io/react-auth';
 
 import App from './App.tsx';
 import './index.css';
+<<<<<<< HEAD
 import { DEFAULT_EVM_CHAIN, SUPPORTED_EVM_CHAINS } from './config/chains';
 
 /**
@@ -22,6 +23,8 @@ const privyConfig = {
   // `Chain[]`, y un `readonly` no se le puede asignar.
   supportedChains: [...SUPPORTED_EVM_CHAINS],
 };
+=======
+>>>>>>> origin/main
 
 /**
  * El app id **va al navegador**, y no es un descuido: es público por diseño.
@@ -50,7 +53,11 @@ if (!appId) {
 } else {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
+<<<<<<< HEAD
       <PrivyProvider appId={appId} config={privyConfig}>
+=======
+      <PrivyProvider appId={appId}>
+>>>>>>> origin/main
         <App />
       </PrivyProvider>
     </StrictMode>,

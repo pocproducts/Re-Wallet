@@ -6,6 +6,7 @@ import { generateKeyPair, exportJWK, SignJWT, type JWK } from 'jose';
 import { eq } from 'drizzle-orm';
 import { getEnv, type Env } from '@bestpath/config';
 import { loadEnvFiles } from '../../src/lib/dotenv';
+import { testEnv } from '../helpers/testDb';
 import { createApp } from '../../src/app';
 import { getWalletForUser, __resetPrivy } from '../../src/services/privy';
 import { getDb } from '../../src/db/client';
@@ -134,7 +135,7 @@ const sessionTokenFrom = (setCookie: string | undefined): string => {
 };
 
 beforeAll(async () => {
-  const base = getEnv();
+  const base = testEnv();
 
   // A local JWKS, served by this process, so `createRemoteJWKSet` has something
   // real to fetch and the verification path is the production one.

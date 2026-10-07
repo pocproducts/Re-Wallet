@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { AssetTradeCard } from '../common';
+<<<<<<< HEAD
 import { defaultDisplayCurrency } from '../../config/displayCurrency';
 import { useAssetTrade } from '../../hooks/useAssetTrade';
 import { assetOrDefault } from '../../config/markets';
@@ -49,12 +50,20 @@ const abbreviateAddress = (address: string): string => {
  * Lo que queda es lo que sí existe: la cantidad y su unidad, y las redes donde
  * vive ese saldo con su dirección.
  */
+=======
+import { balanceLabel, priceUsd } from '../../config/markets';
+import { defaultDisplayCurrency, formatFiat } from '../../config/displayCurrency';
+import { useAssetTrade } from '../../hooks/useAssetTrade';
+import { assetOrDefault } from '../../config/markets';
+
+>>>>>>> origin/main
 export interface CryptoAssetData {
   id: string;
   name: string;
   ticker: string;
   iconBg: string;
   iconText: string;
+<<<<<<< HEAD
   /** La cantidad real y su unidad, tal como se pinta: `"123,456789 MON"`. */
   totalCrypto: string;
   /** Varía según si hay una variación real; hoy no la hay, y va vacío. */
@@ -62,6 +71,14 @@ export interface CryptoAssetData {
   isPositive: boolean;
   /** Redes donde hay saldo de este activo, con la dirección para depositar. */
   networks?: readonly { readonly label: string; readonly address: string | null }[];
+=======
+  totalUsd: string;
+  totalCrypto: string;
+  change24h: string;
+  isPositive: boolean;
+  priceUsd?: number;
+  balanceNumber?: number;
+>>>>>>> origin/main
 }
 
 interface CryptoAssetDetailModalProps {
@@ -99,6 +116,10 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
   const [currencyMode, setCurrencyMode] = useState<'USD' | 'ARS'>(defaultDisplayCurrency);
   const [timeframe, setTimeframe] = useState<'24H' | '7D' | '1M' | '1A' | 'MAX'>('24H');
   const [isFavorite, setIsFavorite] = useState(false);
+<<<<<<< HEAD
+=======
+  const [selectedNetwork, setSelectedNetwork] = useState('Solana');
+>>>>>>> origin/main
   const [keypadAmount, setKeypadAmount] = useState('0');
   const [lemontagSearch, setLemontagSearch] = useState('');
   const [selectedRecipient, setSelectedRecipient] = useState<{
@@ -158,6 +179,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
     initialDestination: assetOrDefault('USDC'),
   });
 
+<<<<<<< HEAD
   /*
    * La red de depósito elegida, por posición.
    *
@@ -167,6 +189,8 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
    */
   const [selectedNetworkIndex, setSelectedNetworkIndex] = useState(0);
 
+=======
+>>>>>>> origin/main
   if (!asset) return null;
 
   // Manejo de copiado al portapapeles
@@ -195,6 +219,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
     }
   };
 
+<<<<<<< HEAD
   /*
    * Las redes de un activo son **las que la cadena reportó**, con la dirección de
    * esta persona en cada una.
@@ -227,6 +252,45 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
       : (networksForAsset[Math.min(selectedNetworkIndex, networksForAsset.length - 1)] ?? null);
   const selectedNetwork = selectedNetworkEntry?.name ?? null;
   const depositAddress = selectedNetworkEntry?.address ?? null;
+=======
+  // Redes específicas para el asset
+  const networksForAsset =
+    asset.ticker === 'SOL'
+      ? [
+          { name: 'Bnb Chain (BEP20)', desc: 'Red nativa de Binance', icon: '❖', bg: 'bg-[#F3BA2F]' },
+          { name: 'Solana', desc: 'Red nativa de Solana', icon: '◎', bg: 'bg-gradient-to-tr from-[#9945FF] to-[#14F195]' },
+        ]
+      : asset.ticker === 'BTC'
+      ? [
+          { name: 'Bitcoin', desc: 'Red nativa de Bitcoin', icon: '₿', bg: 'bg-[#F7931A]' },
+          { name: 'Bnb Chain (BEP20)', desc: 'Red nativa de Binance', icon: '❖', bg: 'bg-[#F3BA2F]' },
+        ]
+      : asset.ticker === 'ETH'
+      ? [
+          { name: 'Ethereum (ERC20)', desc: 'Red nativa de Ethereum', icon: 'Ξ', bg: 'bg-[#627EEA]' },
+          { name: 'Arbitrum One', desc: 'Red capa 2 de Ethereum', icon: '◈', bg: 'bg-[#28A0F0]' },
+          { name: 'Optimism', desc: 'Red capa 2 de Ethereum', icon: '🔴', bg: 'bg-[#FF0420]' },
+        ]
+      : [
+          { name: 'Polygon', desc: 'Red Polygon PoS', icon: '⬡', bg: 'bg-[#8247E5]' },
+          { name: 'Bnb Chain (BEP20)', desc: 'Red nativa de Binance', icon: '❖', bg: 'bg-[#F3BA2F]' },
+        ];
+
+  /*
+   * El precio sale de `config/markets`, no de una cadena de `?:` con números
+   * escritos acá. Antes esta línea tenía `118.27`, `95400.0` y `2650.0` sueltos,
+   * y el precio del Bitcoin no coincidía con el que usaba la lista de activos:
+   * dos pantallas del mismo producto cotizaban la misma moneda distinto.
+   */
+  const currentPriceUsd = asset.priceUsd || priceUsd(asset.ticker);
+  /*
+   * El precio se formatea por la misma costura que el resto de la app.
+   *
+   * Antes la rama de dólares usaba `toFixed(2)`, que escribe el separador con
+   * punto —"95400.00"— mientras todo lo demás usa coma. Dos formatos para el
+   * mismo número en la misma pantalla.
+   */
+>>>>>>> origin/main
 
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] text-black flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans w-full max-w-md mx-auto">
@@ -280,6 +344,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 </div>
                 <div className="flex items-baseline font-display">
                   <span className="text-3xl font-black text-black tracking-tight">
+<<<<<<< HEAD
                     {/*
                       La cantidad real, con su unidad. Antes caía en
                       `balanceLabel(asset.ticker)`, que devuelve el saldo de la
@@ -295,6 +360,15 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 exige el precio del activo, y `/api/portfolio` no trae precios.
                 Ponerlo era poner un precio de tabla y llamarlo equivalente.
               */}
+=======
+                    {asset.totalCrypto || `${balanceLabel(asset.ticker)} ${asset.ticker}`}
+                  </span>
+                </div>
+              </div>
+              <span className="text-xs font-semibold text-slate-400 font-mono tracking-tight block pl-9">
+                ≈ {formatFiat(parseFloat(asset.totalUsd.replace('U$', '').replace(',', '.')), 'ARS')}
+              </span>
+>>>>>>> origin/main
             </div>
 
             {/* 4 Botones de Acción Circulares (Negro con icono blanco) */}
@@ -387,6 +461,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </div>
             </div>
 
+<<<<<<< HEAD
             {/*
               Precio y variación.
 
@@ -401,10 +476,19 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
             <div className="text-center space-y-0.5 pt-1">
               <div className="flex items-baseline justify-center gap-1.5 font-display">
                 <span className="text-2xl font-black text-slate-300">—</span>
+=======
+            {/* Precio Actual y Porcentaje */}
+            <div className="text-center space-y-0.5 pt-1">
+              <div className="flex items-baseline justify-center gap-1.5 font-display">
+                <span className="text-2xl font-black text-black">
+                  {formatFiat(currentPriceUsd, currencyMode)}
+                </span>
+>>>>>>> origin/main
                 <span className="text-xs font-bold text-slate-400">
                   {currencyMode}
                 </span>
               </div>
+<<<<<<< HEAD
               {asset.change24h.length > 0 && (
                 <span
                   className={`text-xs font-bold ${
@@ -445,6 +529,40 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                   acá.
                 </span>
               </div>
+=======
+              <span
+                className={`text-xs font-bold ${
+                  asset.isPositive ? 'text-emerald-500' : 'text-red-500'
+                }`}
+              >
+                {asset.change24h || '-1,15%'}
+              </span>
+            </div>
+
+            {/* Gráfico de Precio SVG Dinámico en Púrpura con Gradiente */}
+            <div className="w-full h-44 relative flex items-center justify-center overflow-hidden">
+              <svg viewBox="0 0 400 180" className="w-full h-full overflow-visible">
+                <defs>
+                  <linearGradient id="purpleGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#9333ea" stopOpacity="0.25" />
+                    <stop offset="100%" stopColor="#9333ea" stopOpacity="0.0" />
+                  </linearGradient>
+                </defs>
+                {/* Área bajo la curva */}
+                <path
+                  d="M 0 140 Q 30 110, 60 135 T 120 70 T 150 160 T 200 130 T 250 145 T 300 135 T 350 165 L 400 150 L 400 180 L 0 180 Z"
+                  fill="url(#purpleGradient)"
+                />
+                {/* Línea principal púrpura */}
+                <path
+                  d="M 0 140 Q 30 110, 60 135 T 120 70 T 150 160 T 200 130 T 250 145 T 300 135 T 350 165 L 400 150"
+                  fill="none"
+                  stroke="#8b5cf6"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+>>>>>>> origin/main
             </div>
 
             {/* Selector de Periodo [ 24H | 7D | 1M | 1A | MAX ] */}
@@ -574,6 +692,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               <ChevronRight className="w-4 h-4 text-slate-300 stroke-[2.5] shrink-0" />
             </div>
 
+<<<<<<< HEAD
             {/* Sección: las redes donde hay saldo de este activo. Si la cadena no
                 reportó ninguna, se lo dice en vez de ofrecer redes que no son
                 del activo. */}
@@ -595,6 +714,22 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                         setSelectedNetworkIndex(index);
                         setCurrentView('deposit_qr');
                       }}
+=======
+            {/* Sección: Más usadas */}
+            <div className="space-y-2 pt-2">
+              <span className="text-xs font-bold text-slate-400 font-display uppercase tracking-wider px-1">
+                Más usadas
+              </span>
+
+              <div className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] divide-y divide-slate-100 overflow-hidden">
+                {networksForAsset.map((net) => (
+                  <div
+                    key={net.name}
+                    onClick={() => {
+                      setSelectedNetwork(net.name);
+                      setCurrentView('deposit_qr');
+                    }}
+>>>>>>> origin/main
                     className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
                   >
                     <div className="flex items-center gap-3.5">
@@ -614,9 +749,14 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                     </div>
                     <ChevronRight className="w-4 h-4 text-slate-300 stroke-[2.5]" />
                   </div>
+<<<<<<< HEAD
                   ))}
                 </div>
               )}
+=======
+                ))}
+              </div>
+>>>>>>> origin/main
             </div>
           </div>
         </div>
@@ -737,7 +877,11 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                   </div>
                   <div>
                     <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Red</span>
+<<<<<<< HEAD
                     <span className="text-xs font-extrabold text-black">{selectedNetwork ?? '—'}</span>
+=======
+                    <span className="text-xs font-extrabold text-black">{selectedNetwork}</span>
+>>>>>>> origin/main
                   </div>
                 </div>
               </div>
@@ -754,6 +898,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               <div className="text-left space-y-1">
                 <span className="text-xs text-slate-400 font-medium block">Dirección</span>
                 <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-2xl">
+<<<<<<< HEAD
                   {/*
                     Antes esta dirección estaba escrita a mano
                     (`0x4613c015949e50ba`) y era la misma para todas las redes y
@@ -769,6 +914,15 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                     disabled={depositAddress === null}
                     onClick={() => depositAddress !== null && handleCopy(depositAddress)}
                     className="p-1 text-black active:scale-90 disabled:opacity-30"
+=======
+                  <span className="font-mono text-xs font-bold text-black truncate pr-2">
+                    0x4613...9e50ba
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy('0x4613c015949e50ba')}
+                    className="p-1 text-black active:scale-90"
+>>>>>>> origin/main
                   >
                     {copied ? <Check className="w-5 h-5 text-emerald-600" /> : <Copy className="w-5 h-5" />}
                   </button>
@@ -777,9 +931,14 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
 
               <button
                 type="button"
+<<<<<<< HEAD
                 disabled={depositAddress === null}
                 onClick={() => depositAddress !== null && handleCopy(depositAddress)}
                 className="w-full py-4 rounded-2xl bg-black text-white font-bold text-sm cursor-pointer active:scale-98 transition-transform disabled:opacity-40 disabled:cursor-not-allowed"
+=======
+                onClick={() => handleCopy('0x4613c015949e50ba')}
+                className="w-full py-4 rounded-2xl bg-black text-white font-bold text-sm cursor-pointer active:scale-98 transition-transform"
+>>>>>>> origin/main
               >
                 Compartir datos
               </button>
@@ -787,7 +946,11 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
 
             {/* Advertencia */}
             <p className="text-xs text-slate-500 text-center leading-relaxed px-2 font-medium">
+<<<<<<< HEAD
               Asegurate de depositar {asset.ticker} desde la red {selectedNetwork ?? 'elegida'}. De lo contrario, podrías perder tus fondos.
+=======
+              Asegurate de depositar {asset.ticker} desde la red {selectedNetwork}. De lo contrario, podrías perder tus fondos.
+>>>>>>> origin/main
             </p>
 
             {/* Card Verde Lima: Información Importante */}
@@ -801,7 +964,11 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">Red</span>
+<<<<<<< HEAD
                 <p className="text-base font-black text-black">{selectedNetwork ?? '—'}</p>
+=======
+                <p className="text-base font-black text-black">{selectedNetwork}</p>
+>>>>>>> origin/main
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">Comisión</span>

@@ -20,17 +20,29 @@ are never in the repository, in the build, in the bundle, or in a `dist-worker.j
 anybody can read.
 
 **So this project has no `.env` and this README is the setup documentation instead.**
+<<<<<<< HEAD
 The five variables below are set on the Worker itself with `wrangler secret put`.
+=======
+The four variables below are set on the Worker itself with `wrangler secret put`.
+>>>>>>> origin/main
 Nothing needs to be created, copied or filled in locally to run the tests, the build
 or the type checker.
 
 > `05. UI-UX/.env` does exist and is a different matter: it holds `VITE_PRIVY_APP_ID`,
+<<<<<<< HEAD
 > which is a **public** identifier that is meant to reach the browser. The five
+=======
+> which is a **public** identifier that is meant to reach the browser. The four
+>>>>>>> origin/main
 > variables below are not, and none of them may ever be placed in a frontend bundle.
 
 ---
 
+<<<<<<< HEAD
 ## The five required variables
+=======
+## The four required variables
+>>>>>>> origin/main
 
 None of these is optional. The Worker **fails closed at boot** if any is missing —
 `readConfig` in `src/container.ts` throws before the first request — because a Worker
@@ -43,9 +55,14 @@ healthy and then rejects everybody, or writes to the wrong place.
 | `PRIVY_APP_SECRET` | The server-side credential for that Privy application. It authorises every call this Worker makes to Privy: verifying tokens and reading user records — including the wallets a person owns. It no longer mints wallets. | Full control of the Privy app: read and write every user, and read every wallet they own. |
 | `DATABASE_URL` | The Postgres connection string for the Neon database holding the `rewallet` schema. It carries the database user and its password. | Read and write the entire database, including every user's email, DID, wallets and balances. |
 | `SESSION_SECRET` | The key that signs and verifies the session cookie. It is the only thing standing between a forged cookie and somebody else's account. | Forge a session cookie for any `userId` and walk into that account. |
+<<<<<<< HEAD
 | `PRIVY_WEBHOOK_SIGNING_SECRET` | The key Privy's webhooks are signed with (the Svix `svix-*` scheme). It is the **only** credential on `POST /api/webhooks/privy`: that route has no session and no cookie. | Sign any payload as Privy: write rows into `rewallet.webhook_events` with `signature_valid = true`, attributed to whichever DID the payload names, and therefore into that person's notification feed. |
 
 **None of the five ever goes into the frontend.** They are Worker secrets: they are
+=======
+
+**None of the four ever goes into the frontend.** They are Worker secrets: they are
+>>>>>>> origin/main
 set per-Worker, they arrive in the `env` parameter of `fetch`, and the built bundle
 never contains them — `dist-worker.js` reads them at request time through
 `readConfig({ ...process.env, ...env })`. `PRIVY_APP_ID` appears in the browser, but
@@ -78,12 +95,15 @@ npx wrangler secret put DATABASE_URL
 # It must be identical across every deployment of this Worker, or sessions issued by
 # the previous deployment stop verifying — which logs everybody out, by design.
 npx wrangler secret put SESSION_SECRET
+<<<<<<< HEAD
 
 # The webhook signing secret Privy signs its webhooks with.
 # Privy Dashboard → Settings → Webhooks → the signing secret of the endpoint
 # (it starts with `whsec_`). Changing it invalidates deliveries in flight, so
 # Svix's rotation (send the old and the new in `svix-signature`) is the safe path.
 npx wrangler secret put PRIVY_WEBHOOK_SIGNING_SECRET
+=======
+>>>>>>> origin/main
 ```
 
 To see the **names** that are set (never their values):
@@ -111,7 +131,11 @@ Run everything from `07.PockBackend`.
 npm install
 ```
 
+<<<<<<< HEAD
 The only values the toolchain needs are the five above, and only for commands that
+=======
+The only values the toolchain needs are the four above, and only for commands that
+>>>>>>> origin/main
 talk to Cloudflare. Install, build, typecheck and test all run without any of them.
 
 ### Build
@@ -305,6 +329,7 @@ IDENTITY_UNAVAILABLE` when the provider cannot answer, and `409 IDENTITY_CONFLIC
 [One email, one account](#one-email-one-account)). A provider outage is never
 dressed up as a refusal: telling somebody to try again would fail identically.
 
+<<<<<<< HEAD
 ## `rewallet.wallets.evm_network` — the EVM network a person operates on
 
 **One EVM address serves every configured EVM network, so the network is a column
@@ -582,20 +607,30 @@ in two places — `webhook.privy stored` in the logs, and
 if it ever comes, is one idempotent `ADD COLUMN IF NOT EXISTS` in `sql/` plus one
 condition in the adapter, not a redesign.
 
+=======
+>>>>>>> origin/main
 ## Layout
 
 ```
 src/
   domain/ports/        the interfaces: what the application needs, in our words
+<<<<<<< HEAD
   domain/webhooks/     the signature scheme, the event→sentence table, attribution
   application/         the use cases: session minting, wallet claiming, portfolio
                        reads, webhook intake, notification feed
   infrastructure/      the adapters: Privy, Postgres, JWT, JSON-RPC balance reads
+=======
+  application/         the use cases: session minting, wallet claiming
+  infrastructure/      the adapters: Privy, Postgres, JWT
+>>>>>>> origin/main
   interface/http/      Hono: routes, cookies, the error boundary
   container.ts         reads config, builds adapters, wires the app
   index.ts             the Worker's `fetch`
 test/                  mirrors src, with every port stubbed
+<<<<<<< HEAD
 sql/                   idempotent migrations for tables this project added to
+=======
+>>>>>>> origin/main
 build.mjs              the esbuild build that produces dist-worker.js
 wrangler.jsonc         name, main, routes, assets, compatibility flags, secrets note
 ```

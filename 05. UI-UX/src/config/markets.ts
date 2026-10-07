@@ -32,6 +32,7 @@ export const BALANCE_DECIMALS: Readonly<Record<string, number>> = Object.fromEnt
 );
 
 /**
+<<<<<<< HEAD
  * ── LA TASA DEL POOL NO VIVE ACÁ. NO VIVE EN NINGÚN LUGAR ─────────────────
  *
  * Antes este archivo tenía `POOL_SUPPLY_APR = 3.9` y `formatApr()`, y la billetera
@@ -65,6 +66,13 @@ export const BALANCE_DECIMALS: Readonly<Record<string, number>> = Object.fromEnt
  * es un número inventado para completar la tabla. Para los cripto es un precio de
  * ejemplo y va a ser reemplazado por el oráculo, junto con la pantalla de
  * conversión que lo consume.
+=======
+ * Precio de cada activo, en dólares.
+ *
+ * Los dólares digitales valen 1 porque es lo que significa ser una stablecoin;
+ * no es un número invented para completar la tabla. Para los cripto es un precio
+ * de ejemplo y va a ser reemplazado por el oráculo.
+>>>>>>> origin/main
  */
 export const ASSET_PRICE_USD: Readonly<Record<string, number>> = {
   BTC: 95400,
@@ -77,6 +85,7 @@ export const ASSET_PRICE_USD: Readonly<Record<string, number>> = {
 };
 
 /**
+<<<<<<< HEAD
  * ── BORRADO: `POOL_SUPPLY_APR` y `formatApr()` ──────────────────────────────
  *
  * Eran la tasa anual del pool (3,9) y su formateo. No hay conexión con Aave, así
@@ -89,10 +98,38 @@ export const ASSET_PRICE_USD: Readonly<Record<string, number>> = {
  * le pase una tasa es exactamente cómo la tasa inventada llegó a cuatro
  * pantallas.
  */
+=======
+ * La tasa anual del pool donde rinde el dinero del usuario, en porcentaje.
+ *
+ * ── Esto es MOCK, y es el único lugar donde vive ────────────────────────────
+ *
+ * Antes el mismo número estaba escrito a mano en cuatro lugares de tres
+ * archivos, y con dos valores distintos: la billetera y las pantallas de
+ * dólares decían 3,90 y el detalle del pool decía 2,90. Dos tasas en la misma
+ * app, y ninguna fuente de verdad.
+ *
+ * Cuando el backend exista, este valor deja de escribirse acá: llega de la
+ * lectura del pool. El laboratorio (`Front End/src/data/poolSummary.ts`) ya lee
+ * `GET /yield/summary` y devuelve `supplyAprBps` en puntos básicos, así que la
+ * conexión es—fromBps(ese valor)— y **esta línea se borra**. Eso es justo lo que
+ * hace que valga la pena tenerla en un solo lugar: cambiar el dato del backend es
+ * cambiar una línea, no cuatro.
+ *
+ * Un punto porcentual está escrito como número y formateado con `formatApr()`,
+ * no como texto con coma: el número es el dato, la coma es cómo se muestra.
+ */
+export const POOL_SUPPLY_APR = 3.9;
+
+/** La tasa del pool como se muestra: `"3,90"`. */
+export function formatApr(value: number = POOL_SUPPLY_APR): string {
+  return formatAmount(value, 2);
+}
+>>>>>>> origin/main
 
 /**
  * Saldo de la cuenta, en la unidad del activo.
  *
+<<<<<<< HEAD
  * ── Sigue siendo MOCK, por la misma razón que el precio ─────────────────────
  *
  * `balanceLabel()` lo renderiza `components/common/AssetSheet.tsx`, el selector de
@@ -106,6 +143,11 @@ export const ASSET_PRICE_USD: Readonly<Record<string, number>> = {
  * Los que no están acá valen 0, y es lo honesto dentro de la tabla: la cuenta no
  * tiene de esos. Un saldo inventado para que un activo "se vea" lleno es un
  * número falso en la pantalla de alguien.
+=======
+ * Los que no están acá valen 0, y es lo honesto: la cuenta no tiene de esos. Un
+ * saldo inventado para que un activo "se vea" lleno es un número falso en la
+ * pantalla de alguien.
+>>>>>>> origin/main
  */
 export const BALANCES: Readonly<Record<string, number>> = {
   BTC: 0.00852543,
@@ -123,9 +165,12 @@ export const BALANCES: Readonly<Record<string, number>> = {
  * Queda solo para las pantallas que muestran el equivalente en pesos. En los
  * flujos de comprar y vender ya no se usa: ahí el equivalente es en dólares,
  * que es la unidad en la que el usuario realmente piensa cuando compra.
+<<<<<<< HEAD
  *
  * No se borra en esta pasada porque lo importa `config/displayCurrency.ts`, que no
  * es de este cambio y formatea el equivalente en pesos de varias pantallas.
+=======
+>>>>>>> origin/main
  */
 export const ARS_PER_USD = 1570;
 

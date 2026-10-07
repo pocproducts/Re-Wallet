@@ -20,6 +20,7 @@ interface ActivityViewProps {
   onOpenSearch?: () => void;
   onOpenBugModal?: () => void;
   onOpenNotifications?: () => void;
+<<<<<<< HEAD
   /**
    * Hay avisos que esta persona todavía no vio en su última visita.
    *
@@ -27,6 +28,8 @@ interface ActivityViewProps {
    * la prop, no hay punto — un punto falso es peor que ningún punto.
    */
   hasUnreadNotifications?: boolean;
+=======
+>>>>>>> origin/main
 }
 
 export const ActivityView: React.FC<ActivityViewProps> = ({
@@ -36,7 +39,10 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
   onOpenSearch,
   onOpenBugModal,
   onOpenNotifications,
+<<<<<<< HEAD
   hasUnreadNotifications,
+=======
+>>>>>>> origin/main
 }) => {
   const [selectedTx, setSelectedTx] = useState<TransactionItem | null>(null);
   const [copied, setCopied] = useState(false);
@@ -45,6 +51,7 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
     ? '$' + profile.nombre.toLowerCase().replace(/\s+/g, '').slice(0, 10)
     : '$joadata';
 
+<<<<<<< HEAD
   /*
    * La lista es la que llega, tal cual.
    *
@@ -61,6 +68,76 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
    * cuenta nueva.
    */
   const transactions = propTransactions ?? [];
+=======
+  // Datos base si no se pasan transacciones
+  const defaultTransactions: TransactionItem[] = [
+    {
+      id: 'tx-1',
+      title: 'Compra de Cryptos',
+      date: '25 de Septiembre',
+      amount: '- 4.000,00 ARS',
+      isPositive: false,
+      type: 'ars',
+      section: 'Hoy',
+    },
+    {
+      id: 'tx-2',
+      title: 'Compra de Cryptos',
+      date: '25 de Septiembre',
+      amount: '+ 7,193689 TRX',
+      isPositive: true,
+      type: 'trx',
+      section: 'Hoy',
+    },
+    {
+      id: 'tx-3',
+      title: 'Compra de Cryptos',
+      date: '24 de Septiembre',
+      amount: '+ 18,93880759 DOGE',
+      isPositive: true,
+      type: 'doge',
+      section: 'Anteriores',
+    },
+    {
+      id: 'tx-4',
+      title: 'Compra de Cryptos',
+      date: '24 de Septiembre',
+      amount: '- 3.000,00 ARS',
+      isPositive: false,
+      type: 'ars',
+      section: 'Anteriores',
+    },
+    {
+      id: 'tx-5',
+      title: 'Compra de Cryptos',
+      date: '24 de Septiembre',
+      amount: '+ 0,0155256 SOL',
+      isPositive: true,
+      type: 'sol',
+      section: 'Anteriores',
+    },
+    {
+      id: 'tx-6',
+      title: 'Compra de Cryptos',
+      date: '24 de Septiembre',
+      amount: '- 3.000,00 ARS',
+      isPositive: false,
+      type: 'ars',
+      section: 'Anteriores',
+    },
+    {
+      id: 'tx-7',
+      title: 'Compra de Cryptos',
+      date: '24 de Septiembre',
+      amount: '- 5.000,00 ARS',
+      isPositive: false,
+      type: 'ars',
+      section: 'Anteriores',
+    },
+  ];
+
+  const transactions = propTransactions && propTransactions.length > 0 ? propTransactions : defaultTransactions;
+>>>>>>> origin/main
 
   const hoyTx = transactions.filter((t) => t.section === 'Hoy');
   const anterioresTx = transactions.filter((t) => t.section === 'Anteriores');
@@ -177,6 +254,7 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
           <button
             onClick={onOpenNotifications}
             type="button"
+<<<<<<< HEAD
             aria-label={hasUnreadNotifications ? 'Notificaciones: hay avisos nuevos' : 'Notificaciones'}
             title={hasUnreadNotifications ? 'Notificaciones: hay avisos nuevos' : 'Notificaciones'}
             className="w-11 h-11 flex items-center justify-center text-black hover:opacity-75 active:scale-90 transition-all relative cursor-pointer"
@@ -197,6 +275,13 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
                 className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#ccff00] border border-black"
               />
             )}
+=======
+            aria-label="Notificaciones"
+            title="Notificaciones"
+            className="w-11 h-11 flex items-center justify-center text-black hover:opacity-75 active:scale-90 transition-all relative cursor-pointer"
+          >
+            <Bell className="w-5 h-5 stroke-[2.2]" />
+>>>>>>> origin/main
           </button>
         </div>
       </div>
@@ -211,6 +296,7 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
       {/* =========================================================================
           LISTA DE TRANSACCIONES
          ========================================================================= */}
+<<<<<<< HEAD
       {/*
         Sin movimientos hay una sola respuesta honesta: decirlo. La misma
         tarjeta blanca del resto de la pantalla, el mismo aire y la misma
@@ -228,6 +314,8 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
         </div>
       )}
 
+=======
+>>>>>>> origin/main
       <div className="space-y-5">
         {/* SECCIÓN: Hoy */}
         {hoyTx.length > 0 && (
