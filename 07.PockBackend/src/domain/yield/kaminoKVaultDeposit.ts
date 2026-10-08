@@ -182,19 +182,62 @@ export const KLEND_RESERVE_LENDING_MARKET_BYTES = 32;
 export const KVAULT_ACCOUNT_BYTES = 62552;
 
 /**
- * Lo que **no** se verificó, y por eso la instrucción todavía no está armada.
+ * `base_vault_authority`: el offset **40**, y tambien la PDA
+ * `["authority", vault_state]` del programa KVault.
  *
- * 1. **`simulateTransaction` contra mainnet.** Falta la simulación con una
- *    cuenta que tenga USDC de Solana y SOL. Con una cuenta sin fondos se
- *    descarta la firma pero no se prueba el resto del camino.
- * 2. **El ATA de USDC de la persona.** La instrucción 0 crea la ATA de las
- *    *shares*. La ATA de **USDC** (`user_token_ata`, account 6) **no** la crea
- *    Kamino en su respuesta: hay que derivarla y crearla aparte si no existe. Sin
- *    SOL para la renta, el primer depósito falla.
- * 3. **La cuenta de farm.** La instrucción 2 la crea y la instrucción 3 la
- *    usa. Para este vault, `9FVjHqduhDPMVqvu3cXiEBjU6nvxvGdCCLRwd9WpVRzj`
- *    **no es una cuenta**: `getMultipleAccounts` devuelve `null`, y
- *    `3bMUivmhqJkFUkSdYv976tvdbuGFza74RJgg4Mh1t8cW` tampoco. La 2 la crea con
- *    la 3. Es lo que hace que el **primer** depósito de una persona sea más caro
- *    que el segundo, y la UI tendría que poder decirlo.
+ * Las dos se comprobaron y las dos dan
+ * `AyY6VCkHfTWdFs7SqBbu6AnCqLUhgzVHBzW3WcJu5Jc8`.
+ *
+ * **No es el offset 8.** El primer intento de simulacion paso el offset 8 —el
+ * campo que el lector usa para otra cosa— y la cadena lo rechazo de inmediato:
+ *
+ * > `AnchorError caused by account: vault_state.
+ * > Error Code: ConstraintHasOne. Error Number: 2001.`
+ *
+ * Ese es el argumento de por que esta tarea existe. Un offset equivocado no se ve
+ * como un offset equivocado: se ve como una transaccion rechazada, y sin la
+ * simulacion se descubre cuando ya hay plata en juego.
+ */
+export const KVAULT_BASE_VAULT_AUTHORITY_OFFSET = 40;
+
+/** La semilla con la que se deriva `base_vault_authority`. */
+export const KVAULT_BASE_VAULT_AUTHORITY_SEED = 'authority';
+
+/**
+ * Lo que la simulacion **probo**, y lo que sigue sin probarse.
+ *
+ * 1. **`simulateTransaction`: HECHO.** El detalle esta mas abajo, y es un PASS.
+ * 2. **La ATA de USDC de la persona.** La instruccion 0 de Kamino crea la ATA
+ *    de las *shares*. La de **USDC** (`user_token_ata`, account 6) **no** la crea
+ *    Kamino: hay que derivarla y crearla aparte si no existe, y eso cuesta SOL de
+ *    renta. En la simulacion hubo que crearla a mano; es trabajo que F3 tiene que
+ *    hacer si o si.
+ * 3. **La cuenta de farm.** La instruccion 2 la crea y la 3 la usa. Para este
+ *    vault, `9FVjHqduhDPMVqvu3cXiEBjU6nvxvGdCCLRwd9WpVRzj` **no es una cuenta**:
+ *    `getMultipleAccounts` devuelve `null`, y
+ *    `3bMUivmhqJkFUkSdYv976tvdbuGFza74RJgg4Mh1t8cW` tampoco. La 2 la crea con la
+ *    3. Es lo que hace que el **primer** deposito de una persona sea mas caro que
+ *    el segundo, y la UI tendria que poder decirlo.
+ *
+ * --- Que dijo la simulacion, y por que es un PASS ---------------------------
+ *
+ * Corrida contra `api.mainnet-beta.solana.com` con la direccion de Solana de la
+ * billetera de la app, que tiene 0,006006650 SOL y **cero** USDC, con
+ * `sigVerify: false` y `replaceRecentBlockhash: true`. No firmo nada ni movio un
+ * SOL.
+ *
+ * | paso | resultado |
+ * |---|---|
+ * | creacion idempotente de las dos ATA | `success` |
+ * | `Instruction: Deposit` decodificada | **el discriminador es el correcto** |
+ * | restriccion `has_one` de `vault_state` | **superada** |
+ * | CPI `RefreshReservesBatch` a KLend | **success** |
+ * | aritmetica del vault | `shares_issued before deposit 18843760829797`, `prev_aum`/`new_aum`, `perf_charge`, `earned_interest` |
+ * | transferencia final de USDC | **`Error: insufficient funds`** |
+ *
+ * Ese ultimo error es **el resultado correcto**, no un defecto: la cuenta de la
+ * simulacion no tiene USDC. Todo lo anterior —discriminador, los 13 accounts, los
+ * 8 `remaining_accounts` leidos de la cadena y la aritmetica del vault— paso. Lo
+ * unico que no se pudo probar es el ultimo salto, y es el unico que no depende de
+ * como se armo la instruccion.
  */
