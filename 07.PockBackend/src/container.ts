@@ -30,6 +30,7 @@ import { readWalletBalance } from './application/portfolio/readWalletBalance';
 import { readKaminoEarnPosition } from './application/portfolio/readKaminoEarnPosition';
 import { readPool } from './application/pool/readPool';
 import { prepareDeposit } from './application/pool/prepareDeposit';
+import { prepareDepositKamino } from './application/pool/prepareDepositKamino';
 import { prepareSend } from './application/send/prepareSend';
 import { createPaymentRequest } from './application/payment-requests/createPaymentRequest';
 import { readPaymentRequest } from './application/payment-requests/readPaymentRequest';
@@ -59,6 +60,7 @@ import {
 } from './infrastructure/rpc/solanaBalanceReader.http';
 import { createChainlinkPriceFeed } from './infrastructure/rpc/chainlinkPriceFeed';
 import { createHttpKaminoEarnVaultReader } from './infrastructure/rpc/kaminoEarnVaultReader.http';
+import { createHttpKaminoDepositPreparer } from './infrastructure/rpc/kaminoDepositPreparer.http';
 import {
   createHttpKaminoSharePriceFeed,
   DEFAULT_KAMINO_API_URL,
@@ -248,6 +250,33 @@ export const buildApp = (config: Config, log: Logger) => {
     log,
   });
 
+  /*
+   * El **depósito** en Kamino Earn. Otro adaptador sobre el mismo endpoint y el
+   * mismo cluster que la lectura: leer una cuenta y compilar un mensaje son
+   * trabajos distintos, pero es una conversación con un RPC. Se anotan dos cosas
+   * que no son obvias y por eso están acá y no dentro del caso de uso:
+   *
+   *  - el mensaje va **sin firmar**, como todo lo demás de Solana;
+   *  - sólo lleva las dos instrucciones verificadas (la ATA de USDC, la ATA de
+   *    shares y el depósito en el KVault). Las dos del programa Farms **no**
+   *    existen todavía porque su layout no tiene fuente autoritativa, y el caso de
+   *    uso lo dice con palabras en `completion.executes: false` en vez de devolver
+   *    un mensaje que parece completo y falla en mainnet.
+   *
+   * Y se pega a la función de Aave porque `AppDeps` declara un solo
+   * `prepareDeposit` (ver `PoolDepositUseCases`): cuando ese objeto crezca, esta
+   * línea pasa a ser un campo más.
+   */
+  const kaminoDeposits = prepareDepositKamino({
+    wallets: walletStore,
+    solana,
+    preparer: createHttpKaminoDepositPreparer({ url: config.solanaRpcUrl }),
+    log,
+  });
+  const deposits = Object.assign(prepareDeposit({ wallets: walletStore, pool: aavePool, log }), {
+    kamino: kaminoDeposits,
+  });
+
   return createApp({
     mint: mintSession({
       verify,
@@ -273,7 +302,7 @@ export const buildApp = (config: Config, log: Logger) => {
      * wallet the portfolio shows and the deposit signs for.
      */
     readPool: poolRead,
-    prepareDeposit: prepareDeposit({ wallets: walletStore, pool: aavePool, log }),
+    prepareDeposit: deposits,
     /*
      * The one number. It adds up what those two reads answer and states whether
      * every part of it could be read; it opens no connection of its own, so

@@ -138,11 +138,40 @@ se puede depositar ahí**.
 
 ### F3 — Backend: depositar en Kamino Earn
 
-- `prepareDepositKamino`, hermano de `prepareDeposit`, **sin** `approve`: el SPL no
-  necesita allowance, es una sola instrucción.
-- Mismo contrato de seguridad: la dirección sale de la fila de la base, nunca del
-  cuerpo de la petición. Mismo refusal de importes que no sean enteros.
-- El server sigue construyendo; el navegador solo firma.
+**Hecho, a medias y a propósito: el mensaje está armado y la respuesta dice que
+todavía no mueve plata.**
+
+`prepareDepositKamino` prepara un mensaje **sin firmar** con las dos instrucciones
+que sí están verificadas —crear la ATA de USDC, crear la ATA de shares, y el
+`Deposit` del KVault con sus 13 accounts y los 8 `remaining_accounts` leídos de la
+cadena— y publica `completion.executes: false` con las dos instrucciones del
+programa Farms que **no** se construyeron, cada una con su motivo.
+
+**Por qué no se construyeron.** Las instrucciones 2 y 3 son del programa Farms y
+este trabajo no encontró una fuente autoritativa para su discriminador ni para el
+orden de sus accounts. No se inventan: sin ellas las shares quedan sin stakear en
+el farm, que es donde rinde. Un botón que falla en mainnet es peor que un botón
+que todavía no existe, así que la respuesta lleva un campo `completion` que la
+pantalla puede mostrar tal cual.
+
+**El contrato.** `POST /api/pool/deposit` con `{ "venue": "kamino", "amount":
+"1000000" }`. El venue sale de `DEPOSIT_VENUES` —una lista cerrada en el servidor—,
+y un venue desconocido se rechaza con `VENUE_UNKNOWN` **antes** de llamar a ningún
+caso de uso. La dirección del firmante sale de `rewallet.wallets` (fila `solana`) y
+el vault de una constante fijada: ningún cuerpo puede cambiar ninguna de las dos.
+
+**El saldo de SOL.** Se publica `solBalance` junto con `requiredRent` y
+`rentShortfall`, porque el primer depósito paga la renta de dos cuentas nuevas
+—2 039 280 lamports cada una— y "no pudiste depositar" esconde la única razón por
+la que un depósito es caro la primera vez. Dos reglas: un saldo ilegible es
+`unreadable` y **nunca** `0`, y tener SOL suficiente **no** bloquea el depósito. El
+saldo no entra en ningún bucket ni en ningún total: es la misma plata que el
+portfolio ya contó, como `availableUsdc` de Aave.
+
+**Lo que falta para que esto sea un botón:** las dos instrucciones del farm, su
+simulación contra mainnet con una cuenta que tenga USDC, y el `event_authority` del
+programa —que hoy se **deriva** por la convención de Anchor y que ninguna fuente de
+este repositorio verificó como los otros offsets—.
 
 ### F4 — Front: el botón en la fila
 
