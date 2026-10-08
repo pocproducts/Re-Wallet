@@ -180,9 +180,57 @@ este repositorio verificó como los otros offsets—.
 - La fila de Ethereum dice que no hay destino, y **no** dibuja botón.
 - El botón de Aave dice que van a ser dos firmas, antes de la primera.
 
+**Hecho, con una pieza de servidor que hacía falta.**
+
+**F4a — `depositReady`, en la respuesta del balance.** Al lado de `depositable`,
+cada venue publica si **puede** recibir un depósito, y cuando no puede, por qué.
+No es un `boolean` pelado: es una unión discriminada, con un motivo acotado y una
+frase para pintar tal cual.
+
+```
+depositReady: { "status": "ready" }
+depositReady: { "status": "not_ready", "reason": "DEPOSIT_INSTRUCTIONS_UNVERIFIED",
+                "missingSteps": 2, "message": "Todavía no podés depositar en Kamino…" }
+```
+
+Aave: listo. Kamino: no listo, con el motivo y la frase. El valor sale de
+`KAMINO_DEPOSIT_NOT_EXECUTABLE`, al lado de la tabla de venues, y una prueba corre
+`readWalletBalance` y `prepareDepositKamino` **sobre los mismos ports** y compara
+las dos respuestas: `depositReady.status === 'ready'` tiene que ser exactamente lo
+mismo que `completion.executes`. Dos verdades que no se cruzan son el botón que
+aparece el día que construyan el farm y el depósito que falla en mainnet.
+
+**Cada venue ahora publica también su `chain`** (`"monad"`, `"solana"`,
+`"ethereum"`). Una fila que no dice en qué red está obliga a la pantalla a
+deducirlo de la etiqueta, y una pantalla que deduce una red ofrece depósitos en
+la red equivocada.
+
+**F4b — El botón vive en la fila.** `CARD 1` quedó sin botón —no duplicado ni
+escondido— y `CARD 2` dibuja una fila por red de la app, cruzada con las venues
+que informó el balance. La decisión de si una fila dibuja botón se extrajo a
+`venueRowActionOf`, que es **lógica pura** y por eso se prueba sin DOM: el repo
+sigue sin tests de render (F2 de `odd/tasks/tests-del-front.md` pendiente), y esta
+tarea no levantó `@testing-library/react`.
+
+Quién dibuja botón y quién no:
+
+| fila | botón | por qué |
+|------|-------|---------|
+| Aave · Monad, con USDC libre legible | **sí** | `depositReady: ready` y hay saldo de origen |
+| Kamino · Solana | no | `depositReady: not_ready`; la frase del servidor va al lado, sin botón gris ni "próximamente" |
+| Ethereum, sin venue | no | `no_venue`: la fila aparece y dice que en esa red todavía no hay dónde rendir |
+| fila ilegible | no | `venue_unreadable`; ni la fila ni su botón se dibujan |
+| `depositable` ilegible | no | `origin_unreadable`: no se deposita sobre un número que nadie leyó |
+| `depositable` en cero real | no | `origin_zero`: se leyó y no hay nada — dos frases distintas para dos hechos distintos |
+| venue listo sin flujo en la app | no | `no_flow_yet`: abrir el flujo de otro venue es mandar plata en otra cadena |
+
+El número de firmas sale de los pasos del propio flujo (`approve` + `deposit`), no
+de un número escrito en la vista, así que el rótulo no puede desincronizarse de lo
+que el flujo hace.
+
 ### F5 — Gates
 
-- `npm test` (front) y los 768 tests del backend verdes.
+- `npm test` (front) y los tests del backend verdes.
 - `tsc` limpio en los dos proyectos.
 - Build verde.
 - Un caso de test por cada regla de la sección de abajo.

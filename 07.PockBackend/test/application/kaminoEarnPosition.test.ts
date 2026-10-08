@@ -782,18 +782,24 @@ describe('the one combined yield across both venues', () => {
         label: 'Aave V3 · USDC en Monad',
         status: 'ok',
         exclusion: null,
+        chain: 'monad',
         balance: { raw: '60000000', amount: '60', decimals: 6, unit: 'USD' },
         rate: { raw: '41200', decimals: 6, text: '0.0412' },
         depositable: { status: 'ok', amount: { raw: '0', amount: '0', decimals: 6, unit: 'USDC' } },
+        depositReady: { status: 'ready' },
       },
       {
         key: KAMINO_EARN_USDC_SOLANA_KEY,
         label: 'Kamino Earn · USDC en Solana',
         status: 'ok',
         exclusion: null,
+        chain: 'solana',
         balance: { raw: '40000000', amount: '40', decimals: 6, unit: 'USD' },
         rate: { raw: '418', decimals: 4, text: '0.0418' },
         depositable: { status: 'ok', amount: { raw: '2000000', amount: '2', decimals: 6, unit: 'USDC' } },
+        // Tener plata libre y **no** poder recibir el depósito son dos hechos
+        // distintos: los dos viajan, y ninguno borra al otro.
+        depositReady: { status: 'not_ready', reason: 'DEPOSIT_INSTRUCTIONS_UNVERIFIED', missingSteps: 2, message: expect.any(String) },
       },
     ]);
   });

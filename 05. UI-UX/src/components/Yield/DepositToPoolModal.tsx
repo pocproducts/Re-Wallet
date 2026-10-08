@@ -3,7 +3,8 @@ import { ArrowLeft, Loader2, ShieldAlert, Wallet as WalletIcon } from 'lucide-re
 
 import { NumericKeypad } from '../common/NumericKeypad';
 import { toScaled, formatAmount, formatPercent } from '../../services/pool';
-import type { PoolView } from '../../services/pool';
+import type { PoolAmount, PoolField, PoolView } from '../../services/pool';
+import type { YieldVenueView } from '../../services/walletBalance';
 import { DEPOSIT_FAILURE_TEXT, type PoolDeposit } from '../../hooks/usePoolDeposit';
 
 /**
@@ -34,25 +35,62 @@ import { DEPOSIT_FAILURE_TEXT, type PoolDeposit } from '../../hooks/usePoolDepos
 
 interface DepositToPoolModalProps {
   readonly pool: PoolView;
+  /**
+   * La fila que se tocó, que es el destino.
+   *
+   * Antes este modal era “el depósito de Aave” con el destino dentro del código.
+   * Ahora lo recibe: el nombre del lugar y su saldo de origen viajan desde la fila
+   * que la persona tocó, y no de un rótulo escrito acá. `null` sólo cuando la fila
+   * se cerró antes de que llegara el balance, y en ese caso se usan los del pool.
+   */
+  readonly venue: YieldVenueView | null;
   readonly flow: PoolDeposit;
   readonly onClose: () => void;
 }
 
 const MAX_DIGITS_BEFORE_DECIMAL = 12;
 
-export const DepositToPoolModal: React.FC<DepositToPoolModalProps> = ({ pool, flow, onClose }) => {
+export const DepositToPoolModal: React.FC<DepositToPoolModalProps> = ({ pool, venue, flow, onClose }) => {
   const [amountText, setAmountText] = useState<string>('');
 
   const decimals = pool.asset.decimals;
 
   /*
    * El estado de las tres cosas que tienen que ser ciertas antes de firmar. Se
-   * calculan del `PoolView`, no del estado del flujo: lo que no se pudo leer no
-   * habilita un botón.
+   * calculan del `PoolView` y de la fila, no del estado del flujo: lo que no se
+   * pudo leer no habilita un botón.
+   *
+   * El **saldo de origen** viene de la fila (`depositable`), que es el USDC libre
+   * de la cadena de ese venue. Antes venía de `pool.position.availableUsdc`: dos
+   * lecturas del mismo número en el mismo formulario, y dos chances de que no
+   * sean el mismo. El gas sigue viniendo del pool porque es del chain de la
+   * transacción, y no hay un campo de red en la fila que lo traiga.
    */
-  const available = pool.position.availableUsdc;
+  const available: PoolField<PoolAmount> =
+    venue === null
+      ? pool.position.availableUsdc
+      : venue.depositable.status === 'ok'
+        ? {
+            status: 'ok',
+            value: {
+              raw: venue.depositable.amount.raw.toString(),
+              amount: venue.depositable.amount.formatted,
+              decimals: venue.depositable.amount.decimals,
+              unit: venue.depositable.amount.unit,
+            },
+          }
+        : { status: 'unreadable', reason: venue.depositable.reason };
   const gas = pool.position.gasBalance;
   const supplyApr = pool.displayableSupplyApr;
+
+  /*
+   * El rótulo dice el lugar de verdad. Antes decía “Aave · Monad” escrito en el
+   * componente, que es exactamente el destino compilado en el cliente que este
+   * flujo vino a sacar.
+   */
+  const title = venue === null ? 'Depositar' : `Depositar en ${venue.label}`;
+  const subtitle =
+    venue === null ? 'USDC en el pool de Aave · Monad' : 'Tocaste esta fila: acá va tu plata';
 
   const availableRaw = available.status === 'ok' ? BigInt(available.value?.raw ?? '0') : null;
   const hasUsdc = availableRaw !== null && availableRaw > 0n;
@@ -119,8 +157,8 @@ export const DepositToPoolModal: React.FC<DepositToPoolModalProps> = ({ pool, fl
         </button>
 
         <div>
-          <h1 className="text-base font-bold font-display text-slate-900 leading-tight">Depositar en Aave</h1>
-          <p className="text-[11px] text-slate-500 font-medium">USDC en el pool de Aave · Monad</p>
+          <h1 className="text-base font-bold font-display text-slate-900 leading-tight">{title}</h1>
+          <p className="text-[11px] text-slate-500 font-medium">{subtitle}</p>
         </div>
       </div>
 

@@ -63,6 +63,41 @@ export const ratio = (numerator: string, denominator: string) => ({ numerator, d
 /** Una tasa propia de un venue, siempre fracción de uno. */
 export const venueRate = (raw: string, decimals: number, text: string) => ({ raw, decimals, text });
 
+/**
+ * Un venue leído, con su cadena, su saldo de origen y si admite depósito.
+ *
+ * Los tres campos vienen juntos a propósito: `chain` (dónde está), `depositable`
+ * (cuánto hay para mandarle) y `depositReady` (si se puede) son hechos
+ * independientes, y un fixture que dejara alguno sin valor probaría una forma que
+ * el backend nunca manda.
+ */
+export const venueOk = (overrides: Record<string, unknown> = {}) => ({
+  key: 'invest.aave_v3_usdc_monad',
+  label: 'Aave V3 · USDC en Monad',
+  status: 'ok',
+  chain: 'monad',
+  exclusion: null,
+  balance: amount('60000000', 6),
+  rate: venueRate('41200', 6, '0.0412'),
+  depositable: { status: 'ok', amount: amount('1500000', 6, 'USDC') },
+  depositReady: { status: 'ready' },
+  ...overrides,
+});
+
+/** Un venue que no se pudo leer, con sus tres hechos igualmente declarados. */
+export const venueUnreadable = (overrides: Record<string, unknown> = {}) => ({
+  key: 'invest.kamino_earn_usdc_solana',
+  label: 'Kamino Earn · USDC en Solana',
+  status: 'unreadable',
+  reason: 'KAMINO_UNAVAILABLE',
+  chain: 'solana',
+  balance: null,
+  rate: null,
+  depositable: { status: 'unreadable', reason: 'RPC_UNAVAILABLE' },
+  depositReady: { status: 'not_ready', reason: 'DEPOSIT_INSTRUCTIONS_UNVERIFIED', missingSteps: 2, message: 'Todavía no.' },
+  ...overrides,
+});
+
 /** Una pieza leída: cantidad, precio y valor. */
 export const pieceOk = (overrides: Record<string, unknown> = {}) => ({
   key: 'crypto.monad.MON',

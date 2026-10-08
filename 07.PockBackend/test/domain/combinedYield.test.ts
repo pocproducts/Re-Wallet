@@ -29,6 +29,7 @@ import {
   rateFromFractionText,
   rateFromPercentText,
   type ExactRatio,
+  type VenueDepositReadiness,
   type VenueDepositable,
   type YieldVenue,
 } from '../../src/domain/yield/combinedYield';
@@ -63,6 +64,19 @@ const depositOf = (raw: bigint): VenueDepositable => ({
 
 const ORIGIN_FREE = depositOf(1_500_000n);
 
+/**
+ * Un venue al que se le puede depositar.
+ *
+ * En este archivo no se prueba **qué** venues son esos: eso vive en
+ * `test/interface/walletBalance.test.ts`, que corre la composición entera. Acá el
+ * `depositReady` es una constante neutra porque lo que se afirma es más chico y es
+ * lo único que la combinación puede romper —que lo transporte tal cual, sin
+ * escalarlo, sin sumarlo y sin que `complete` lo mire—. Un venue que no puede
+ * recibir depósitos tampoco desaparece de la media ponderada, y ese caso lo
+ * afirma el test de la fila `not_ready` de más abajo.
+ */
+const READY: VenueDepositReadiness = { status: 'ready' };
+
 /** A venue that takes part in the weighting, typed as that member exactly. */
 type WeightedVenue = Extract<YieldVenue, { readonly exclusion: null }>;
 
@@ -75,6 +89,8 @@ const aave60 = (): WeightedVenue => ({
   balance: usd(60_000_000n),
   rate: must(rateFromPercentText('4.1200', 4)),
   depositable: ORIGIN_FREE,
+  chain: 'monad',
+  depositReady: READY,
 });
 
 /** And $40 at 4.18 %, the second venue on another chain and another scale. */
@@ -88,6 +104,8 @@ const kamino40 = (): WeightedVenue => ({
   // Su propia cadena: $40 libres de Solana, no los $60 libres de Monad. El cruce
   // de cadenas es imposible por construcción, y este fixture lo deja dicho.
   depositable: depositOf(40_000_000n),
+  chain: 'solana',
+  depositReady: READY,
 });
 
 describe('the combined yield is a weighted mean, not an average', () => {
@@ -225,6 +243,8 @@ describe('one unreadable venue means there is no combined number', () => {
         // su APY no se haya podido leer, y ocultarlo haría que la pantalla
         // inventara una respuesta para algo que ya se le estaba informando.
         depositable: depositOf(40_000_000n),
+        chain: 'solana',
+        depositReady: READY,
       },
     ]);
 
@@ -247,6 +267,8 @@ describe('one unreadable venue means there is no combined number', () => {
       balance: null,
       rate: null,
       depositable: depositOf(40_000_000n),
+      chain: 'solana',
+      depositReady: READY,
     });
     // The venue that did answer is still described exactly.
     expect(combined.venues[0]).toMatchObject({ status: 'ok', exclusion: null });
@@ -263,6 +285,8 @@ describe('one unreadable venue means there is no combined number', () => {
         balance: null,
         rate: null,
         depositable: depositOf(40_000_000n),
+        chain: 'solana',
+        depositReady: READY,
       },
     ]);
 
@@ -280,6 +304,8 @@ describe('one unreadable venue means there is no combined number', () => {
         balance: null,
         rate: null,
         depositable: ORIGIN_FREE,
+        chain: 'monad',
+        depositReady: READY,
       },
       kamino40(),
     ]);
@@ -310,6 +336,8 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         // con USDC libre en la cartera es el caso donde el botón se dibuja con
         // tope cero, y es un `ok`, no un agujero.
         depositable: ORIGIN_FREE,
+        chain: 'solana',
+        depositReady: READY,
       } satisfies YieldVenue,
     ]);
 
@@ -331,6 +359,8 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         balance: usd(0n),
         rate: must(rateFromPercentText('4.1200', 4)),
         depositable: depositOf(0n),
+        chain: 'monad',
+        depositReady: READY,
       },
       {
         key: 'invest.kamino_earn_usdc_solana',
@@ -340,6 +370,8 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         balance: usd(0n),
         rate: must(rateFromFractionText('0.0418')),
         depositable: depositOf(0n),
+        chain: 'solana',
+        depositReady: READY,
       },
     ]);
 
@@ -361,6 +393,8 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         balance: usd(0n),
         rate: null,
         depositable: depositOf(0n),
+        chain: 'solana',
+        depositReady: READY,
       },
     ]);
     const unreadable = combineYields([
@@ -373,6 +407,8 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         balance: null,
         rate: null,
         depositable: ORIGIN_FREE,
+        chain: 'solana',
+        depositReady: READY,
       },
     ]);
 

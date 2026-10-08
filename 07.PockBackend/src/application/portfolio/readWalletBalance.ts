@@ -114,6 +114,26 @@
  * botón**: `0` es una cifra, y publicar una cifra que no se conoce es exactamente
  * el defecto.
  *
+ * ── `depositReady`: SI EL VENUE PUEDE RECIBIR EL DEPÓSITO, Y POR QUÉ NO ────
+ *
+ * `depositable` dice cuánto hay; `depositReady` dice si se puede. El botón de la
+ * fila lee los dos, y ninguno de los dos alcanza por sí solo: hay un venue con
+ * plata libre y sin mensaje construido, y un venue con mensaje construido y sin
+ * plata. Por eso no es un `boolean`: un `false` pelado obliga a la pantalla a
+ * inventar la explicación, y una explicación inventada es la forma corta de que
+ * alguien firme algo que va a fallar. `not_ready` trae un motivo acotado y **la
+ * frase para pintar tal cual**.
+ *
+ * El valor sale de la MISMA fuente de verdad que dice que `prepareDepositKamino`
+ * no ejecuta, y por eso vive acá, al lado de la tabla de venues, y no escrita a
+ * mano venue por venue: `KAMINO_DEPOSIT_NOT_EXECUTABLE` es el valor de
+ * `completion` para Kamino, y `test/interface/walletBalance.test.ts` ata las dos
+ * respuestas para que no puedan contradecirse.
+ *
+ * Aave no necesita el mismo cuidado porque su depósito **sí** se ejecuta, y esa
+ * asimetría es un dato, no una excepción: la tabla dice "listo" para el venue que
+ * puede y "no listo, con motivo" para el que no.
+ *
  * ── How a piece is valued: a peg, or a feed ─────────────────────────────────
  *
  *  - **A digital dollar is valued at exactly 1, by definition, and no oracle is
@@ -202,6 +222,7 @@ import {
   rateFromFractionText,
   rateFromPercentText,
   type CombinedYield,
+  type VenueDepositReadiness,
   type VenueDepositable,
   type YieldRate,
   type YieldVenue,
@@ -234,6 +255,65 @@ export const AAVE_V3_USDC_MONAD_KEY = 'invest.aave_v3_usdc_monad';
  * it already sums across chains — so the person still sees one number.
  */
 export const KAMINO_EARN_USDC_SOLANA_KEY = 'invest.kamino_earn_usdc_solana';
+
+/**
+ * LO QUE KAMINO **NO** PUEDE EJECUTAR TODAVÍA: la fuente de verdad de `not_ready`.
+ *
+ * ── Por qué esto no es un flag escrito a mano ────────────────────────────────
+ *
+ * El botón de la fila se dibuja a partir de esto, y el depósito se construye en
+ * `prepareDepositKamino`, que publica `completion.executes: false`. Si las dos
+ * cosas vivieran separadas, el día que las dos instrucciones del farm se
+ * construyeran alguien habilitaría **una** de las dos —y se olvidaría de la
+ * otra—, y el resultado sería un botón que dibuja y una transacción que falla en
+ * la red principal. Ese es el defecto exacto que este valor existe para volver
+ * imposible.
+ *
+ * ── Cómo se ata sin que sea la misma línea escrita dos veces ─────────────────
+ *
+ * No se puede leer el `completion` de `prepareDepositKamino` desde acá sin que
+ * ese endpoint exponga el estado; lo que se hace, en cambio, es **atarlo con una
+ * prueba** que corre el caso de uso de verdad y compara las dos respuestas
+ * (`test/interface/walletBalance.test.ts`). Dos banderas de estado en dos
+ * archivos, sin ninguna prueba que las cruce, es exactamente lo que no hay acá.
+ *
+ * `missingSteps` son las dos instrucciones del programa Farms que este
+ * repositorio no construye: crear la cuenta de farm y stakear las shares, que
+ * es donde rinde. El nombre, el programa y el motivo de cada una los publica
+ * `completion.missingSteps`, en el mismo orden y con el mismo número.
+ */
+export const KAMINO_DEPOSIT_NOT_EXECUTABLE: VenueDepositReadiness = {
+  status: 'not_ready',
+  reason: 'DEPOSIT_INSTRUCTIONS_UNVERIFIED',
+  missingSteps: 2,
+  message:
+    'Todavía no podés depositar en Kamino: el depósito se arma con las instrucciones que pudimos verificar, ' +
+    'pero faltan dos del programa de farms, que es donde las shares rinden. No lo dibujamos porque un botón ' +
+    'que falla en la red principal es peor que un botón que todavía no existe.',
+};
+
+/**
+ * SI UN VENUE PUEDE RECIBIR UN DEPÓSITO, Y POR QUÉ NO SI NO PUEDE.
+ *
+ * La tabla es **cerrada y con clave de venue**, no un `if` suelto: un `"kamino"`
+ * escrito acá al lado de un `"aave"` escrito en otro archivo es la forma de que
+ * la respuesta y el depósito se desincronicen sin que nada falle. Acá ambos salen
+ * del mismo nombre de venue, y una prueba los compara.
+ *
+ * Lo que esta función **no** decide: cuánto hay para depositar. Eso es
+ * `depositableOf`, y depende de la cadena, no del venue.
+ */
+const depositReadyOf = (venueKey: string): VenueDepositReadiness => {
+  if (venueKey === KAMINO_EARN_USDC_SOLANA_KEY) return KAMINO_DEPOSIT_NOT_EXECUTABLE;
+
+  /*
+   * El resto de los venues que este caso de uso conoce puede recibir un
+   * depósito: `prepareDeposit` arma approve + deposit y los dos se ejecutan.
+   * `ready` no lleva nada más a propósito —un campo extra al lado del estado es
+   * un estado más que puede desincronizarse de él—.
+   */
+  return { status: 'ready' };
+};
 
 /**
  * Why a piece of a bucket could not be valued. Bounded: no provider's own words
@@ -932,6 +1012,14 @@ const depositableOf = (
  * `depositable` se transporta en los tres casos y **no participa de ninguno de
  * ellos**: un venue cuya posición no se pudo leer igual puede tener plata libre
  * para depositar, y `combineYields` lo publica sin usarlo en la media ponderada.
+ *
+ * `chain` y `depositReady` viajan por el mismo motivo y con la misma regla: son
+ * hechos **de la fila**, no del número. `chain` porque una fila que no dice en qué
+ * red está obliga a la pantalla a deducirlo del nombre —y deducir una red de una
+ * cadena de texto es como se llega a mandar plata a la red equivocada—, y
+ * `depositReady` porque un venue puede tener plata libre y no poder recibir el
+ * depósito todavía. Que el mismo `venueOf` los arme para los tres estados es lo
+ * que hace que no exista un estado de fila en el que uno de los dos falte.
  */
 const venueOf = (
   piece: BalancePiece,
@@ -944,9 +1032,11 @@ const venueOf = (
       label: piece.label,
       status: 'unreadable',
       reason: piece.reason,
+      chain: piece.chain,
       balance: null,
       rate: null,
       depositable,
+      depositReady: depositReadyOf(piece.key),
     };
   }
 
@@ -961,9 +1051,11 @@ const venueOf = (
       label: piece.label,
       status: 'ok',
       exclusion: 'zero_balance',
+      chain: piece.chain,
       balance: piece.value,
       rate: venueRate?.rate ?? null,
       depositable,
+      depositReady: depositReadyOf(piece.key),
     };
   }
 
@@ -973,9 +1065,11 @@ const venueOf = (
       label: piece.label,
       status: 'unreadable',
       reason: venueRate?.reason ?? 'RPC_UNAVAILABLE',
+      chain: piece.chain,
       balance: null,
       rate: null,
       depositable,
+      depositReady: depositReadyOf(piece.key),
     };
   }
 
@@ -984,9 +1078,11 @@ const venueOf = (
     label: piece.label,
     status: 'ok',
     exclusion: null,
+    chain: piece.chain,
     balance: piece.value,
     rate: venueRate.rate,
     depositable,
+    depositReady: depositReadyOf(piece.key),
   };
 };
 

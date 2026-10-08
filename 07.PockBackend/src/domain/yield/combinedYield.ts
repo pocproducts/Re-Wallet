@@ -94,8 +94,35 @@
  * No hay un tercer estado, y no hay un `null` ambiguo: el mismo criterio que
  * gobierna `status` y `balance` en cada fila de este módulo, aplicado a la cifra
  * de la que el botón depende.
+ *
+ * ── `depositReady`: si ESTE venue puede recibir un depósito, y por qué no ───
+ *
+ * `depositable` dice **cuánto** hay para depositar; `depositReady` dice **si se
+ * puede**. Son dos hechos y ninguno implica al otro: hay venues con plata libre
+ * y sin mensaje construido (Kamino), y venues con mensaje construido y sin
+ * plata. Un `boolean` pelado resolvería el primer caso y perdería el segundo: un
+ * `false` que no dice por qué obliga a la pantalla a inventar la explicación, y
+ * una explicación inventada es la forma corta de que alguien firme una
+ * transacción que va a fallar.
+ *
+ * ```
+ *   depositReady: { "status": "ready" }
+ *   depositReady: { "status": "not_ready", "reason": "DEPOSIT_INSTRUCTIONS_UNVERIFIED",
+ *                   "missingSteps": 2, "message": "…" }
+ * ```
+ *
+ * El `message` es **una frase para pintar tal cual**, en el mismo idioma y con el
+ * mismo tono que el resto del módulo: la pantalla no lo redacta ni lo mejora.
+ *
+ * Y el motivo sale de **la misma fuente de verdad** que dice que el depósito no
+ * se ejecuta, que es donde vive `completion` de `prepareDepositKamino`. Un flag
+ * por venue escrito a mano al lado de otro es exactamente el defecto a evitar:
+ * un día el botón aparece y el depósito falla, y el repositorio no tiene forma de
+ * que eso salte en ninguna prueba. Por eso este módulo **no** declara el valor:
+ * declara la forma, y el valor lo lee quien sabe.
  */
 import { formatUnits } from '../portfolio/assets';
+import type { PortfolioChain } from '../portfolio/networks';
 import type { Quantity, UsdAmount } from '../price/valuation';
 import { parseExactDecimal } from './kaminoEarnVault';
 
@@ -194,6 +221,40 @@ export type VenueDepositable =
   | { readonly status: 'unreadable'; readonly reason: YieldVenueFailure | 'WALLETS_UNAVAILABLE' };
 
 /**
+ * Why one venue cannot receive a deposit **yet**, as a bounded name.
+ *
+ * Bounded like `YieldVenueFailure` and for the same reason: a screen can only
+ * render a name, and a provider's own words never cross this line. The `message`
+ * that travels beside it is this repository's sentence, and the screen paints it
+ * as it is.
+ */
+export type VenueDepositBlockReason = 'DEPOSIT_INSTRUCTIONS_UNVERIFIED';
+
+/**
+ * If a venue can receive a deposit, and — when it cannot — **why**.
+ *
+ * `ready` carries nothing else on purpose: no count, no limit, no flag that could
+ * differ tomorrow and make `ready` mean something else. Everything a button needs
+ * to know *how much* is `depositable`; this says whether the action exists.
+ *
+ * `missingSteps` is how many instructions of the deposit this repository refuses
+ * to build. It is a count and not a list because the list —program, accounts,
+ * discriminador— belongs to the deposit endpoint, which already publishes it per
+ * deposit. The count is what lets a row say "faltan N pasos" without opening a
+ * second source of truth about *which* pasos.
+ */
+export type VenueDepositReadiness =
+  | { readonly status: 'ready' }
+  | {
+      readonly status: 'not_ready';
+      readonly reason: VenueDepositBlockReason;
+      /** How many instructions of the deposit are not built. Always ≥ 1. */
+      readonly missingSteps: number;
+      /** The sentence a screen paints as it is. Never a code to decode. */
+      readonly message: string;
+    };
+
+/**
  * One venue's contribution, with its own state.
  *
  * The union is the design. An `ok` venue always carries a balance; it carries a
@@ -213,9 +274,12 @@ export type YieldVenue =
       readonly label: string;
       readonly status: 'ok';
       readonly exclusion: null;
+      /** The network the venue lives on. The screen paints it and cannot guess it. */
+      readonly chain: PortfolioChain | null;
       readonly balance: UsdAmount;
       readonly rate: YieldRate;
       readonly depositable: VenueDepositable;
+      readonly depositReady: VenueDepositReadiness;
     }
   | {
       readonly key: string;
@@ -223,18 +287,22 @@ export type YieldVenue =
       readonly status: 'ok';
       /** Set **only** when the balance is exactly zero. See the header. */
       readonly exclusion: 'zero_balance';
+      readonly chain: PortfolioChain | null;
       readonly balance: UsdAmount;
       readonly rate: YieldRate | null;
       readonly depositable: VenueDepositable;
+      readonly depositReady: VenueDepositReadiness;
     }
   | {
       readonly key: string;
       readonly label: string;
       readonly status: 'unreadable';
       readonly reason: YieldVenueFailure;
+      readonly chain: PortfolioChain | null;
       readonly balance: null;
       readonly rate: null;
       readonly depositable: VenueDepositable;
+      readonly depositReady: VenueDepositReadiness;
     };
 
 /**
@@ -266,18 +334,23 @@ export type YieldVenueContribution =
       readonly label: string;
       readonly status: 'ok';
       readonly exclusion: YieldVenueExclusion | null;
+      /** The network of this venue. A row that cannot say it cannot be placed. */
+      readonly chain: PortfolioChain | null;
       readonly balance: UsdAmount;
       readonly rate: { readonly raw: string; readonly decimals: number; readonly text: string } | null;
       readonly depositable: VenueDepositable;
+      readonly depositReady: VenueDepositReadiness;
     }
   | {
       readonly key: string;
       readonly label: string;
       readonly status: 'unreadable';
       readonly reason: YieldVenueFailure;
+      readonly chain: PortfolioChain | null;
       readonly balance: null;
       readonly rate: null;
       readonly depositable: VenueDepositable;
+      readonly depositReady: VenueDepositReadiness;
     };
 
 /**
@@ -310,7 +383,8 @@ const ZERO_RATIO: ExactRatio = { numerator: '0', denominator: '1' };
  * no scaling, no summing, no influence on `complete` or on `rate`. Adding a sum
  * over it here is the one edit that would make every deposited dollar count
  * twice, and the union is what makes it visible that it is a field of a venue
- * rather than a term of the figure.
+ * rather than a term of the figure. `depositReady` and `chain` travel the same
+ * way: a row **describes** a venue, and describing it is not weighting it.
  */
 const contributionOf = (venue: YieldVenue): YieldVenueContribution =>
   venue.status === 'unreadable'
@@ -319,21 +393,25 @@ const contributionOf = (venue: YieldVenue): YieldVenueContribution =>
         label: venue.label,
         status: 'unreadable',
         reason: venue.reason,
+        chain: venue.chain,
         balance: null,
         rate: null,
         depositable: venue.depositable,
+        depositReady: venue.depositReady,
       }
     : {
         key: venue.key,
         label: venue.label,
         status: 'ok',
         exclusion: venue.exclusion,
+        chain: venue.chain,
         balance: venue.balance,
         rate:
           venue.rate === null
             ? null
             : { raw: venue.rate.raw.toString(), decimals: venue.rate.decimals, text: venue.rate.text },
         depositable: venue.depositable,
+        depositReady: venue.depositReady,
       };
 
 /**

@@ -28,10 +28,16 @@ import { readKaminoEarnPosition } from '../../src/application/portfolio/readKami
 import { DIGITAL_DOLLAR_SYMBOLS } from '../../src/domain/price/digitalDollar';
 import { readPool } from '../../src/application/pool/readPool';
 import { prepareDeposit } from '../../src/application/pool/prepareDeposit';
+import { prepareDepositKamino } from '../../src/application/pool/prepareDepositKamino';
 import { BalanceReadError } from '../../src/domain/portfolio/errors';
 import type { AavePoolReader } from '../../src/domain/ports/aave-pool-reader';
 import type { EvmBalanceReader } from '../../src/domain/ports/evm-balance-reader';
 import type { KaminoEarnVaultReader } from '../../src/domain/ports/kamino-earn-vault-reader';
+import type {
+  KaminoAccountToCreate,
+  KaminoDepositAccounts,
+  KaminoDepositPreparer,
+} from '../../src/domain/ports/kamino-earn-vault-reader';
 import type {
   KaminoApyResult,
   KaminoSharePriceFeed,
@@ -391,12 +397,16 @@ interface BalanceBody {
         label: string;
         status: string;
         exclusion: string | null;
+        chain: string | null;
         reason?: string;
         balance: Usd | null;
         rate: { raw: string; decimals: number; text: string } | null;
         depositable:
           | { status: 'ok'; amount: { raw: string; amount: string; decimals: number; unit: string } }
           | { status: 'unreadable'; reason: string };
+        depositReady:
+          | { status: 'ready' }
+          | { status: 'not_ready'; reason: string; missingSteps: number; message: string };
       }[];
     };
   };
@@ -1075,21 +1085,32 @@ describe('the one combined yield, in the response', () => {
         label: 'Aave V3 · USDC en Monad',
         status: 'ok',
         exclusion: null,
+        chain: 'monad',
         balance: { raw: '60000000', amount: '60', decimals: 6, unit: 'USD' },
         rate: { raw: '41200', decimals: 6, text: '0.0412' },
         depositable: { status: 'ok', amount: { raw: '1500000', amount: '1.5', decimals: 6, unit: 'USDC' } },
+        depositReady: { status: 'ready' },
       },
       {
         key: 'invest.kamino_earn_usdc_solana',
         label: 'Kamino Earn · USDC en Solana',
         status: 'ok',
         exclusion: null,
+        chain: 'solana',
         balance: { raw: '40000000', amount: '40', decimals: 6, unit: 'USD' },
         rate: { raw: '418', decimals: 4, text: '0.0418' },
         // A zero here is a **real zero**: this person simply holds no free USDC on
         // Solana. It is an `ok`, so a row with a zero can still draw a button with
         // a zero ceiling. An unreadable chain would say `unreadable` instead.
         depositable: { status: 'ok', amount: { raw: '0', amount: '0', decimals: 6, unit: 'USDC' } },
+        // Y el otro hecho, que es independiente del saldo: a este venue todavía
+        // no se le puede depositar. Los dos viajan juntos y ninguno implica al otro.
+        depositReady: {
+          status: 'not_ready',
+          reason: 'DEPOSIT_INSTRUCTIONS_UNVERIFIED',
+          missingSteps: 2,
+          message: expect.any(String),
+        },
       },
     ]);
 
@@ -1387,6 +1408,128 @@ describe('el saldo de origen de cada venue: `depositable`', () => {
     // gets asked to.
     expect(BigInt(origin.status === 'ok' ? origin.amount.raw : '0')).toBe(BigInt(huge));
     expect(String(Number(huge))).not.toBe(huge);
+  });
+});
+
+/*
+ * `depositReady`: SI EL VENUE PUEDE RECIBIR EL DEPÓSITO.
+ *
+ * ── El defecto que este archivo evita ────────────────────────────────────────
+ *
+ * El botón de depósito vive en la fila del venue, así que la fila tiene que decir
+ * si esa fila puede recibir plata. Y hay **dos verdades** que podrían desincronizarse
+ * sin que nada falle: la fila del balance (`depositReady`) y la preparación del
+ * depósito (`completion` en `POST /api/pool/deposit`). El día que alguien construya
+ * las dos instrucciones que faltan del farm de Kamino, la tentación es cambiar el
+ * `false` de un lado y olvidar el otro — y el resultado es un botón que dibuja y
+ * una transacción que falla en la red principal.
+ *
+ * Por eso el test de acá no prueba "que Kamino diga que no": prueba que **las dos
+ * respuestas no puedan contradecirse**, corriendo los dos casos de uso de verdad
+ * sobre los mismos ports.
+ *
+ * Y el otro defecto, que es el que la decisión del owner dejó escrito: un flag por
+ * venue **escrito a mano en el front**. Eso no se arregla acá, pero se documenta:
+ * por eso `depositReady` viaja en la respuesta y la pantalla no tiene lista propia.
+ */
+describe('si el venue puede recibir el depósito: `depositReady`', () => {
+  const rowOf = (body: BalanceBody, key: string) => {
+    const found = body.investedValue.yield.venues.find((venue) => venue.key === key);
+    if (found === undefined) throw new Error(`no venue ${key}`);
+    return found;
+  };
+
+  /**
+   * El preparador de Kamino, que es un puerto y no un caso de uso: la respuesta
+   * del balance **no** lo necesita —el depósito no se prepara para leer el
+   * balance—, pero hace falta acá para correr `prepareDepositKamino` sobre los
+   * mismos ports y comparar las dos respuestas.
+   */
+  const fakePreparer = (): KaminoDepositPreparer => {
+    const accountsOf = (): KaminoDepositAccounts => ({
+      vault: {
+        address: KAMINO_VAULT.address,
+        protocol: 'Kamino Earn',
+        program: 'KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd',
+        tokenMint: KAMINO_VAULT.tokenMint,
+        tokenDecimals: 6,
+        sharesMint: KAMINO_VAULT.sharesMint,
+      },
+      accounts: [
+        { role: 'usdc_token_account', address: 'UsdcAta1111111111111111111111111111111111', exists: true, rent: { status: 'ok', lamports: 2_039_280n } },
+        { role: 'shares_token_account', address: 'SharesAta11111111111111111111111111111111', exists: true, rent: { status: 'ok', lamports: 2_039_280n } },
+      ],
+      requiredRentLamports: 0n,
+      unpricedAccounts: 0,
+    });
+
+    return {
+      accounts: async () => accountsOf(),
+      prepare: async () => ({
+        serializedTransaction: 'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY',
+        network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqK',
+      }),
+    };
+  };
+
+  it('says why a venue cannot receive a deposit, instead of a bare `false`', async () => {
+    const { app } = harness({ kamino: { shares: 40_000_000n } });
+
+    const body = (await (await get(app)).json()) as BalanceBody;
+
+    // Aave sí: su depósito se arma y se ejecuta, y no lleva nada más al lado.
+    expect(rowOf(body, 'invest.aave_v3_usdc_monad').depositReady).toEqual({ status: 'ready' });
+
+    // Kamino no, y el `false` viene con un motivo acotado y una frase para pintar
+    // tal cual. Un `false` pelado obligaría a la pantalla a inventar la explicación.
+    const kamino = rowOf(body, 'invest.kamino_earn_usdc_solana').depositReady;
+    expect(kamino.status).toBe('not_ready');
+    if (kamino.status !== 'not_ready') throw new Error('unreachable');
+    expect(kamino.reason).toBe('DEPOSIT_INSTRUCTIONS_UNVERIFIED');
+    expect(kamino.missingSteps).toBeGreaterThan(0);
+    expect(kamino.message.length).toBeGreaterThan(0);
+    // Y es una frase, no un código: sin mayúsculas de enum ni guiones bajos.
+    expect(kamino.message).not.toMatch(/[A-Z_]{4,}/);
+  });
+
+  it('does not contradict what the deposit endpoint actually executes', async () => {
+    const { app, solana, log } = harness({ kamino: { shares: 40_000_000n } });
+
+    const body = (await (await get(app)).json()) as BalanceBody;
+
+    // La misma persona, la misma billetera, el mismo lector de Solana: lo que el
+    // balance dice que se puede depositar y lo que la preparación dice que se
+    // ejecuta, contados uno por uno.
+    const readiness = new Map(body.investedValue.yield.venues.map((venue) => [venue.key, venue.depositReady]));
+
+    const aave = await prepareDeposit({
+      wallets: twoWalletRows,
+      pool: fakePool(),
+      log,
+    })(USER_ID, '1000000');
+    const kamino = await prepareDepositKamino({
+      wallets: twoWalletRows,
+      solana: solana,
+      preparer: fakePreparer(),
+      log,
+    })(USER_ID, '1000000');
+
+    // El botón de la fila de Kamino y el `completion` del depósito de Kamino son
+    // **la misma verdad dicha en dos lugares**: o los dos están abiertos, o los
+    // dos están cerrados. Un lado_only sería un botón que falla en mainnet.
+    const kaminoReady = readiness.get('invest.kamino_earn_usdc_solana');
+    if (kaminoReady === undefined) throw new Error('the Kamino venue row did not arrive');
+    expect(kaminoReady.status === 'ready').toBe(kamino.completion.executes);
+    expect(kamino.completion.executes).toBe(false);
+    expect(kaminoReady.status === 'not_ready' && kaminoReady.missingSteps).toBe(
+      kamino.completion.missingSteps.length,
+    );
+
+    // Y Aave, que sí ejecuta, tampoco se contradice: su fila ofrece botón y su
+    // preparación trae las dos transacciones que se firman.
+    const aaveReady = readiness.get('invest.aave_v3_usdc_monad');
+    expect(aaveReady?.status).toBe('ready');
+    expect(aave.transactions.length).toBeGreaterThan(0);
   });
 });
 

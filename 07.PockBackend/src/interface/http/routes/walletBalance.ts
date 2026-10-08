@@ -45,7 +45,9 @@
  *           "status": "ok", "exclusion": null,
  *           "balance": { "raw": "40000000", "amount": "40", "decimals": 6, "unit": "USD" },
  *           "rate": { "raw": "418", "decimals": 4, "text": "0.0418" },
- *           "depositable": { "status": "unreadable", "reason": "FREE_BALANCE_ABSENT" } }
+ *           "depositable": { "status": "unreadable", "reason": "FREE_BALANCE_ABSENT" },
+ *           "depositReady": { "status": "not_ready",
+ *             "reason": "DEPOSIT_INSTRUCTIONS_UNVERIFIED", "missingSteps": 2, "message": "…" } }
  *       ] } },
  *   "total": { "unit": "USD", "complete": false, "usd": { … } }
  * }
@@ -76,6 +78,11 @@
  * therefore left out of the weighting — a different fact from `status:
  * "unreadable"`, and never to be drawn the same way.
  *
+ * Every venue also carries its **`chain`** (`"monad"`, `"solana"`, `"ethereum"`):
+ * a row that does not say which network it is on leaves the screen guessing it
+ * from its label, and a screen that guesses a network offers a deposit on the
+ * wrong chain.
+ *
  * ── `depositable`: cuánto se puede depositar EN ese venue ───────────────────
  *
  * Cada fila lleva, al lado de `balance` y `rate`, el saldo de origen del venue:
@@ -100,6 +107,30 @@
  * - **Cadena contra cadena.** El de Aave sale del USDC libre de **Monad** y el de
  *   Kamino del de **Solana**. Nunca se cruzan: el índice se arma por cadena, así
  *   que un venue no puede ni pedir la plata de otro.
+ *
+ * ── `depositReady`: si esa fila puede recibir un depósito, y por qué no ──────
+ *
+ * `depositable` dice **cuánto** hay; `depositReady` dice **si se puede**, que es
+ * la pregunta que decide si la fila dibuja botón.
+ *
+ * ```
+ *   depositReady: { "status": "ready" }
+ *   depositReady: { "status": "not_ready", "reason": "DEPOSIT_INSTRUCTIONS_UNVERIFIED",
+ *                   "missingSteps": 2, "message": "Todavía no podés depositar en Kamino…" }
+ * ```
+ *
+ * - **Nunca un `false` pelado.** Un booleano que no dice por qué obliga al
+ *   cliente a inventar la explicación, y una explicación inventada es como alguien
+ *   firma una transacción que va a fallar. `not_ready` trae un motivo acotado y la
+ *   frase para pintar tal cual.
+ * - **Viene del servidor a propósito.** El destino de un depósito dejó de estar
+ *   compilado en el cliente, y devolverlo sería devolver el problema: una lista de
+ *   venues en el front es una lista que un día dice que Kamino está listo. La
+ *   fila no inventa el botón; lee el campo.
+ * - **No contradice la preparación.** El valor sale de la misma fuente de verdad
+ *   que `completion` de `POST /api/pool/deposit`, y una prueba corre los dos casos
+ *   de uso sobre los mismos ports para comparar las dos respuestas: un botón que
+ *   dibuja con un depósito que no se ejecuta es exactamente el defecto.
  *
  * ── The three buckets, and which card each one serves ───────────────────────
  *
