@@ -78,6 +78,13 @@ jobs:
         working-directory: 05. UI-UX
         run: npm run lint
 
+      - name: front — tests
+        if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
+        working-directory: 05. UI-UX
+        # Sin esto los tests del front son un adorno: pasan en la máquina de
+        # quien los escribió y nadie más se entera.
+        run: npm test
+
       - name: front — build
         if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
         working-directory: 05. UI-UX
