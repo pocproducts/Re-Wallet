@@ -29,6 +29,7 @@ import {
   rateFromFractionText,
   rateFromPercentText,
   type ExactRatio,
+  type VenueDepositable,
   type YieldVenue,
 } from '../../src/domain/yield/combinedYield';
 import type { UsdAmount } from '../../src/domain/price/valuation';
@@ -47,6 +48,21 @@ const usd = (raw: bigint, decimals = 6): UsdAmount => ({
   unit: 'USD',
 });
 
+/**
+ * El saldo de origen de una fila, como lo publica la composición.
+ *
+ * En este archivo **no** se prueba cómo se resuelve: eso vive en
+ * `test/interface/walletBalance.test.ts`, que tiene las dos cadenas. Acá lo que
+ * se afirma es más chico y es lo único que la combinación puede romper: lo
+ * transporta tal cual, sin escalarlo, sin sumarlo y sin que `complete` lo mire.
+ */
+const depositOf = (raw: bigint): VenueDepositable => ({
+  status: 'ok',
+  amount: { raw: raw.toString(), amount: (raw / 1_000_000n).toString(), decimals: 6, unit: 'USDC' },
+});
+
+const ORIGIN_FREE = depositOf(1_500_000n);
+
 /** A venue that takes part in the weighting, typed as that member exactly. */
 type WeightedVenue = Extract<YieldVenue, { readonly exclusion: null }>;
 
@@ -58,6 +74,7 @@ const aave60 = (): WeightedVenue => ({
   exclusion: null,
   balance: usd(60_000_000n),
   rate: must(rateFromPercentText('4.1200', 4)),
+  depositable: ORIGIN_FREE,
 });
 
 /** And $40 at 4.18 %, the second venue on another chain and another scale. */
@@ -68,6 +85,9 @@ const kamino40 = (): WeightedVenue => ({
   exclusion: null,
   balance: usd(40_000_000n),
   rate: must(rateFromFractionText('0.0418')),
+  // Su propia cadena: $40 libres de Solana, no los $60 libres de Monad. El cruce
+  // de cadenas es imposible por construcción, y este fixture lo deja dicho.
+  depositable: depositOf(40_000_000n),
 });
 
 describe('the combined yield is a weighted mean, not an average', () => {
@@ -201,6 +221,10 @@ describe('one unreadable venue means there is no combined number', () => {
         reason: 'APY_NON_POSITIVE',
         balance: null,
         rate: null,
+        // El origen es otro hecho: este venue tiene USDC libre en Solana aunque
+        // su APY no se haya podido leer, y ocultarlo haría que la pantalla
+        // inventara una respuesta para algo que ya se le estaba informando.
+        depositable: depositOf(40_000_000n),
       },
     ]);
 
@@ -222,6 +246,7 @@ describe('one unreadable venue means there is no combined number', () => {
       reason: 'APY_NON_POSITIVE',
       balance: null,
       rate: null,
+      depositable: depositOf(40_000_000n),
     });
     // The venue that did answer is still described exactly.
     expect(combined.venues[0]).toMatchObject({ status: 'ok', exclusion: null });
@@ -237,6 +262,7 @@ describe('one unreadable venue means there is no combined number', () => {
         reason: 'RPC_UNAVAILABLE',
         balance: null,
         rate: null,
+        depositable: depositOf(40_000_000n),
       },
     ]);
 
@@ -253,6 +279,7 @@ describe('one unreadable venue means there is no combined number', () => {
         reason: 'APR_NOT_RECONCILED',
         balance: null,
         rate: null,
+        depositable: ORIGIN_FREE,
       },
       kamino40(),
     ]);
@@ -279,6 +306,10 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         // Its rate could not be read, and that does not matter: a venue holding
         // nothing cannot move a weighted mean, so the figure is still complete.
         rate: null,
+        // Y el saldo de origen tampoco lo vuelve ilegible: una posición en cero
+        // con USDC libre en la cartera es el caso donde el botón se dibuja con
+        // tope cero, y es un `ok`, no un agujero.
+        depositable: ORIGIN_FREE,
       } satisfies YieldVenue,
     ]);
 
@@ -299,6 +330,7 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         exclusion: 'zero_balance',
         balance: usd(0n),
         rate: must(rateFromPercentText('4.1200', 4)),
+        depositable: depositOf(0n),
       },
       {
         key: 'invest.kamino_earn_usdc_solana',
@@ -307,6 +339,7 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         exclusion: 'zero_balance',
         balance: usd(0n),
         rate: must(rateFromFractionText('0.0418')),
+        depositable: depositOf(0n),
       },
     ]);
 
@@ -327,6 +360,7 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         exclusion: 'zero_balance',
         balance: usd(0n),
         rate: null,
+        depositable: depositOf(0n),
       },
     ]);
     const unreadable = combineYields([
@@ -338,6 +372,7 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
         reason: 'KAMINO_UNAVAILABLE',
         balance: null,
         rate: null,
+        depositable: ORIGIN_FREE,
       },
     ]);
 
@@ -345,6 +380,47 @@ describe('a venue holding exactly zero is excluded — a different fact from unr
     expect(zero.rate).not.toBeNull();
     expect(unreadable.complete).toBe(false);
     expect(unreadable.rate).toBeNull();
+  });
+});
+
+describe('`depositable` viaja al lado y no entra en la aritmética', () => {
+  it('does not move the figure, the completeness, or the ratio', () => {
+    /*
+     * El mismo par de venues, con saldos de origen distintos: $1.500.000 libre en
+     * cada cadena contra cero en cada una. El `depositable` es la misma plata que
+     * el portfolio ya contó del lado libre, así que si esta combinación lo sumara,
+     * el headline quedaría inflado por todo lo que la persona tiene en la
+     * cartera — y la prueba de que no lo suma es que **la figura es idéntica**.
+     */
+    const withMoney = combineYields([aave60(), kamino40()]);
+    const withoutMoney = combineYields([
+      { ...aave60(), depositable: depositOf(0n) },
+      { ...kamino40(), depositable: depositOf(0n) },
+    ]);
+
+    expect(withoutMoney.rate).toEqual(withMoney.rate);
+    expect(withoutMoney.complete).toBe(withMoney.complete);
+    expect(withoutMoney.venues.map((venue) => venue.balance)).toEqual(
+      withMoney.venues.map((venue) => venue.balance),
+    );
+    // Y el cero sigue siendo un `ok`: un origen en cero es un hecho, no un hole,
+    // y por eso no puede hacer incompleta a una figura que está entera.
+    expect(withoutMoney.complete).toBe(true);
+    expect(withoutMoney.venues.map((venue) => venue.depositable)).toEqual([depositOf(0n), depositOf(0n)]);
+  });
+
+  it('carries a bigint-only amount across, digit for digit, with no rescaling', () => {
+    // Treinta dígitos: más allá de `Number.MAX_SAFE_INTEGER`. Un `number` en el
+    // medio redondearía el final del número que alguien firmaría como depósito.
+    const huge = 987_654_321_098_765_432_109_876_543_210n;
+    const combined = combineYields([{ ...aave60(), depositable: depositOf(huge) }, kamino40()]);
+
+    const origin = combined.venues.map((venue) => venue.depositable).at(0);
+    expect(origin?.status).toBe('ok');
+    expect(origin?.status === 'ok' && BigInt(origin.amount.raw)).toBe(huge);
+    expect(origin?.status === 'ok' && origin.amount.decimals).toBe(6);
+    // El origen no tocó la media ponderada, que es exactamente la de antes.
+    expect(combined.rate).toEqual({ numerator: '4144000000000', denominator: '100000000000000' });
   });
 });
 

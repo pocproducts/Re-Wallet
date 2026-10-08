@@ -772,7 +772,10 @@ describe('the one combined yield across both venues', () => {
 
     // Each venue carries its own rate **and its own balance**, at the scales they
     // were read at, so the screen explains the figure from this object instead of
-    // recomputing it.
+    // recomputing it. And each venue carries **its own chain's free USDC** as the
+    // origin it can be deposited into: Aave's is the empty Monad wallet of this
+    // fixture (a real zero, and an `ok`), Kamino's is the $2 free on Solana. Not
+    // the other way round, ever.
     expect(combined.venues).toEqual([
       {
         key: AAVE_V3_USDC_MONAD_KEY,
@@ -781,6 +784,7 @@ describe('the one combined yield across both venues', () => {
         exclusion: null,
         balance: { raw: '60000000', amount: '60', decimals: 6, unit: 'USD' },
         rate: { raw: '41200', decimals: 6, text: '0.0412' },
+        depositable: { status: 'ok', amount: { raw: '0', amount: '0', decimals: 6, unit: 'USDC' } },
       },
       {
         key: KAMINO_EARN_USDC_SOLANA_KEY,
@@ -789,6 +793,7 @@ describe('the one combined yield across both venues', () => {
         exclusion: null,
         balance: { raw: '40000000', amount: '40', decimals: 6, unit: 'USD' },
         rate: { raw: '418', decimals: 4, text: '0.0418' },
+        depositable: { status: 'ok', amount: { raw: '2000000', amount: '2', decimals: 6, unit: 'USDC' } },
       },
     ]);
   });

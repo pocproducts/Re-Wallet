@@ -38,11 +38,14 @@
  *         { "key": "invest.aave_v3_usdc_monad", "label": "Aave V3 · USDC en Monad",
  *           "status": "ok", "exclusion": null,
  *           "balance": { "raw": "60000000", "amount": "60", "decimals": 6, "unit": "USD" },
- *           "rate": { "raw": "41200", "decimals": 6, "text": "0.0412" } },
+ *           "rate": { "raw": "41200", "decimals": 6, "text": "0.0412" },
+ *           "depositable": { "status": "ok",
+ *             "amount": { "raw": "1500000", "amount": "1.5", "decimals": 6, "unit": "USDC" } } },
  *         { "key": "invest.kamino_earn_usdc_solana", "label": "Kamino Earn · USDC en Solana",
  *           "status": "ok", "exclusion": null,
  *           "balance": { "raw": "40000000", "amount": "40", "decimals": 6, "unit": "USD" },
- *           "rate": { "raw": "418", "decimals": 4, "text": "0.0418" } }
+ *           "rate": { "raw": "418", "decimals": 4, "text": "0.0418" },
+ *           "depositable": { "status": "unreadable", "reason": "FREE_BALANCE_ABSENT" } }
  *       ] } },
  *   "total": { "unit": "USD", "complete": false, "usd": { … } }
  * }
@@ -72,6 +75,31 @@
  * missing. `exclusion: "zero_balance"` means the venue holds nothing and was
  * therefore left out of the weighting — a different fact from `status:
  * "unreadable"`, and never to be drawn the same way.
+ *
+ * ── `depositable`: cuánto se puede depositar EN ese venue ───────────────────
+ *
+ * Cada fila lleva, al lado de `balance` y `rate`, el saldo de origen del venue:
+ * el USDC libre de **su** cadena, exacto (`raw`, `amount`, `decimals`, `unit`).
+ *
+ * ```
+ *   depositable: { "status": "ok", "amount": { "raw": "1500000", …, "unit": "USDC" } }
+ *   depositable: { "status": "unreadable", "reason": "RPC_UNAVAILABLE" }
+ * ```
+ *
+ * - **Nunca un `0` por ilegible.** Un `0` es una cifra: la persona no tiene USDC
+ *   libre en esa cadena. Un `unreadable` es una incógnita, y vestida de `0` se
+ *   convierte en un botón que deposita sobre un número que nadie conoce. La regla
+ *   que lo impide está escrita en `depositableOf`
+ *   (`src/application/portfolio/readWalletBalance.ts`).
+ * - **Un cero real sí es `ok`**, con `raw: "0"`. Una billetera sin USDC libre es un
+ *   hecho, y el botón puede existir con tope cero.
+ * - **No es dinero nuevo.** `depositable` es el mismo USDC libre que ya está en
+ *   `digitalDollarsValue`; por eso no aparece en ningún total ni cambia ninguno, y
+ *   las cifras del balance son idénticas con el campo presente o ausente. Sumarlo
+ *   sería el doble conteo que estos tres buckets existen para volver imposible.
+ * - **Cadena contra cadena.** El de Aave sale del USDC libre de **Monad** y el de
+ *   Kamino del de **Solana**. Nunca se cruzan: el índice se arma por cadena, así
+ *   que un venue no puede ni pedir la plata de otro.
  *
  * ── The three buckets, and which card each one serves ───────────────────────
  *

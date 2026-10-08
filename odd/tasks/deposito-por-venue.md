@@ -98,6 +98,35 @@ cada afirmación y una lista explícita de lo que **no** se verificó.
 
 ### F2 — Backend: el saldo de origen de cada venue
 
+**Hecho.** `investedValue.yield.venues[]` publica `depositable` al lado de `balance`
+y `rate`: el USDC libre de **su** cadena, exacto (`raw`, `amount`, `decimals`,
+`unit`), resuelto sobre las piezas libres que el portfolio ya leyó — sin RPC nueva
+y sin una segunda lectura de la misma cadena.
+
+La forma es una unión discriminada, nunca un `null` ambiguo ni un cero inventado:
+
+```
+depositable: { "status": "ok",         "amount": { "raw": "1500000", …, "unit": "USDC" } }
+depositable: { "status": "unreadable", "reason": "RPC_UNAVAILABLE" }
+```
+
+Tres reglas, cada una con su test:
+
+| Regla | Defecto que evita |
+|---|---|
+| `ok` con el importe exacto, y un **cero legítimo es `ok` con `raw: '0'`** | Un origen en cero deja dibujar el botón con tope cero; un ilegible no dibuja nada |
+| `unreadable` con motivo, nunca `0` | Un botón que deposita sobre un número que nadie conoce |
+| El indexado es **por cadena**: Aave ve Monad, Kamino ve Solana | Un modal que ofrece la plata de otra red |
+
+Y la que protege la plata: `depositable` **no entra** en ningún `bucketOf`, ni en
+`sumExact`, ni en `total`, ni altera `complete`. Es una **referencia** al mismo USDC
+libre que `digitalDollarsValue` ya contó del lado libre, exactamente como
+`availableUsdc` y `gasBalance` en `aaveVenue`. Con $1.50 libres en Monad, $0.50 en
+Ethereum y $2.50 en Solana más $100 depositados, los dólares digitales siguen siendo
+`104.5` y el total `104.585926`.
+
+El original de acá:
+
 Hoy el modal lee `availableUsdc`, que es el saldo libre de la cadena del pool, y
 sólo existe para Aave. Con el botón en la fila, **cada venue tiene que decir cuánto
 se puede depositar ahí**.

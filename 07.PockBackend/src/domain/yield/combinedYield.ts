@@ -66,9 +66,37 @@
  *    which one it is.
  *  - every venue holding zero is a real zero: `complete: true` with a zero rate,
  *    because nothing failed.
+ *
+ * ── `depositable`: el saldo de ORIGEN del venue, y por qué NO se suma ──────
+ *
+ * `depositable` es lo que un botón de depósito necesita para saber cuánto se
+ * puede depositar **en ese venue**: el USDC libre de la cadena del venue, el
+ * mismo número que el portfolio ya contó del lado libre
+ * (`dollars.<cadena>.USDC`). Es una **referencia**, no un término: la plata es la
+ * misma, y sumarla sería el doble conteo que este módulo existe para volver
+ * imposible. Por eso `depositable` no entra en ningún `bucketOf`, ni en
+ * `sumExact`, ni en el `total`, ni cambia `complete`: la cifra del balance es
+ * idéntica con el campo presente o ausente, y `test/interface/walletBalance.test.ts`
+ * lo afirma.
+ *
+ * ── La regla que gobierna el botón: ilegible NO habilita, y cero SÍ ─────────
+ *
+ * `depositable` es una unión discriminada y sólo hay dos respuestas honestas:
+ *
+ *  - **`ok` con el importe exacto** — y un saldo de origen legítimamente **cero**
+ *    es un `ok` con `raw: '0'`. Cero es una verdad: la persona no tiene USDC libre
+ *    en esa cadena, y el botón puede existIR con un tope de cero.
+ *  - **`unreadable` con un motivo acotado** — la pieza libre no se leyó, o la cadena
+ *    no tiene wallet. **Nunca un `0` inventado**, porque `0` es una cifra y una
+ *    cifra que no sabemos es exactamente lo que hace que un botón deposite sobre
+ *    un número inventado. Un saldo de origen ilegible **no habilita el botón**.
+ *
+ * No hay un tercer estado, y no hay un `null` ambiguo: el mismo criterio que
+ * gobierna `status` y `balance` en cada fila de este módulo, aplicado a la cifra
+ * de la que el botón depende.
  */
 import { formatUnits } from '../portfolio/assets';
-import type { UsdAmount } from '../price/valuation';
+import type { Quantity, UsdAmount } from '../price/valuation';
 import { parseExactDecimal } from './kaminoEarnVault';
 
 /**
@@ -97,7 +125,13 @@ export type YieldVenueFailure =
   | 'FEED_DECIMALS_UNREADABLE'
   | 'STALE'
   | 'NON_POSITIVE'
-  | 'CHANNELS_DISAGREE';
+  | 'CHANNELS_DISAGREE'
+  /**
+   * La pieza libre de la cadena del venue **no existe**: la cadena no tiene
+   * wallet, o su catálogo no declaró el USDC. No es un fallo del pool — es que
+   * no hay de dónde depositar, y el botón tiene que saber que no lo hay.
+   */
+  | 'FREE_BALANCE_ABSENT';
 
 /**
  * An annual rate, exact, as a **fraction of one** — `0.041196` is `4.1196 %`.
@@ -139,12 +173,39 @@ export const rateFromFractionText = (text: string): YieldRate | null => {
 };
 
 /**
+ * El saldo de origen de un venue: el USDC libre de su cadena, exacto.
+ *
+ * `ok` siempre trae el importe — **incluido el cero**, que es un saldo real y no
+ * una falta de lectura — y `unreadable` nunca trae un importe que pueda
+ * confundirse con uno. `amount` es una `Quantity`: `raw` es el entero exacto en
+ * la unidad mínima y `amount` su texto decimal, los dos sin pasar por `number`.
+ *
+ * No es un valor en dólares: es USDC, y USDC vale un dólar por definición, así
+ * que valorarlo sería agregar una operación que no informa nada. Va como cantidad
+ * porque lo que el botón necesita es "cuánto puedo mandar", no "cuánto vale".
+ *
+ * El motivo de un `unreadable` es `YieldVenueFailure` **más**
+ * `WALLETS_UNAVAILABLE`: el saldo de origen no lo lee ningún reader de pool sino
+ * el portfolio, y un motivo que existe en otro módulo se transporta con su
+ * nombre en vez de traducirse a otro que no ocurrió.
+ */
+export type VenueDepositable =
+  | { readonly status: 'ok'; readonly amount: Quantity }
+  | { readonly status: 'unreadable'; readonly reason: YieldVenueFailure | 'WALLETS_UNAVAILABLE' };
+
+/**
  * One venue's contribution, with its own state.
  *
  * The union is the design. An `ok` venue always carries a balance; it carries a
  * rate **unless it holds exactly zero**, and that case says so explicitly instead
  * of hiding behind a `null`. An `unreadable` venue never carries a balance at all,
  * so there is no state in which a missing read could be summed as a zero.
+ *
+ * `depositable` is **present in all three members on purpose**: whether this venue
+ * can be deposited into depends on its chain's free balance, not on whether its
+ * own position could be read. A venue whose position is unreadable can still hold
+ * money to deposit, and hiding its `depositable` would make the screen invent an
+ * answer for a fact it could have been told.
  */
 export type YieldVenue =
   | {
@@ -154,6 +215,7 @@ export type YieldVenue =
       readonly exclusion: null;
       readonly balance: UsdAmount;
       readonly rate: YieldRate;
+      readonly depositable: VenueDepositable;
     }
   | {
       readonly key: string;
@@ -163,6 +225,7 @@ export type YieldVenue =
       readonly exclusion: 'zero_balance';
       readonly balance: UsdAmount;
       readonly rate: YieldRate | null;
+      readonly depositable: VenueDepositable;
     }
   | {
       readonly key: string;
@@ -171,6 +234,7 @@ export type YieldVenue =
       readonly reason: YieldVenueFailure;
       readonly balance: null;
       readonly rate: null;
+      readonly depositable: VenueDepositable;
     };
 
 /**
@@ -188,7 +252,14 @@ export interface ExactRatio {
 /** Why a venue is excluded from the weighting. Never used for anything else. */
 export type YieldVenueExclusion = 'zero_balance';
 
-/** A venue as the screen sees it: what it holds, at what rate, and its state. */
+/**
+ * A venue as the screen sees it: what it holds, at what rate, what can be
+ * deposited there, and its state.
+ *
+ * `depositable` travels beside `balance` and `rate` and, like them, is a
+ * discriminated union: it is what a per-row deposit button reads to know whether
+ * it may draw, and to know up to what.
+ */
 export type YieldVenueContribution =
   | {
       readonly key: string;
@@ -197,6 +268,7 @@ export type YieldVenueContribution =
       readonly exclusion: YieldVenueExclusion | null;
       readonly balance: UsdAmount;
       readonly rate: { readonly raw: string; readonly decimals: number; readonly text: string } | null;
+      readonly depositable: VenueDepositable;
     }
   | {
       readonly key: string;
@@ -205,6 +277,7 @@ export type YieldVenueContribution =
       readonly reason: YieldVenueFailure;
       readonly balance: null;
       readonly rate: null;
+      readonly depositable: VenueDepositable;
     };
 
 /**
@@ -229,9 +302,27 @@ export interface CombinedYield {
  */
 const ZERO_RATIO: ExactRatio = { numerator: '0', denominator: '1' };
 
+/**
+ * The venue as the screen reads it.
+ *
+ * `depositable` is **carried across untouched**: it is a reference to a balance
+ * the portfolio already counted, so the combination has nothing to do with it —
+ * no scaling, no summing, no influence on `complete` or on `rate`. Adding a sum
+ * over it here is the one edit that would make every deposited dollar count
+ * twice, and the union is what makes it visible that it is a field of a venue
+ * rather than a term of the figure.
+ */
 const contributionOf = (venue: YieldVenue): YieldVenueContribution =>
   venue.status === 'unreadable'
-    ? { key: venue.key, label: venue.label, status: 'unreadable', reason: venue.reason, balance: null, rate: null }
+    ? {
+        key: venue.key,
+        label: venue.label,
+        status: 'unreadable',
+        reason: venue.reason,
+        balance: null,
+        rate: null,
+        depositable: venue.depositable,
+      }
     : {
         key: venue.key,
         label: venue.label,
@@ -242,6 +333,7 @@ const contributionOf = (venue: YieldVenue): YieldVenueContribution =>
           venue.rate === null
             ? null
             : { raw: venue.rate.raw.toString(), decimals: venue.rate.decimals, text: venue.rate.text },
+        depositable: venue.depositable,
       };
 
 /**
@@ -275,6 +367,9 @@ const fixedDecimal = (value: bigint, places: number): string => {
  * Every venue is either in the weighting or excluded **because it holds exactly
  * zero**; a venue that could not be read makes the whole answer incomplete, and
  * no number is published at all.
+ *
+ * `depositable` no participa de nada de esto: ni del filtro de peso, ni del
+ * numerador, ni del denominador, ni de `complete`. Se publica y nada más.
  */
 export const combineYields = (venues: readonly YieldVenue[]): CombinedYield => {
   const contributions = venues.map(contributionOf);

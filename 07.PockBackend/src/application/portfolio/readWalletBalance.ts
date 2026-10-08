@@ -96,6 +96,24 @@
  *    the combined figure refuses it too instead of publishing it in a place with
  *    no `agrees` flag beside it.
  *
+ * ── EL SALDO DE ORIGEN DE CADA VENUE: `depositable`, y por qué no se suma ───
+ *
+ * El botón de depósito vive en la fila del venue, así que cada fila tiene que
+ * decir **cuánto se puede depositar ahí**. Eso es el USDC libre de la cadena del
+ * venue: la pieza `dollars.<cadena>.USDC` que el portfolio ya leyó y ya contó del
+ * lado libre. `depositable` es por lo tanto una **referencia** a ese número, y
+ * entra en la respuesta sin entrar en ninguna suma: no hay un `bucketOf` que lo
+ * toque, ni un `sumExact` que lo sume, ni un `complete` que lo considere. Sumarlo
+ * sería el doble conteo exacto que este caso de uso existe para volver imposible,
+ * y la regla está escrita en los dos archivos donde vive: `aaveVenue` para
+ * `availableUsdc` y `gasBalance`, `depositableOf` acá.
+ *
+ * `depositable` es una unión discriminada igual que el resto: `ok` con el importe
+ * exacto — **un cero legítimo es `ok` con `raw: '0'`, no una falla** — o
+ * `unreadable` con un motivo acotado. Un saldo de origen ilegible **no habilita el
+ * botón**: `0` es una cifra, y publicar una cifra que no se conoce es exactamente
+ * el defecto.
+ *
  * ── How a piece is valued: a peg, or a feed ─────────────────────────────────
  *
  *  - **A digital dollar is valued at exactly 1, by definition, and no oracle is
@@ -184,6 +202,7 @@ import {
   rateFromFractionText,
   rateFromPercentText,
   type CombinedYield,
+  type VenueDepositable,
   type YieldRate,
   type YieldVenue,
   type YieldVenueFailure,
@@ -612,6 +631,26 @@ export const readWalletBalance = (deps: ReadWalletBalanceDeps): ReadWalletBalanc
     const cryptoPieces = freePieces.filter((entry) => !isDigitalDollar(entry.symbol)).map((entry) => entry.piece);
     const freeDollarPieces = freePieces.filter((entry) => isDigitalDollar(entry.symbol)).map((entry) => entry.piece);
 
+    /*
+     * EL SALDO DE ORIGEN, POR CADENA. Un índice sobre las piezas libres que ya
+     * se leyeron, para que cada venue halle la suya **sin una segunda lectura**:
+     * el mismo `dollars.<cadena>.USDC` que ya está contado del lado libre, usado
+     * por el otro lado de la misma respuesta.
+     *
+     * Se indexa **por cadena y por símbolo**, y no por `venue`: la regla que
+     * evita el cruce es que un venue sólo puede ver la plata de su propia cadena,
+     * y eso se vuelve imposible de romper cuando el índice se arma por cadena en
+     * vez de por destino. Un venue nuevo toma su cadena y no puede tomar la de
+     * otro.
+     */
+    const freeDollarByChain = new Map<string, FreePiece>();
+    for (const entry of freePieces) {
+      if (entry.piece.chain === null) continue;
+      if (freeDollarByChain.has(entry.piece.chain)) continue;
+      if (!isDigitalDollar(entry.symbol)) continue;
+      freeDollarByChain.set(entry.piece.chain, entry);
+    }
+
     /* ── The invested bucket: the venues, and only those ──────────────────── */
 
     /*
@@ -650,7 +689,11 @@ export const readWalletBalance = (deps: ReadWalletBalanceDeps): ReadWalletBalanc
     const rates = new Map<string, VenueRate>();
     rates.set(AAVE_V3_USDC_MONAD_KEY, aaveSupplyRate(snapshot));
     if (kamino !== null && kamino.rate !== null) rates.set(KAMINO_EARN_USDC_SOLANA_KEY, kamino.rate);
-    const yieldFigure = combineYields(investedPieces.map((piece) => venueOf(piece, rates.get(piece.key))));
+    const yieldFigure = combineYields(
+      investedPieces.map((piece) =>
+        venueOf(piece, rates.get(piece.key), depositableOf(freeDollarByChain, piece.chain)),
+      ),
+    );
 
     /*
      * Exactly one thing is read from the pool, and it is the **receipt token**.
@@ -824,6 +867,53 @@ const aaveSupplyRate = (snapshot: Awaited<ReturnType<ReadPool>>): VenueRate => {
 };
 
 /**
+ * EL SALDO DE ORIGEN DE UN VENUE: el USDC libre de **su** cadena.
+ *
+ * ── El defecto que evita: un venue que muestra la plata de otro ─────────────
+ *
+ * Un modal de depósito que dice "tenés $40 para depositar" y manda una
+ * autorización sobre una cadena donde no hay un centavo es la forma más barata
+ * de perder la confianza de alguien. El cruce no se evita "recordándolo": se
+ * evita porque la función **no puede** ver otro saldo — recibe el índice de
+ * cadenas y toma `piece.chain`, la cadena del propio venue. No hay un parámetro
+ * por el cual un venue pueda pedir la plata de otro, y por lo tanto no hay un
+ * estado en que la pida.
+ *
+ * ── El otro defecto: un `0` donde no se pudo leer ──────────────────────────
+ *
+ * Un saldo de origen ilegible **no habilita el botón**. Un `0` sí se publicaría
+ * como `ok` si el USDC libre de esa cadena es legítimamente cero, porque una
+ * persona sin USDC libre es un hecho y el botón puede existir con tope cero; pero
+ * una cadena que no se pudo leer no es un cero, es una incógnita, y vestida de
+ * cero se convierte en "no tenés nada" — que es falso, y además es la cifra sobre
+ * la que alguien firmaría.
+ *
+ * ── Sin segunda lectura ────────────────────────────────────────────────────
+ *
+ * Se resuelve sobre `freeDollarByChain`, que se armó desde las piezas libres que
+ * ya se leyeron para el lado libre del balance. Ningún venue vuelve a preguntarle
+ * a la cadena lo que el portfolio ya sabe: una segunda lectura es una segunda
+ * fuente que puede discrepar de la cifra que la persona está mirando al lado.
+ */
+const depositableOf = (
+  freeDollarByChain: ReadonlyMap<string, FreePiece>,
+  chain: PortfolioChain | null,
+): VenueDepositable => {
+  if (chain === null) return { status: 'unreadable', reason: 'FREE_BALANCE_ABSENT' };
+
+  const entry = freeDollarByChain.get(chain);
+  if (entry === undefined) return { status: 'unreadable', reason: 'FREE_BALANCE_ABSENT' };
+  if (entry.piece.status === 'unreadable') return { status: 'unreadable', reason: entry.piece.reason };
+
+  /*
+   * `piece.quantity` no es opcional en un `ok`, y no se toca el `raw`: el importe
+   * publicado es el entero exacto que la cadena reportó, con sus decimales y su
+   * unidad. Un saldo de cero sale acá como `raw: '0'` — `ok`, no `unreadable`.
+   */
+  return { status: 'ok', amount: entry.piece.quantity };
+};
+
+/**
  * One invested piece as a venue of the combined yield.
  *
  * Two facts decide the outcome, and they are kept apart on purpose:
@@ -838,8 +928,16 @@ const aaveSupplyRate = (snapshot: Awaited<ReturnType<ReadPool>>): VenueRate => {
  *    rate could be read.
  *  - **anything else** ⇒ the venue needs its rate, and a venue without one is
  *    `unreadable` for the rate's own reason.
+ *
+ * `depositable` se transporta en los tres casos y **no participa de ninguno de
+ * ellos**: un venue cuya posición no se pudo leer igual puede tener plata libre
+ * para depositar, y `combineYields` lo publica sin usarlo en la media ponderada.
  */
-const venueOf = (piece: BalancePiece, venueRate: VenueRate | undefined): YieldVenue => {
+const venueOf = (
+  piece: BalancePiece,
+  venueRate: VenueRate | undefined,
+  depositable: VenueDepositable,
+): YieldVenue => {
   if (piece.status === 'unreadable') {
     return {
       key: piece.key,
@@ -848,6 +946,7 @@ const venueOf = (piece: BalancePiece, venueRate: VenueRate | undefined): YieldVe
       reason: piece.reason,
       balance: null,
       rate: null,
+      depositable,
     };
   }
 
@@ -864,6 +963,7 @@ const venueOf = (piece: BalancePiece, venueRate: VenueRate | undefined): YieldVe
       exclusion: 'zero_balance',
       balance: piece.value,
       rate: venueRate?.rate ?? null,
+      depositable,
     };
   }
 
@@ -875,6 +975,7 @@ const venueOf = (piece: BalancePiece, venueRate: VenueRate | undefined): YieldVe
       reason: venueRate?.reason ?? 'RPC_UNAVAILABLE',
       balance: null,
       rate: null,
+      depositable,
     };
   }
 
@@ -885,6 +986,7 @@ const venueOf = (piece: BalancePiece, venueRate: VenueRate | undefined): YieldVe
     exclusion: null,
     balance: piece.value,
     rate: venueRate.rate,
+    depositable,
   };
 };
 

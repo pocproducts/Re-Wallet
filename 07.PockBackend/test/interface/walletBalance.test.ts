@@ -394,6 +394,9 @@ interface BalanceBody {
         reason?: string;
         balance: Usd | null;
         rate: { raw: string; decimals: number; text: string } | null;
+        depositable:
+          | { status: 'ok'; amount: { raw: string; amount: string; decimals: number; unit: string } }
+          | { status: 'unreadable'; reason: string };
       }[];
     };
   };
@@ -1063,6 +1066,9 @@ describe('the one combined yield, in the response', () => {
     const body = (await (await get(app)).json()) as BalanceBody;
 
     // Each venue's own rate and its own balance, at the scales they were read at.
+    // And each venue's own **chain's free USDC**: Aave's is the $1.50 free on
+    // Monad, Kamino's is the $0 free on Solana, because this fixture's Solana
+    // reader was not told about any mint. Not one venue's balance on the other.
     expect(body.investedValue.yield.venues).toEqual([
       {
         key: 'invest.aave_v3_usdc_monad',
@@ -1071,6 +1077,7 @@ describe('the one combined yield, in the response', () => {
         exclusion: null,
         balance: { raw: '60000000', amount: '60', decimals: 6, unit: 'USD' },
         rate: { raw: '41200', decimals: 6, text: '0.0412' },
+        depositable: { status: 'ok', amount: { raw: '1500000', amount: '1.5', decimals: 6, unit: 'USDC' } },
       },
       {
         key: 'invest.kamino_earn_usdc_solana',
@@ -1079,6 +1086,10 @@ describe('the one combined yield, in the response', () => {
         exclusion: null,
         balance: { raw: '40000000', amount: '40', decimals: 6, unit: 'USD' },
         rate: { raw: '418', decimals: 4, text: '0.0418' },
+        // A zero here is a **real zero**: this person simply holds no free USDC on
+        // Solana. It is an `ok`, so a row with a zero can still draw a button with
+        // a zero ceiling. An unreadable chain would say `unreadable` instead.
+        depositable: { status: 'ok', amount: { raw: '0', amount: '0', decimals: 6, unit: 'USDC' } },
       },
     ]);
 
@@ -1175,6 +1186,207 @@ describe('the one combined yield, in the response', () => {
     expect(combined.complete).toBe(true);
     expect(percentLabelOfRatio(combined.rate as ExactRatio)).toBe('4.1200');
     expect(combined.venues).toHaveLength(1);
+  });
+});
+
+/**
+ * `depositable`: el saldo de origen de cada venue.
+ *
+ * El botón de depósito vive en la fila del venue, así que la fila tiene que
+ * decir **cuánto se puede depositar ahí**. Los tests de acá describen los dos
+ * defectos que ese número puede tener:
+ *
+ *  1. **el cruce de cadenas** — el modal de Kamino mostrando el USDC libre de
+ *     Monad, que es plata de otra red y que no se puede mandar a ningún lado;
+ *  2. **el cero inventado** — una cadena que no se pudo leída vestida de `0`,
+ *     que es la cifra sobre la que alguien firmaría una autorización.
+ *
+ * Y el tercero, que es el que este archivo entero existe para que no pase: que
+ * publicar el saldo de origen lo sume en algún lado.
+ */
+describe('el saldo de origen de cada venue: `depositable`', () => {
+  /** La fila de un venue por su key, o el test revienta en vez de en `undefined`. */
+  const rowOf = (body: BalanceBody, key: string) => {
+    const found = body.investedValue.yield.venues.find((venue) => venue.key === key);
+    if (found === undefined) throw new Error(`no venue ${key}`);
+    return found;
+  };
+  /** A $60 on Aave / $40 on Kamino, with free USDC of its own on each chain. */
+  const twoChains = (solanaFreeUsdc: bigint, monadFreeUsdc = '1500000') => ({
+    evm: evmReader({ [`monad:${MONAD_USDC}:${EVM_ADDRESS}`]: monadFreeUsdc }, threeMon),
+    solana: solanaReader({}, { [SOLANA_USDC_MINT]: solanaFreeUsdc }),
+    pool: fakePool({ aTokenBalance: 60_000_000n, reserve: RESERVE_AT_4_12 }),
+    kamino: { shares: 40_000_000n },
+  });
+
+  it('takes each venue\'s origin from ITS OWN chain, and never from the other', async () => {
+    const { app } = harness(twoChains(2_500_000n));
+
+    const body = (await (await get(app)).json()) as BalanceBody;
+    const aave = rowOf(body, 'invest.aave_v3_usdc_monad');
+    const kamino = rowOf(body, 'invest.kamino_earn_usdc_solana');
+
+    // $1.50 free on Monad for the Monad venue; $2.50 free on Solana for the
+    // Solana one. Two different networks, two different numbers, and neither
+    // venue can see the other's.
+    expect(aave.depositable).toEqual({
+      status: 'ok',
+      amount: { raw: '1500000', amount: '1.5', decimals: 6, unit: 'USDC' },
+    });
+    expect(kamino.depositable).toEqual({
+      status: 'ok',
+      amount: { raw: '2500000', amount: '2.5', decimals: 6, unit: 'USDC' },
+    });
+
+    // The crossed answers, named: each of these is what a swap would produce, and
+    // neither is what the answer says.
+    expect(aave.depositable).not.toEqual(kamino.depositable);
+    expect(aave.depositable).not.toMatchObject({ amount: { raw: '2500000' } });
+    expect(kamino.depositable).not.toMatchObject({ amount: { raw: '1500000' } });
+  });
+
+  it('answers `unreadable`, never `0`, when the chain\'s free piece could not be read', async () => {
+    /*
+     * El mismo fixture, con la lectura de Monad caída. El Aave venue sigue
+     * publicando su posición exacta — la posición se leyó — pero su **origen** no,
+     * y esa es una respuesta distinta de "no tenés nada".
+     *
+     * El `evmReader` sin holdings lanza en cada `erc20Balance`, así que la cadena
+     * entera queda ilegible: es el peor caso, y el que no puede degenerar en un 0
+     * sin que un test lo note.
+     */
+    const { app } = harness({
+      ...twoChains(2_500_000n),
+      evm: evmReader({}, threeMon),
+    });
+
+    const body = (await (await get(app)).json()) as BalanceBody;
+
+    // `unreadable` con el motivo de la lectura, y **sin** ninguna cifra: un `0`
+    // acá es un botón que deposita sobre un número que nadie conoce.
+    const aave = rowOf(body, 'invest.aave_v3_usdc_monad');
+    expect(aave.depositable).toEqual({ status: 'unreadable', reason: 'RPC_UNAVAILABLE' });
+    expect(aave.depositable).not.toHaveProperty('amount');
+    // Y no es el cero: el mismo campo en el otro venue, con la cadena legible,
+    // es `ok` con una cifra.
+    expect(rowOf(body, 'invest.kamino_earn_usdc_solana').depositable).toEqual({
+      status: 'ok',
+      amount: { raw: '2500000', amount: '2.5', decimals: 6, unit: 'USDC' },
+    });
+  });
+
+  it('publishes a real zero as `ok`, because nobody holding free USDC is a fact', async () => {
+    // Same two venues, and this person simply holds no free USDC anywhere.
+    const { app } = harness({
+      evm: evmReader({ [`monad:${MONAD_USDC}:${EVM_ADDRESS}`]: '0' }, threeMon),
+      solana: solanaReader({}, { [SOLANA_USDC_MINT]: 0n }),
+      pool: fakePool({ aTokenBalance: 60_000_000n, reserve: RESERVE_AT_4_12 }),
+      kamino: { shares: 40_000_000n },
+    });
+
+    const body = (await (await get(app)).json()) as BalanceBody;
+    const venues = body.investedValue.yield.venues;
+
+    // Cero legible: `ok` con `raw: '0'`, no `unreadable`. Un `0` real puede
+    // dibujar su botón con tope cero; un `unreadable` no dibuja ninguno.
+    for (const venue of venues) {
+      expect(venue.depositable).toEqual({ status: 'ok', amount: { raw: '0', amount: '0', decimals: 6, unit: 'USDC' } });
+    }
+    // Y sigue siendo una fila entera: una posición depositada es real aunque no
+    // haya nada libre para sumar.
+    expect(venues.map((venue) => venue.status)).toEqual(['ok', 'ok']);
+  });
+
+  it('publishes it even when the venue\'s own position or rate is unreadable', async () => {
+    // El origen y la posición son dos hechos separados: el botón depende del
+    // primero, y no puede desaparecer porque el segundo fallara.
+    const { app } = harness({
+      ...twoChains(2_500_000n),
+      kamino: { shares: 40_000_000n, apy: { status: 'unreadable', reason: 'APY_NON_POSITIVE' } },
+    });
+
+    const body = (await (await get(app)).json()) as BalanceBody;
+
+    expect(body.investedValue.yield.venues[1]).toMatchObject({
+      status: 'unreadable',
+      reason: 'APY_NON_POSITIVE',
+      depositable: { status: 'ok', amount: { raw: '2500000', amount: '2.5', decimals: 6, unit: 'USDC' } },
+    });
+  });
+
+  it('does not change a single figure of the balance: no double count', async () => {
+    /*
+     * Éste es el test que protege la plata. El saldo de origen es **la misma** USDC
+     * libre que `digitalDollarsValue` ya contó del lado libre: sumarlo en algún
+     * lado —
+     *
+     *   free Monad 1.50 + free Ethereum 0.50 + free Solana 2.50 = 4.50
+     *   posiciones depositadas                                 = 100.00
+     *   ─────────────────────────────────────────────────────────────────────
+     *   d\u00f3lares digitales                                        104.50
+     *
+     * — y cualquier cifra que valga 109.00 delata el doble conteo. Lo mismo con el
+     * total: 104.585926, no 109.085926.
+     */
+    const { app } = harness({
+      evm: evmReader({ ...holdings, [`ethereum:${ETHEREUM_USDC}:${EVM_ADDRESS}`]: '500000' }, threeMon),
+      solana: solanaReader({}, { [SOLANA_USDC_MINT]: 2_500_000n }),
+      pool: fakePool({ aTokenBalance: 60_000_000n, reserve: RESERVE_AT_4_12 }),
+      kamino: { shares: 40_000_000n },
+    });
+
+    const body = (await (await get(app)).json()) as BalanceBody;
+
+    // Los dos origins están publicados y ninguno está recontado.
+    expect(body.investedValue.yield.venues.map((venue) => venue.depositable)).toEqual([
+      { status: 'ok', amount: { raw: '1500000', amount: '1.5', decimals: 6, unit: 'USDC' } },
+      { status: 'ok', amount: { raw: '2500000', amount: '2.5', decimals: 6, unit: 'USDC' } },
+    ]);
+
+    // Los tres buckets, exactos, con los origins presentes.
+    expect(body.cryptoValue.total.amount).toBe('0.085926');
+    expect(body.cryptoValue.complete).toBe(true);
+    expect(body.investedValue.total.amount).toBe('100');
+    expect(body.investedValue.complete).toBe(true);
+    expect(body.digitalDollarsValue.total.amount).toBe('104.5');
+    expect(body.digitalDollarsValue.complete).toBe(true);
+    expect(body.total.usd.amount).toBe('104.585926');
+    expect(body.total.complete).toBe(true);
+
+    // Y el origen no se coló como una pieza más: `investedValue` sigue siendo las
+    // dos posiciones y nada más, y cada origin sigue siendo **una sola** pieza
+    // del lado libre, contada una vez.
+    expect(body.investedValue.pieces.map((piece) => piece.key)).toEqual([
+      'invest.aave_v3_usdc_monad',
+      'invest.kamino_earn_usdc_solana',
+    ]);
+    const freeKeys = body.digitalDollarsValue.pieces
+      .filter((piece) => piece.source === 'free_wallet')
+      .map((piece) => piece.key);
+    expect(freeKeys).toEqual(['dollars.monad.USDC', 'dollars.ethereum.USDC', 'dollars.solana.USDC']);
+  });
+
+  it('carries a free balance no float could hold, digit for digit', async () => {
+    /*
+     * Un saldo de origen de 30 dígitos, muy por encima de `Number.MAX_SAFE_INTEGER`.
+     * La aritmética del importe es `bigint` de punta a punta: si algo cruzara un
+     * `number` en el medio, los últimos dígitos no voltarían — y una cifra de
+     * depósito con el final redondeado es una autorización sobre otra cantidad.
+     */
+    const huge = '987654321098765432109876543210';
+    const { app } = harness(twoChains(2_500_000n, huge));
+
+    const body = (await (await get(app)).json()) as BalanceBody;
+    const origin = rowOf(body, 'invest.aave_v3_usdc_monad').depositable;
+
+    expect(origin).toEqual({
+      status: 'ok',
+      amount: { raw: huge, amount: '987654321098765432109876.54321', decimals: 6, unit: 'USDC' },
+    });
+    // The exact integer survives the round trip; the float does not, and never
+    // gets asked to.
+    expect(BigInt(origin.status === 'ok' ? origin.amount.raw : '0')).toBe(BigInt(huge));
+    expect(String(Number(huge))).not.toBe(huge);
   });
 });
 
