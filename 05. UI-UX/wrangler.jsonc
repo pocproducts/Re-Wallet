@@ -1,4 +1,31 @@
 {
+  /*
+    NO DESPLEGAR DESDE ACÁ. EN SERIO.
+    =============================================================================
+    Este archivo declara un Worker propio — `rewallet-app-dev` — con el MISMO
+    `custom_domain` que el backend, `rewallet-poc-api`, que ya sirve las dos
+    cosas: la API y `../05. UI-UX/dist`. Un solo origen, y es una decisión de
+    seguridad, no de comodidad: la sesión es una cookie `httpOnly`
+    `SameSite=Lax` con prefijo `__Host-`, y con dos orígenes esa cookie tendría
+    que volverse cross-site (`SameSite=None` más CORS con credenciales).
+
+    `rewallet-app-dev` hoy NO existe en la cuenta, así que este archivo está
+    inerte y no compite por nada. Ese es el motivo por el cual la app funciona.
+
+    El día que alguien corra `npx wrangler deploy` en ESTE directorio —que es un
+    comando lógico, acá hay un package.json con scripts— se crea
+    `rewallet-app-dev`, le gana la ruta al backend, y `/api/auth/session`
+    devuelve 404 en vez de 401. YA PASÓ UNA VEZ. Es el incidente que dejó el
+    backend con un 404 en la sesión y la pantalla rota.
+
+    Para desplegar la UI: `npm run build` acá, y `npx wrangler deploy` en
+    `07.PockBackend`. El backend sube su `dist` y el front viaja con él.
+
+    Si este archivo alguna vez hizo falta para otro propósito, que lo haga con
+    un nombre y un dominio distintos. Lo que no puede volver a pasar es dos
+    Workers compitiendo por `app-dev.rewallet.win`.
+  */
+
   // Un solo Worker: sirve el front estático y nada más.
   //
   // El backend NO entra acá. Sigue corriendo en local detrás del túnel, y eso
