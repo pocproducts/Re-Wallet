@@ -17,8 +17,15 @@
   "compatibility_flags": ["nodejs_compat"],
 
   // The front end. The same Worker serves it, so there is only one origin.
+  //
+  // The path is relative to THIS file, which lives in `apps/api/`. That makes
+  // `apps/web` one level up, and nothing to do with the old folder names:
+  // `"../05. UI-UX/dist"` stopped resolving the day the repo was reorganised,
+  // and Wrangler does not fail on a missing directory here — it deploys a
+  // Worker that answers `/api/*` and 404s everything else. A deployment that
+  // looks green and serves nothing is worse than one that fails.
   "assets": {
-    "directory": "../05. UI-UX/dist",
+    "directory": "../web/dist",
     "not_found_handling": "single-page-application"
   },
 

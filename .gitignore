@@ -39,3 +39,16 @@ npm-debug.log*
 yarn-error.log*
 coverage/
 .DS_Store
+
+# Carpetas de herramientas locales: son estado de la máquina de quien
+# trabaja, no del proyecto. No viven en el repo y no aparecen en el README.
+# No son secretos — no hay nada que filtrar — pero dejarlas sin ignorar hace
+# que aparezcan como "carpetas sin contexto" para quien abre el repo.
+.atl/
+.codegraph/
+.pi/
+.wrangler/
+
+# Editores
+.vscode/
+.idea/

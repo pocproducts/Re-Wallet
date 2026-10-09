@@ -1,266 +1,124 @@
-# ReWALLET — Multi-Chain Smart Wallet
+# ReWALLET
 
-> **Una billetera que no miente: balance real, rendimiento real, sin inventar números.**
+> Una billetera que no miente: el balance real, el rendimiento real, y cuando
+> algo no se pudo leer, lo dice.
 
----
-
-## 🎯 Visión General
-
-ReWALLET es una billetera multi-chain (EVM + Solana) que muestra **exactamente lo que tenés**, no lo que un backend inventa. Cada número viene de la cadena, con su procedencia y su estado de lectura.
-
-### Principios Fundamentales
-
-| Principio | Qué Significa |
-|-----------|---------------|
-| **Cero inventado** | Si no se pudo leer, se dice "no pudimos leerlo", no se muestra 0 |
-| **Una sola fuente** | Balance = cryptoValue + digitalDollarsValue (calculado en backend) |
-| **Rendimiento honesto** | Media ponderada real, no promedio simple. Si falta un venue, no hay tasa combinada |
-| **USD only** | Sin conversiones inventadas. Solo dólares, la unidad en que el backend mide todo |
-| **Tu dirección, tu plata** | Cada depósito usa TU dirección en ESA cadena. Nunca la de otro |
+Para gente que no usa cripto. Deposita dólares digitales, su dinero rinde solo,
+y envía a una persona — no a una dirección hexadecimal.
 
 ---
 
-## 🏗 Arquitectura
+## Qué es
+
+Una billetera multi-chain (EVM + Solana) donde **cada número viene de la
+cadena**. No hay tabla de precios escrita a mano, no hay saldo estimado, no
+hay promedio que parece una tasa.
+
+La regla que la sostiene:
+
+> **Si no se pudo leer, se dice que no se pudo leer.** Nunca se sustituye una
+> lectura ausente por un `0`.
+
+Un `0` afirma que la persona no tiene esa plata. Casi siempre sería mentira.
+
+## Qué hace hoy
+
+| | |
+|---|---|
+| **Balance compuesto** | Crypto libre + dólares digitales + posiciones invertidas, con el estado de lectura de cada parte |
+| **Rendimiento** | Aave V3 en Monad, Kamino en Solana. APR ponderado por posición real, no promedio simple |
+| **Envío** | A un tag (`@nombre`) o a una dirección, con idempotencia para que un doble toque no mande dos veces |
+| **Política de gasto** | Tres reglas antes de firmar: magnitud, ritmo por hora, destino nuevo |
+| **Conversión** | Cotización real vía Uniswap Trading API en Monad |
+| **Links de cobro** | Pedir un monto, compartir el link, que lo paguen sin instalar nada |
+
+**Cadenas:** Monad · Ethereum · Base · Arbitrum · Optimism · Polygon · Solana
+
+## Stack
+
+| Capa | Tecnología |
+|---|---|
+| Frontend | React + Vite + Tailwind |
+| Backend | Hono + Cloudflare Workers |
+| Base de datos | Neon Postgres |
+| Auth + Wallets | Privy (EVM + Solana) |
+| Rendimiento | Aave V3 (Monad) · Kamino (Solana) |
+| Oráculos | Chainlink |
+| Conversión | Uniswap Trading API |
+
+## Estructura
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        FRONTEND (05. UI-UX)                     │
-│  React + Vite + Tailwind  →  Cloudflare Pages / Worker Assets  │
-│  - WalletView, InvestmentsView, CryptoAssetDetailModal         │
-│  - PriceChart (SVG, tooltip hover, CoinGecko)                  │
-│  - Hooks: useWalletBalance, usePriceHistory, useAssetTrade     │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                    HTTPS (same origin, httpOnly cookie)
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        BACKEND (07.PockBackend)                 │
-│  Hono + Cloudflare Workers  →  app-dev.rewallet.win            │
-│  - GET /api/wallet-balance     →  balance compuesto real       │
-│  - GET /api/portfolio          →  balances por cadena/asset    │
-│  - GET /api/pool               →  posición Aave + APR          │
-│  - GET /api/deposit-info       →  catálogo real de depósitos   │
-│  - POST /api/pool/deposit      →  prepare deposit (Aave/Kamino)│
-│  - POST /api/send              →  prepare transfer             │
-│  - Webhooks (Privy)            →  claim wallets, notificaciones│
-└─────────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-        ┌──────────┐    ┌──────────┐    ┌──────────┐
-        │  Monad   │    │ Ethereum │    │  Solana  │
-        │  RPC     │    │  RPCs    │    │  RPC     │
-        │ (Alchemy)│    │ (Alchemy)│    │ (Alchemy)│
-        └──────────┘    └──────────┘    └──────────┘
-              │               │               │
-              ▼               ▼               ▼
-        ┌──────────┐    ┌──────────┐    ┌──────────┐
-        │ Chainlink│    │  Aave V3 │    │ Kamino   │
-        │  Feeds   │    │  Pool    │    │  Earn    │
-        └──────────┘    └──────────┘    └──────────┘
+apps/
+├── api/       Backend — Hono, arquitectura hexagonal
+└── web/       Frontend — React, Vite, Tailwind
+
+landing/       Landing page (marketing, ciclo de vida aparte)
+
+docs/
+├── contratos/   Las reglas de diseño que no se rompen
+├── decisiones/   Hallazgos verificados, con cómo se comprobaron
+└── auditorias/   Revisiones técnicas
+
+tasks/          Roadmap operativo y tareas
+contexto/       Borradores del diseño
 ```
 
----
-
-## 📦 Estructura del Proyecto
-
-```
-ReWALLET/
-├── 03. Auditorias/              # Auditorías técnicas y MVP
-├── 04. Landing Page/            # Next.js landing (marketing)
-├── 05. UI-UX/                   # FRONTEND — React + Vite + Tailwind
-│   ├── src/
-│   │   ├── components/          # UI components (Wallet, Investments, Yield)
-│   │   ├── config/              # Assets, chains, displayCurrency, markets
-│   │   ├── hooks/               # useWalletBalance, usePriceHistory, useAssetTrade...
-│   │   ├── services/            # coinGecko, walletBalance, portfolio, api
-│   │   ├── types/               # TypeScript types (walletBalance, portfolio, etc.)
-│   │   └── App.tsx
-│   └── odd/tasks/               # ODD task documents (CoinGecko, balance, etc.)
-├── 07.PockBackend/              # BACKEND — Hono + Cloudflare Workers
-│   ├── src/
-│   │   ├── application/         # Use cases (readWalletBalance, readPortfolio, readPool...)
-│   │   ├── domain/              # Core logic (valuation, combinedYield, chains, assets)
-│   │   ├── infrastructure/      # RPC adapters (Alchemy, Chainlink, Solana, Kamino)
-│   │   ├── interface/http/      # Hono routes (wallet-balance, portfolio, pool...)
-│   │   └── container.ts         # Dependency wiring
-│   └── test/                    # Unit + integration tests (700+)
-├── docs/                        # Contratos: dinero, identidad, interfaz, núcleo
-├── odd/                         # ODD roadmap & tasks
-│   ├── roadmap.md
-│   └── tasks/                   # 40+ task documents
-├── .atl/                        # Skill registry (Gentle AI)
-└── .github/workflows/           # CI/CD
-```
-
----
-
-## 🔑 Features Implementadas
-
-### ✅ Balance Real (`GET /api/wallet-balance`)
-- **3 buckets**: `cryptoValue` (MON, ETH, SOL, BTC), `digitalDollarsValue` (USDC/USDT free + pool), `investedValue` (pool positions = vista, no tercer término)
-- **Precios**: Chainlink en Monad (MON, ETH, SOL, BTC) — *peg $1 para stablecoins*
-- **Completitud**: `complete: true/false` + `incompletenessNote` nombrando qué falló
-- **Nunca 0 inventado**: `unreadable` ≠ `0`. Un 0 real es `ok` con `raw: "0"`
-
-### ✅ Portfolio Multi-Chain (`GET /api/portfolio`)
-- 7 cadenas: Monad, Ethereum, Base, Arbitrum, Optimism, Polygon, Solana
-- EVM: `eth_getBalance` + `eth_call balanceOf` (USDC/USDT por contrato verificado)
-- Solana: `getBalance` (lamports) + `getTokenAccountsByOwner` (SPL USDC)
-- Por asset: `ok` con cantidad exacta | `unreadable` con razón acotada
-
-### ✅ Pool Aave V3 Monad (`GET /api/pool`)
-- Posición `aMonUSDC` (aToken balance) valuada al peg
-- Supply APR reconciliado: `borrow × utilisation × (1 - reserveFactor)`
-- `availableUsdc` + `gasBalance` leídos pero **no sumados** (evita double-count)
-
-### ✅ Kamino Earn Solana
-- Vault shares × share price (Kamino API)
-- APY publicado por Kamino
-- Deposit readiness: `not_ready` con motivo (`DEPOSIT_INSTRUCTIONS_UNVERIFIED`)
-
-### ✅ Deposit Info (`GET /api/deposit-info`)
-- Catálogo servido por backend (no frontend): qué se puede depositar, en qué red, con qué dirección
-- Por asset: `balanceReadable` + dirección real de la persona en esa red
-
-### ✅ CoinGecko Metrics (Frontend)
-- `usePriceHistory(ticker, timeframe)` → historial + market data (precio, 24h change, market cap)
-- `PriceChart` SVG: tooltip on hover (precio + fecha), línea suave, área, sin labels Y
-- Timeframes: 24H, 7D, 1M, 1A, MAX
-- Assets: BTC, ETH, SOL, MON, POL, TRX, DOGE (USDC/USDT = mock $1)
-
-### ✅ Auth & Wallets (Privy)
-- Embedded wallets (EVM + Solana)
-- `claimWalletsFor`: verifica ownership en Privy antes de escribir en BD
-- Session JWT httpOnly SameSite=Lax cookie
-
-### ✅ Send & Payments
-- `prepareSend`: EVM (ERC20/native) + Solana (SPL/native) con idempotency
-- `createPaymentRequest` / `payPaymentRequest`: cobrar via link
-
----
-
-## 🎨 UI/UX — Patrones de Diseño
-
-| Patrón | Implementación |
-|--------|----------------|
-| **Container/Presentational** | Hooks leen datos, componentes solo pintan |
-| **Optimistic UI** | Balance se lee una vez por sesión, `reload()` manual |
-| **Estados honestos** | Loading → Ready (complete/partial) → Error. Nunca "cargando para siempre" |
-| **Zero-invented** | Gráfico: "Todavía no hay gráfico" si no hay datos. Precio: "—" si no hay feed |
-| **Timeframe selector** | 24H/7D/1M/1A/MAX recarga datos reales |
-| **Hover tooltip** | Precio + fecha exacta al pasar mouse por gráfico |
-
----
-
-## 🔐 Seguridad & Confiabilidad
-
-- **Same-origin**: Frontend + API en mismo Worker → cookie `__Host-` httpOnly
-- **Idempotency**: Send/deposit usan claves idempotentes (evita double-spend)
-- **Rate limits**: RPC calls con timeout 3-5s, fallback endpoints
-- **Caché**: CoinGecko 60s (history) / 30s (market data) en memoria
-- **Tests**: 700+ unit/integration tests, sin red (adapters injected)
-
----
-
-## 🚀 Deploy
-
-### Backend (Cloudflare Workers)
-```bash
-cd 07.PockBackend
-wrangler secret put ETHEREUM_RPC_URL      # https://eth-mainnet.g.alchemy.com/v2/KEY
-wrangler secret put BASE_RPC_URL          # https://base-mainnet.g.alchemy.com/v2/KEY
-wrangler secret put ARBITRUM_RPC_URL      # https://arb-mainnet.g.alchemy.com/v2/KEY
-wrangler secret put OPTIMISM_RPC_URL      # https://opt-mainnet.g.alchemy.com/v2/KEY
-wrangler secret put POLYGON_RPC_URL       # https://polygon-mainnet.g.alchemy.com/v2/KEY
-wrangler secret put SOLANA_RPC_URL        # https://solana-mainnet.g.alchemy.com/v2/KEY
-wrangler secret put MONAD_POOL_RPC_URL    # https://rpc.monad.xyz
-wrangler deploy
-```
-
-### Frontend (Cloudflare Pages / Worker Assets)
-```bash
-cd 05.UI-UX
-npm run build
-wrangler deploy
-```
-
-### Variables de Entorno Requeridas (Backend)
-| Variable | Descripción |
-|----------|-------------|
-| `PRIVY_APP_ID` | Privy App ID |
-| `PRIVY_APP_SECRET` | Privy App Secret |
-| `PRIVY_WEBHOOK_SIGNING_SECRET` | Para validar webhooks |
-| `DATABASE_URL` | Postgres (Neon) |
-| `SESSION_SECRET` | JWT signing |
-| `ETHEREUM_RPC_URL` | Alchemy Ethereum Mainnet |
-| `BASE_RPC_URL` | Alchemy Base Mainnet |
-| `ARBITRUM_RPC_URL` | Alchemy Arbitrum Mainnet |
-| `OPTIMISM_RPC_URL` | Alchemy Optimism Mainnet |
-| `POLYGON_RPC_URL` | Alchemy Polygon Mainnet |
-| `SOLANA_RPC_URL` | Alchemy Solana Mainnet |
-| `MONAD_POOL_RPC_URL` | Monad RPC (para Aave) |
-
----
-
-## 🧪 Testing
+## Cómo correr
 
 ```bash
 # Backend
-cd 07.PockBackend
-npm test          # 700+ tests (vitest)
+cd apps/api
+npm install
+npm run dev
 
 # Frontend
-cd 05.UI-UX
-npm test          # vitest (services, components)
-npm run build     # Vite build check
+cd apps/web
+npm install
+npm run dev
 ```
 
----
+El Worker sirve el API y el front desde **un solo origen**. No es una
+comodidad: la sesión es una cookie `httpOnly` con prefijo `__Host-`, y con dos
+orígenes esa cookie tendría que volverse cross-site.
 
-## 📋 Roadmap (ODD Tasks)
+Secretos: no están en el repo.
 
-| Estado | Task | Descripción |
-|--------|------|-------------|
-| ✅ Done | `balance-onchain-y-wallet-visible` | Balance real on-chain + wallet visible |
-| ✅ Done | `datos-reales-monad-aave` | Aave V3 Monad real data |
-| ✅ Done | `catalogo-evm-cuatro-redes` | Base, Arbitrum, Optimism, Polygon |
-| ✅ Done | `solana-kamino` | Kamino Earn integration |
-| ✅ Done | `coingecko-metrics-integration` | Gráficos + métricas reales |
-| 🔄 In Progress | `comprar-o-vender` | Motor de swap (1inch/Jupiter) |
-| ⏳ Pending | `enviar-solana` | Send Solana SPL/native |
-| ⏳ Pending | `pagar-enviar` | Payment requests flow |
-| ⏳ Pending | `multi-chain-wallets` | Wallets por cadena (no solo EVM+Solana) |
+```bash
+cd apps/api
+wrangler secret put PRIVY_APP_ID
+wrangler secret put PRIVY_APP_SECRET
+wrangler secret put DATABASE_URL
+wrangler secret put SESSION_SECRET
+wrangler secret put UNISWAP_API_KEY
+```
 
-Ver [`odd/roadmap.md`](odd/roadmap.md) y [`odd/tasks/`](odd/tasks/) para detalle completo.
+## Tests
 
----
+```bash
+cd apps/api && npm test    # backend
+cd apps/web && npm test    # frontend
+```
 
-## 📚 Contratos de Diseño (Docs)
+Toda la suite corre **sin red y sin base de datos**. No es una comodidad: es lo
+que permite ejercitar el flujo completo de sesión, los lectores de cadena y los
+stores inyectando dobles. Un test que necesita que la RPC esté arriba es un test
+que solo corre el día que la RPC está arriba.
 
-| Documento | Qué Define |
-|-----------|------------|
-| [`docs/contrato-dinero.md`](docs/contrato-dinero.md) | Balance buckets, valuation, completeness, no double-count |
-| [`docs/contrato-identidad.md`](docs/contrato-identidad.md) | Auth, wallets, sessions, claim flow |
-| [`docs/contrato-interfaz.md`](docs/contrato-interfaz.md) | UI patterns, honest states, zero-invented |
-| [`docs/contrato-nucleo.md`](docs/contrato-nucleo.md) | Arquitectura, dependency rule, testing strategy |
+## Estado
 
----
+Beta privada. El producto está detrás de sesión y las operaciones que mueven
+dinero reales se firman contra wallets de prueba.
 
-## 🤝 Contribuir
+Dos cosas que **no** existen todavía, y que conviene que el repo no aparente
+lo contrario:
 
-1. Lee los contratos en `docs/`
-2. Cada feature = ODD task en `odd/tasks/`
-3. Tests obligatorios (backend: vitest, frontend: vitest)
-4. No inventes números: si no hay dato, estado `unreadable`
-5. PRs pequeños, descriptivos, con tests
+- La conversión **cotiza** pero no ejecuta. Hacen falta dos firmas —Permit2 y
+  la transacción— y un botón que dijera "comprar" sin ellas sería un botón que
+  miente.
+- La política de gasto **evalúa y corta**; el historial de decisiones es
+  consultable por endpoint, todavía no tiene pantalla.
 
----
+## Licencia
 
-## 📄 Licencia
-
-Proyecto privado — ReWALLET team.
-
----
-
-> **"No es que no tengas: es que no lo supimos leer."** — *Error honesto > mentira cómoda*
+Privado — ReWALLET. Ver [`LICENSE`](LICENSE).
