@@ -98,6 +98,66 @@ export interface UseAssetTradeOptions {
   readonly initialDestination?: TradeAssetIdentity;
 }
 
+/**
+ * Una red, con las filas que están en ella.
+ *
+ * El encabezado va **dentro** del grupo y no aparte, para que quien lo consume
+ * no pueda dibujar un título sin sus filas al lado. Un encabezado suelto es un
+ * título que puede quedar pegado a la sección equivocada si la lista se
+ * filtra.
+ */
+export interface TradeChainGroup {
+  /** La red, tal como la nombra el backend. `null` para una fila sin red. */
+  readonly chainLabel: string | null;
+  readonly rows: readonly TradeAssetRow[];
+}
+
+/**
+ * Agrupa las filas por red, en el orden en que ya venían.
+ *
+ * ── Por qué agrupar y no dejar la lista plana ───────────────────────────────
+ *
+ * Porque USDC vive en cuatro redes y una persona puede tenerlo en más de una.
+ * En una lista plana aparecen cuatro filas casi iguales que se distinguen solo
+ * por un texto chico, y elegir la equivocada es el error más fácil de cometer en
+ * una pantalla de conversión. Con la red como encabezado, el ojo va a "Monad" o
+ * a "Base" y elige dentro.
+ *
+ * ── Por qué el orden es el de entrada y no alfabético ──────────────────────
+ *
+ * Porque el catálogo ya viene en un orden que el backend eligió, y cambiarlo acá
+ * sería una segunda fuente de verdad sobre el mismo dato. La red que aparece
+ * primero es la primera del catálogo, no la alfabéticamente menor.
+ *
+ * Una fila sin red —el respaldo sin catálogo— va en su propio grupo al final, con
+ * el mismo criterio: no hay red que la nombre, así que no se la inventa.
+ */
+export const groupAssetsByChain = (rows: readonly TradeAssetRow[]): readonly TradeChainGroup[] => {
+  /*
+   * Un `Map` y no un objeto: el orden de inserción del `Map` es el de la
+   * primera vez que se vio cada clave, que es exactamente el orden de entrada.
+   * Un objeto plano tambien lo preserve, pero convierte el encabezado a clave
+   * string —y un encabezado `null` se volveria `"null"`, que es un titulo
+   * mentiroso.
+   */
+  const byLabel = new Map<string, TradeAssetRow[]>();
+
+  for (const row of rows) {
+    const key = row.chainLabel ?? '';
+    const bucket = byLabel.get(key);
+    if (bucket === undefined) {
+      byLabel.set(key, [row]);
+    } else {
+      bucket.push(row);
+    }
+  }
+
+  return [...byLabel.entries()].map(([key, groupRows]) => ({
+    chainLabel: key === '' ? null : key,
+    rows: groupRows,
+  }));
+};
+
 export interface AssetTrade {
   /** Las filas que la hoja muestra. Vacías si la pantalla no pasó catálogo. */
   readonly assets: readonly TradeAssetRow[];
