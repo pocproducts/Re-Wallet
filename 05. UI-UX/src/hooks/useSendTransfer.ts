@@ -56,6 +56,7 @@ import { useWallets } from '@privy-io/react-auth';
 import { useWallets as useSolanaWallets } from '@privy-io/react-auth/solana';
 
 import { newSendRequestId, prepareSend, solanaMessageBytes } from '../services/send';
+import { evaluatePolicy, type PolicyVerdict } from '../services/policy';
 import { isSolanaSendTransaction, type SendPreparationResponse } from '../types/send.types';
 import { ApiError } from '../services/api';
 import {
@@ -67,7 +68,7 @@ import {
 } from '../config/send';
 
 /** Los pasos de un envío, en orden. Cuatro: el depósito tiene cinco. */
-export type SendStepId = 'prepare' | 'network' | 'transfer' | 'refresh';
+export type SendStepId = 'prepare' | 'network' | 'transfer' | 'refresh' | 'policy';
 
 export interface SendStep {
   readonly id: SendStepId;
@@ -81,6 +82,15 @@ export interface SendStep {
 export const SEND_FAILURE_TEXT: Readonly<Record<string, string>> = {
   INVALID_RECIPIENT: 'Esa dirección no es válida en la red elegida.',
   INVALID_AMOUNT: 'El monto no es un número válido para este activo.',
+  /**
+   * La politica de gasto cortó el envío.
+   *
+   * El texto **no** dice qué regla Hablo: ese motivo viene en `policyReasons` y
+   * se muestra aparte, porque el motivo lo escribió la regla y no este mapa.
+   * Acá va solo el hecho, para que un código nuevo no tenga que inventar una
+   * frase de política que nadie revisó.
+   */
+  POLICY_DENIED: 'La política de seguridad no permite este envío.',
   AMOUNT_EXCEEDS_BALANCE: 'No tenés tanto disponible para enviar.',
   NO_GAS: 'No te queda saldo nativo para pagar el envío.',
   BALANCE_UNREADABLE: 'No pudimos leer tu saldo. Probá de nuevo en un momento.',
@@ -184,6 +194,24 @@ export interface SendTransfer {
    * mostrar, y la pantalla no dice "enviado" sin él.
    */
   readonly transferHash: string | null;
+  /**
+   * El veredicto de la politica de gasto, o `null` si todavia no se consulto.
+   *
+   * Vive en el hook y no en la pantalla porque la consulta ocurre **dentro** de
+   * `send()`: si la pantalla la pidiera por su cuenta, habria una carrera entre
+   * "la persona tocan enviar" y "termino de preguntar", y podria firmarse sin
+   * veredicto. Preguntar y enviar en el mismo lugar hace que esa carrera no
+   * exista.
+   */
+  readonly policyVerdict: PolicyVerdict | null;
+  /**
+   * Los motivos, tal como los escribió cada regla.
+   *
+   * Van aparte del `failureCode` a propósito: el código dice *qué pasó* y el
+   * motivo dice *por qué*, y quien redactó la regla es quien sabe la segunda
+   * parte. La pantalla pinta los dos y no traduce nada.
+   */
+  readonly policyReasons: readonly string[];
   /** Arranca el flujo con una intención de envío nueva. */
   readonly send: (request: SendRequest) => Promise<void>;
   /** Vuelve al estado inicial: una pantalla nueva, un `requestId` nuevo. */
@@ -259,6 +287,7 @@ const step = (id: SendStepId, label: string, status: SendStep['status'], hash?: 
  * tiene que saber qué red es para leerlos.
  */
 const initialStepsFor = (solana: boolean): readonly SendStep[] => [
+  step('policy', 'Revisando la politica de seguridad', 'pending'),
   step('prepare', 'Preparando la transferencia', 'pending'),
   solana
     ? step('network', 'Sin cambio de red', 'skipped')
@@ -287,6 +316,8 @@ export const useSendTransfer = (
   const [failureCode, setFailureCode] = useState<string | null>(null);
   const [preparation, setPreparation] = useState<SendPreparationResponse | null>(null);
   const [transferHash, setTransferHash] = useState<string | null>(null);
+  const [policyVerdict, setPolicyVerdict] = useState<PolicyVerdict | null>(null);
+  const [policyReasons, setPolicyReasons] = useState<readonly string[]>([]);
 
   /*
    * El `requestId` de la intención actual, y el hash ya firmado.
@@ -330,6 +361,8 @@ export const useSendTransfer = (
     setFailureCode(null);
     setPreparation(null);
     setTransferHash(null);
+    setPolicyVerdict(null);
+    setPolicyReasons([]);
     // La intención terminó: el próximo envío es otro envío y lleva otro id.
     requestIdRef.current = null;
     signedHashRef.current = null;
@@ -356,6 +389,8 @@ export const useSendTransfer = (
       setFailureCode(null);
       setPreparation(null);
       setTransferHash(null);
+      setPolicyVerdict(null);
+      setPolicyReasons([]);
       inFlightRef.current = true;
 
       try {
@@ -388,7 +423,52 @@ export const useSendTransfer = (
         }
 
         /*
-         * 2. La preparación, con el id de esta intención.
+         * 2. La politica de gasto, antes de preparar nada.
+         *
+         * Va **antes** de la preparación y no después por una razón concreta:
+         * la preparación construye y devuelve la transacción sin firmar. Si la
+         * política dijera "no" más tarde, la persona ya habria firmado algo
+         * que no iba a llegar a la red —o, peor, ya lo habria enviado. Consultar
+         * acá significa que un `deny` corta antes de que exista una transacción.
+         *
+         * Solo consulta si hay monto y destinatario. Un pago de un cobro viene
+         * con `recipient: null` porque el servidor ya sabe a quién se le paga, y
+         * no hay nada que preguntarle a la política: mandar un destinatario
+         * inventado para "tener algo" sería preguntarle por un envío que no es
+         * el que la persona hizo.
+         */
+        if (request.amountRaw !== null && request.recipientTag === undefined && request.recipient !== null) {
+          patch('policy', 'running');
+          const policy = await evaluatePolicy({
+            amountRaw: request.amountRaw,
+            recipient: request.recipient,
+          });
+
+          if (policy.available) {
+            setPolicyVerdict(policy.evaluation.verdict);
+            setPolicyReasons(policy.evaluation.reasons);
+
+            if (policy.evaluation.verdict === 'deny') {
+              patch('policy', 'failed');
+              fail('POLICY_DENIED', 'policy');
+              return;
+            }
+          }
+          // Si la consulta no pudo hacerse, el envio sigue: la politica es un
+          // control de riesgo, no una condicion de existencia. Frenar un envio
+          // legitimo porque la consulta no respondio seria peor que el riesgo
+          // que la politica mitiga — y la razon de eso se le dice a la persona
+          // en la pantalla, no se le esconde.
+          //
+          // `skipped` y no `signed`: no se firmo nada todavia, lo que paso es
+          // que este paso no aplica. La diferencia se ve en la lista de pasos.
+          patch('policy', policy.available ? 'signed' : 'skipped');
+        } else {
+          patch('policy', 'skipped');
+        }
+
+        /*
+         * 3. La preparación, con el id de esta intención.
          *
          * El id se genera una vez por intento y vive en una referencia: si
          * estuviera en el estado, un re-render entre el clic y el `fetch` podría
@@ -432,7 +512,7 @@ export const useSendTransfer = (
         }
 
         /*
-         * 3. La red que se va a firmar tiene que ser la configurada.
+         * 4. La red que se va a firmar tiene que ser la configurada.
          *
          * La respuesta trae su propio `network` en CAIP-2 y el hook no lo adopta a
          * ciegas: si el backend prepara para una cadena que esta billetera no
@@ -479,7 +559,7 @@ export const useSendTransfer = (
         patch('prepare', 'signed');
 
         /*
-         * 4. La wallet de esta persona, contra la del backend.
+         * 5. La wallet de esta persona, contra la del backend.
          *
          * La comparación es contra `prepared.address`: la dirección para la que
          * el servidor leyó el saldo. Si la wallet conectada es otra, el envío
@@ -542,7 +622,7 @@ export const useSendTransfer = (
 
         if (solana) {
           /*
-           * 5. Solana: sin cambio de red, y con otro método de firma.
+           * 7. Solana: sin cambio de red, y con otro método de firma.
            *
            * No hay `switchChain` en Solana: la wallet no tiene el concepto y el
            * paso queda marcado como saltado arriba. Lo que hay es
@@ -597,7 +677,7 @@ export const useSendTransfer = (
           patch('transfer', 'signed', hash);
         } else {
           /*
-           * 6. EVM: la red, antes de firmar: mainnet cobra gas y fuera de red no
+           * 8. EVM: la red, antes de firmar: mainnet cobra gas y fuera de red no
            *    firma.
            *
            * Se pasa el **número** de cadena y no el CAIP-2: es lo que acepta y lo
@@ -666,7 +746,7 @@ export const useSendTransfer = (
         setTransferHash(hash);
 
         /*
-         * 8. Los saldos se vuelven a leer de la cadena.
+         * 9. Los saldos se vuelven a leer de la cadena.
          *
          * El hash dice que la transacción se envió; no dice que el saldo bajó. El
          * número de pantalla sale de la lectura, no del hecho de que la persona
@@ -684,5 +764,15 @@ export const useSendTransfer = (
     [wallets, fail, patch, onSettled, prepareSource],
   );
 
-  return { phase, steps, failureCode, preparation, transferHash, send, reset };
+  return {
+    phase,
+    steps,
+    failureCode,
+    preparation,
+    transferHash,
+    policyVerdict,
+    policyReasons,
+    send,
+    reset,
+  };
 };

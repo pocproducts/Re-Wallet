@@ -2180,6 +2180,37 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               </div>
             )}
 
+            {/*
+              Los motivos de la politica, cuando los hubo.
+              Van **debajo** del corte y no dentro de el, y el texto no se reescribe
+              aca: lo escribio la regla, en el backend, pensando en la persona que
+              lo va a leer. Esta pantalla solo lo muestra.
+
+              Se muestran tambien cuando el veredicto fue `confirm` y el envio
+              siguio: en ese caso la persona confirmo, y el aviso queda como
+              registro de lo que la politica dijo antes de dejarla pasar.
+            */}
+            {sendFlow.policyReasons.length > 0 && (
+              <div className="bg-white rounded-3xl border border-amber-200 p-4 space-y-2 shadow-xs">
+                <span className="text-xs font-bold uppercase text-amber-600 font-display block">
+                  {sendFlow.policyVerdict === 'confirm'
+                    ? 'La política reviso este envio'
+                    : 'Por que no se pudo'}
+                </span>
+                {sendFlow.policyReasons.map((reason) => (
+                  <p
+                    key={reason}
+                    className="text-sm font-semibold text-black leading-relaxed flex gap-2"
+                  >
+                    <span aria-hidden className="text-amber-500 shrink-0">
+                      ·
+                    </span>
+                    <span>{reason}</span>
+                  </p>
+                ))}
+              </div>
+            )}
+
             {/* El corte, si lo hubo. El texto sale de la tabla del hook. */}
             {sendFlow.failureCode !== null && (
               <div className="bg-white rounded-3xl border border-red-200 p-4 space-y-1 shadow-xs">
