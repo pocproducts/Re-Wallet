@@ -167,6 +167,14 @@ const asBigIntString = (value: unknown): string | null => {
   }
 };
 
+/** Un entero dentro de un rango, o `null`. Un bloque negativo no existe. */
+const asBlockNumber = (value: unknown): number | null => {
+  const text = asBigIntString(value);
+  if (text === null) return null;
+  const parsed = Number(text);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+};
+
 export interface UniswapTradingApiOptions {
   readonly apiKey: string | null;
   readonly fetchImpl?: typeof fetch;
@@ -319,6 +327,12 @@ export const createUniswapTradingApiAdapter = (
         price: formatPrice(amountOut, amountIn),
         feeTier: 0,
         chain,
+        // El bloque que el API usó para calcular. Si no viene, `undefined`: la
+        // cita queda sin referencia, y el front lo muestra como tal en vez de
+        // inventar un "ahora".
+        ...(asBlockNumber(container?.quote?.blockNumber) !== null
+          ? { blockNumber: asBlockNumber(container?.quote?.blockNumber) as number }
+          : {}),
       };
 
       return { status: 'ok', value: quote };

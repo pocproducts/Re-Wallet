@@ -72,6 +72,15 @@ export interface SwapQuote {
   readonly feeTier: number;
   /** La red donde se ejecuta. */
   readonly chain: DepositChain;
+  /**
+   * El bloque en el que el precio fue calculado, o `null`.
+   *
+   * Va porque una cotización sin referencia es un número que no se puede
+   * verificar: con el bloque, alguien puede leer el estado del pool en ese
+   * momento y comprobar que el precio era ese. En un producto cuya tesis es no
+   * inventar cifras, la trazabilidad no es un extra.
+   */
+  readonly blockNumber?: number;
 }
 
 /** Lo que el caso de uso necesita para ejecutar el swap. */
