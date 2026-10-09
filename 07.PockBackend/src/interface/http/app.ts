@@ -112,6 +112,13 @@ export interface AppDeps {
    * behind it is a screen that promises conversions it cannot do.
    */
   readonly swapRoutes?: ReturnType<typeof import('./routes/swap').createSwapRoutes>;
+
+  /**
+   * La politica de gasto. Va en su propio grupo porque responde **antes** de
+   * que la persona firme: la pantalla necesita el veredicto para no ofrecer un
+   * botón que no va a llevar a la red.
+   */
+  readonly policyRoutes?: ReturnType<typeof import('./routes/policy').createPolicyRoutes>;
   /**
    * The charge surface: create, read by id, and pay.
    *
@@ -287,6 +294,10 @@ export const createApp = (deps: AppDeps) => {
    */
   if (deps.swapRoutes) {
     app.route('/api/wallet/swap', deps.swapRoutes);
+  }
+
+  if (deps.policyRoutes) {
+    app.route('/api/wallet/policy', deps.policyRoutes);
   }
 
   /*

@@ -68,6 +68,9 @@ import {
 import { createHttpSolanaTransferPreparer } from './infrastructure/rpc/solanaTransferPreparer.http';
 import { createSwapUseCase } from './application/swap/swapUseCase';
 import { createSwapRoutes } from './interface/http/routes/swap';
+import { createPolicyRoutes } from './interface/http/routes/policy';
+import { createEvaluateSendPolicy } from './application/policy/evaluateSendPolicyUseCase';
+import { createPostgresPolicyStore } from './infrastructure/db/policyStore.pg';
 import { createUniswapTradingApiAdapter } from './infrastructure/swap/adapters/uniswapTradingApiAdapter';
 import type { SwapProviderFactory } from './infrastructure/swap/swapProviderFactory';
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
@@ -332,6 +335,18 @@ export const buildApp = (config: Config, log: Logger) => {
 
   const swapRoutes = createSwapRoutes({ sessions, swapUseCase, log });
 
+  /*
+   * La politica de gasto.
+   *
+   * Tres reglas sobre un store propio. El caso de uso vive aparte del de `send`
+   * a proposito: evaluar no es enviar. Consultar la politica no quema una clave
+   * de idempotencia ni crea un movimiento, asi que la pantalla puede preguntar
+   * las veces que necesite antes de ofrecer el boton de firmar.
+   */
+  const policyStore = createPostgresPolicyStore(db);
+  const evaluateSendPolicy = createEvaluateSendPolicy({ policy: policyStore, log });
+  const policyRoutes = createPolicyRoutes({ sessions, evaluateSendPolicy, log });
+
   return createApp({
     mint: mintSession({
       verify,
@@ -400,6 +415,7 @@ export const buildApp = (config: Config, log: Logger) => {
     prepareSend: sendFlow,
     swapUseCase,
     swapRoutes,
+    policyRoutes,
     /*
      * The deposit catalog and the addresses that go with it, read through the
      * **same** store. One store, una sola fuente de dirección: si esta ruta
