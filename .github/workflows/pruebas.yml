@@ -45,27 +45,27 @@ jobs:
       # paso que corre sobre un directorio inexistente falla siempre. Siguen
       # puestas porque una rama puede nacer de cualquiera de esos commits.
       #
-      # Las rutas son las de la reorganización: `apps/api` y `apps/web`. Las
-      # carpetas numeradas (`07.PockBackend`, `05. UI-UX`) ya no existen; un
+      # Las rutas son las de la reorganización: `07.PockBackend` y `05. UI-UX`. Las
+      # carpetas antiguas (`apps/api` y `apps/web`) ya no existen; un
       # `if` que apunte a una de ellas da `false` para siempre y el paso queda
       # en verde sin haber corrido nada, que es la peor forma de fallar.
 
       - name: backend — dependencias
-        if: ${{ hashFiles('apps/api/package.json') != '' }}
-        working-directory: apps/api
+        if: ${{ hashFiles('07.PockBackend/package.json') != '' }}
+        working-directory: 07.PockBackend
         # `npm install` y no `npm ci`: el lock del backend está desincronizado con
         # su package.json por una dependencia transitiva (`utf-8-validate`), y
         # `npm ci` se niega a instalar cuando no coinciden en vez de resolverlo.
         run: npm install --no-audit --no-fund
 
       - name: backend — tipos
-        if: ${{ hashFiles('apps/api/package.json') != '' }}
-        working-directory: apps/api
+        if: ${{ hashFiles('07.PockBackend/package.json') != '' }}
+        working-directory: 07.PockBackend
         run: npm run typecheck
 
       - name: backend — tests
-        if: ${{ hashFiles('apps/api/package.json') != '' }}
-        working-directory: apps/api
+        if: ${{ hashFiles('07.PockBackend/package.json') != '' }}
+        working-directory: 07.PockBackend
         # La suite tiene tests que comparten una base. Sin esto, un push puede
         # escribir contra la base real de alguien.
         env:
@@ -74,23 +74,23 @@ jobs:
         run: npm test
 
       - name: front — dependencias
-        if: ${{ hashFiles('apps/web/package.json') != '' }}
-        working-directory: apps/web
+        if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
+        working-directory: 05. UI-UX
         run: npm install --no-audit --no-fund
 
       - name: front — tipos
-        if: ${{ hashFiles('apps/web/package.json') != '' }}
-        working-directory: apps/web
+        if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
+        working-directory: 05. UI-UX
         run: npm run lint
 
       - name: front — tests
-        if: ${{ hashFiles('apps/web/package.json') != '' }}
-        working-directory: apps/web
+        if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
+        working-directory: 05. UI-UX
         # Sin esto los tests del front son un adorno: pasan en la máquina de
         # quien los escribió y nadie más se entera.
         run: npm test
 
       - name: front — build
-        if: ${{ hashFiles('apps/web/package.json') != '' }}
-        working-directory: apps/web
+        if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
+        working-directory: 05. UI-UX
         run: npm run build

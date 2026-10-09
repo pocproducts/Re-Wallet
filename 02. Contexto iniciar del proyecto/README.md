@@ -12,7 +12,7 @@ modelos de cartera, y las alternativas que se descartaron.
 ## Qué **no** hay acá
 
 El schema de Postgres y el seed inicial. Son código ejecutable, no contexto:
-están en [`../apps/api/sql/`](../apps/api/sql/), que es donde un backend los
+están en [`../07.PockBackend/sql/`](../07.PockBackend/sql/), que es donde un backend los
 busca.
 
 ## Por qué no se borran

@@ -48,32 +48,29 @@ Un `0` afirma que la persona no tiene esa plata. Casi siempre sería mentira.
 
 ## Estructura
 
-```
-apps/
-├── api/       Backend — Hono, arquitectura hexagonal
-└── web/       Frontend — React, Vite, Tailwind
+07.PockBackend/   Backend — Hono, arquitectura hexagonal
+05. UI-UX/       Frontend — React, Vite, Tailwind
 
-landing/       Landing page (marketing, ciclo de vida aparte)
+04. Landing Page/   Landing page (marketing, ciclo de vida aparte)
 
 docs/
 ├── contratos/   Las reglas de diseño que no se rompen
 ├── decisiones/   Hallazgos verificados, con cómo se comprobaron
-└── auditorias/   Revisiones técnicas
+└── 03. Auditorias/   Revisiones técnicas
 
 tasks/          Roadmap operativo y tareas
-contexto/       Borradores del diseño
-```
+02. Contexto iniciar del proyecto/       Borradores del diseño
 
 ## Cómo correr
 
 ```bash
 # Backend
-cd apps/api
+cd 07.PockBackend
 npm install
 npm run dev
 
 # Frontend
-cd apps/web
+cd 05. UI-UX
 npm install
 npm run dev
 ```
@@ -85,7 +82,7 @@ orígenes esa cookie tendría que volverse cross-site.
 Secretos: no están en el repo.
 
 ```bash
-cd apps/api
+cd 07.PockBackend
 wrangler secret put PRIVY_APP_ID
 wrangler secret put PRIVY_APP_SECRET
 wrangler secret put DATABASE_URL
@@ -96,8 +93,8 @@ wrangler secret put UNISWAP_API_KEY
 ## Tests
 
 ```bash
-cd apps/api && npm test    # backend
-cd apps/web && npm test    # frontend
+cd 07.PockBackend && npm test    # backend
+cd 05. UI-UX && npm test    # frontend
 ```
 
 Toda la suite corre **sin red y sin base de datos**. No es una comodidad: es lo

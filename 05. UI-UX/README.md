@@ -1,6 +1,6 @@
 # ReWALLET — Frontend
 
-React + Vite + Tailwind. Habla con el backend en `apps/api/` por el mismo
+React + Vite + Tailwind. Habla con el backend en `07.PockBackend/` por el mismo
 origen, así que no hay CORS ni una segunda URL que configurar.
 
 ## Scripts
