@@ -45,6 +45,34 @@ const fetchQueResponde = (
   return { fetchImpl, calls };
 };
 
+/**
+ * ── La respuesta real, no una inventada ─────────────────────────────────────
+ *
+ * Este bloque es una captura de la respuesta que el API devolvió el 2026-10 para
+ * `USDC → USDT0` en Monad, por 100 USDC. Está literal porque **la forma es lo que
+ * rompió la primera versión**: el adapter leía `quote.amountOut`, que no existe,
+ * y terminaba diciendo "no hay precio" sobre un par que cotiza. Un test con un
+ * cuerpo inventado no habría detectado eso.
+ *
+ * Y el precio que sale de acá, 1.000504 USDT0 por USDC, es el mismo que se lee
+ * del `slot0()` del pool (1.000591) más el spread. Esa comparación es la que
+ * prueba que el API y la cadena dicen lo mismo.
+ */
+const RESPUESTA_REAL = {
+  requestId: 'c38784dc194c8cdc2a165db8d6a34e88',
+  routing: 'CLASSIC',
+  quote: {
+    chainId: 143,
+    quoteId: '01a11f4e-7974-8000-bf0a-ae16857a0100',
+    blockNumber: '111822325',
+    priceImpact: '0.01',
+    routeString: '[v4] 100.00% = [0.0075%] [1]',
+    input: { amount: '100000000', token: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603' },
+    output: { amount: '100050446', token: '0xe7cd86e13AC4309349F30B3435a9d337750fC82D' },
+    route: [[{ protocol: 'v4-pool', fee: '75', amountIn: '100000000', amountOut: '100050446' }]],
+  },
+} as const;
+
 const cotizar = (
   adapter: ReturnType<typeof createUniswapTradingApiAdapter>,
   amount = 100_000_000n,
@@ -75,9 +103,7 @@ describe('el adaptador del Trading API', () => {
 
   describe('el cuerpo que manda', () => {
     it('pregunta por Monad, en EXACT_INPUT, contra USDC y USDT0', async () => {
-      const { fetchImpl, calls } = fetchQueResponde(200, {
-        quote: { amountOut: '100059100' },
-      });
+      const { fetchImpl, calls } = fetchQueResponde(200, RESPUESTA_REAL);
       const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
 
       await cotizar(adapter);
@@ -96,9 +122,7 @@ describe('el adaptador del Trading API', () => {
 
     it('manda el slippage como porcentaje, no como bips', async () => {
       // 50 bips es 0.5%. Mandar `50` seria pedir fifty por ciento de slippage.
-      const { fetchImpl, calls } = fetchQueResponde(200, {
-        quote: { amountOut: '100059100' },
-      });
+      const { fetchImpl, calls } = fetchQueResponde(200, RESPUESTA_REAL);
       const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
 
       await cotizar(adapter);
@@ -108,9 +132,7 @@ describe('el adaptador del Trading API', () => {
     });
 
     it('lleva la API key en el header que el API espera', async () => {
-      const { fetchImpl, calls } = fetchQueResponde(200, {
-        quote: { amountOut: '100059100' },
-      });
+      const { fetchImpl, calls } = fetchQueResponde(200, RESPUESTA_REAL);
       const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
 
       await cotizar(adapter);
@@ -122,9 +144,10 @@ describe('el adaptador del Trading API', () => {
 
   describe('cuando la respuesta no se entiende', () => {
     it('un cuerpo sin amountOut es QUOTE_NOT_FOUND, no cero', async () => {
-      // El API responde 200 tambien cuando no encuentra ruta. Este es el caso
-      // que mas se prestaria a mentir si el chequeo fuera `?? 0`.
-      const { fetchImpl } = fetchQueResponde(200, { quote: {} });
+      // El API responde 200 tambien cuando no encuentra ruta, y devuelve un
+      // `quote` sin `output`. Este es el caso que mas se prestaria a mentir si
+      // el chequeo fuera `?? 0`.
+      const { fetchImpl } = fetchQueResponde(200, { quote: { chainId: 143 } });
       const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
 
       await expect(cotizar(adapter)).resolves.toEqual({
@@ -134,7 +157,7 @@ describe('el adaptador del Trading API', () => {
     });
 
     it('un amountOut que no es número no se convierte en cero', async () => {
-      const { fetchImpl } = fetchQueResponde(200, { quote: { amountOut: 'mucho' } });
+      const { fetchImpl } = fetchQueResponde(200, { quote: { output: { amount: 'mucho' } } });
       const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
 
       await expect(cotizar(adapter)).resolves.toEqual({
@@ -146,7 +169,7 @@ describe('el adaptador del Trading API', () => {
     it('un amountOut de cero es liquidez insuficiente, no un precio', async () => {
       // El API puede devolver 0 cuando la pool esta vacia. Un precio de 0 es
       // cierto, pero no es un precio: no hay nada que ejecutar.
-      const { fetchImpl } = fetchQueResponde(200, { quote: { amountOut: '0' } });
+      const { fetchImpl } = fetchQueResponde(200, { quote: { output: { amount: '0' } } });
       const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
 
       await expect(cotizar(adapter)).resolves.toEqual({
@@ -194,48 +217,55 @@ describe('el adaptador del Trading API', () => {
 
   describe('lo que devuelve cuando sí puede cotizar', () => {
     it('entrega el amountOut y un mínimo con slippage aplicado', async () => {
-      const { fetchImpl } = fetchQueResponde(200, {
-        quote: { amountOut: '100059100' },
-        transaction: { to: '0xa6CE4F10d83dBdDAc17E68e1837ca9cE6a1b596e', data: '0x1234' },
-      });
+      const { fetchImpl } = fetchQueResponde(200, RESPUESTA_REAL);
       const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
 
       const result = await cotizar(adapter);
       expect(result.status).toBe('ok');
       if (result.status !== 'ok') return;
 
-      expect(result.value.amountOut).toBe(100059100n);
-      // 50 bips es 0.5%: (100059100 * 9950) / 10000 = 99558804.5, y la
-      // division entera de BigInt redondea hacia abajo. Redondear hacia arriba
-      // protegeria menos a la persona que el slippage que ella eligio.
-      expect(result.value.amountOutMin).toBe(99558804n);
+      expect(result.value.amountOut).toBe(100050446n);
+      // 50 bips es 0.5%: (100050446 * 9950) / 10000 = 99550193.77, y la
+      // división entera de BigInt redondea hacia abajo. Redondear hacia arriba
+      // protegería menos a la persona que el slippage que ella eligió.
+      expect(result.value.amountOutMin).toBe(99550193n);
       expect(result.value.amountOutMin).toBeLessThan(result.value.amountOut);
     });
 
-    it('la transacción viaja en el quoteId, con el router que devolvio el API', async () => {
-      // Si el calldata quedara afuera del quoteId, el caso de uso tendria que
-      // serializarlo y "opino"; el puerto dice que el quoteId es opaco.
-      const router = '0xa6CE4F10d83dBdDAc17E68e1837ca9cE6a1b596e';
-      const { fetchImpl } = fetchQueResponde(200, {
-        quote: { amountOut: '100059100' },
-        transaction: { to: router, data: '0xabcdef', value: '0', gasLimit: '0x30d40' },
-      });
+    it('el precio implícito es el inverso, y coincide con el del pool', async () => {
+      // El puerto lo define como "1 destino = X origen". Para este par eso es
+      // 1 USDT0 = 0.999496 USDC: recibís un poco menos de un dólar por dólar,
+      // que es el spread del swap. El `slot0()` del pool da el otro lado de la
+      // misma cuenta (1.000591 USDT0 por USDC), y que los dos coincidan es lo
+      // que prueba que el API y la cadena cuentan lo mismo.
+      const { fetchImpl } = fetchQueResponde(200, RESPUESTA_REAL);
       const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
 
       const result = await cotizar(adapter);
       expect(result.status).toBe('ok');
       if (result.status !== 'ok') return;
 
-      const guardado = JSON.parse(result.value.quoteId) as Record<string, unknown>;
-      expect(guardado.to).toBe(router);
-      expect(guardado.data).toBe('0xabcdef');
-      expect(guardado.chain).toBe('monad');
+      expect(Number(result.value.price)).toBeCloseTo(0.9995, 4);
+    });
+
+    it('el quoteId es el del API, no uno armado acá', async () => {
+      // El puerto dice que el `quoteId` es opaco y que el adaptador lo usa para
+      // recuperar la ruta exacta. Inventar un JSON propio obligaría al caso de
+      // uso a interpretarlo, que es lo que el puerto prohíbe.
+      const { fetchImpl } = fetchQueResponde(200, RESPUESTA_REAL);
+      const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
+
+      const result = await cotizar(adapter);
+      expect(result.status).toBe('ok');
+      if (result.status !== 'ok') return;
+
+      expect(result.value.quoteId).toBe('01a11f4e-7974-8000-bf0a-ae16857a0100');
     });
 
     it('la cotización caduca en 30 segundos', async () => {
       // Una DeFi caduca en segundos. Sin vencimiento, alguien confirma un precio
       // que la cadena ya no esta honoring.
-      const { fetchImpl } = fetchQueResponde(200, { quote: { amountOut: '100059100' } });
+      const { fetchImpl } = fetchQueResponde(200, RESPUESTA_REAL);
       const adapter = createUniswapTradingApiAdapter({ apiKey: 'test-key', fetchImpl });
 
       const antes = Date.now();
