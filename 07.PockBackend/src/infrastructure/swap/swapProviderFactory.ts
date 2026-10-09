@@ -10,7 +10,32 @@ import type { SwapProvider, SwapPairInfo, SwapQuote, SwapExecutionInput, SwapExe
 import type { DepositChain } from '../../domain/deposit/catalog';
 import { DEX_REGISTRY, getDexConfig, findPairInRegistry, getSupportedPairsForChain, type DexConfig } from './dexRegistry';
 import { createUniswapV3Adapter, type UniswapV3ChainConfig } from './adapters/uniswapV3Adapter';
+import { MONAD_STABLECOIN_ADDRESSES } from '../../domain/swap/uniswapV3Monad';
 import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy } from '../rpc/httpDeadline';
+
+/**
+ * ── Por qué un lookup y no un `if` por símbolo ──────────────────────────────
+ *
+ * La versión anterior resolvía el token con `p.sourceSymbol === 'USDC' ? ... : '0x...'`.
+ * Eso devolvía el placeholder para cualquier otro activo, de modo que el par
+ * USDC → USDT0 cotizaba contra la dirección `0x...` y daba un resultado
+ * numérico — 0 — en lugar de decir "no sé". Un `0` es una afirmación cierta
+ * ("recibís cero"), y acá era mentira.
+ *
+ * Ahora un símbolo que no está en el mapa lanza, y el par no se ofrece.
+ */
+const MONAD_TOKEN_BY_SYMBOL: Readonly<Record<string, string>> = {
+  USDC: MONAD_STABLECOIN_ADDRESSES.USDC,
+  USDT0: MONAD_STABLECOIN_ADDRESSES.USDT0,
+};
+
+const resolveTokenAddress = (symbol: string): string => {
+  const address = MONAD_TOKEN_BY_SYMBOL[symbol.toUpperCase()];
+  if (address === undefined) {
+    throw new Error(`Sin direccion para el token "${symbol}" en Monad`);
+  }
+  return address;
+};
 
 type SwapProviderFactory = {
   readonly getProviderForPair: (sourceSymbol: string, destinationSymbol: string, chain: DepositChain) => Promise<SwapProvider>;
@@ -46,14 +71,13 @@ export const createSwapProviderFactory = (options: {
         routerAddress: dexConfig.routerAddress,
         quoterAddress: dexConfig.quoterAddress,
         factoryAddress: dexConfig.factoryAddress,
-        wethAddress: dexConfig.wethAddress,
         rpcUrl: dexConfig.rpcUrl,
         supportedPairs: dexConfig.supportedPairs.map(p => ({
           sourceSymbol: p.sourceSymbol,
           destinationSymbol: p.destinationSymbol,
           feeTier: p.feeTier,
-          tokenIn: p.sourceSymbol === 'USDC' ? '0x754704Bc059F8C67012fEd69BC8A327a5aafb603' : '0x...',
-          tokenOut: p.destinationSymbol === 'USDC' ? '0x754704Bc059F8C67012fEd69BC8A327a5aafb603' : '0x...',
+          tokenIn: resolveTokenAddress(p.sourceSymbol),
+          tokenOut: resolveTokenAddress(p.destinationSymbol),
         })),
         feeTiers: dexConfig.feeTiers,
       } as const;

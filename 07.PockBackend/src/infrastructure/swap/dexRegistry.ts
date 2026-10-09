@@ -7,6 +7,10 @@
 
 import type { DepositChain } from '../../domain/deposit/catalog';
 import type { SwapPairInfo } from '../../domain/ports/swap-provider';
+import {
+  UNISWAP_V3_MONAD_ADDRESSES,
+  DEFAULT_FEE_TIER,
+} from '../../domain/swap/uniswapV3Monad';
 
 /** Configuración de un DEX en una cadena específica. */
 export interface DexConfig {
@@ -22,8 +26,6 @@ export interface DexConfig {
   readonly quoterAddress: string;
   /** Dirección de la Factory V3 (para derivar pools). */
   readonly factoryAddress: string;
-  /** Dirección del token nativo envuelto (WETH/WMON). */
-  readonly wethAddress: string;
   /** Pares soportados en esta cadena. */
   readonly supportedPairs: readonly SwapPairInfo[];
   /** Fee tiers soportados (en bips * 100: 100=0.01%, 3000=0.3%). */
@@ -52,27 +54,26 @@ export const DEX_REGISTRY: readonly DexConfig[] = [
     dexId: 'uniswap-v3',
     name: 'Uniswap V3',
     chain: 'monad',
-    routerAddress: '0x...',     // TODO: Router V3 real en Monad
-    quoterAddress: '0x...',     // TODO: Quoter V2 real en Monad
-    factoryAddress: '0x...',    // TODO: Factory V3 real en Monad
-    wethAddress: '0x...',       // TODO: WMON address
+    routerAddress: UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3,
+    quoterAddress: UNISWAP_V3_MONAD_ADDRESSES.QUOTER_V2,
+    factoryAddress: UNISWAP_V3_MONAD_ADDRESSES.FACTORY_V3,
     supportedPairs: [
       {
         sourceSymbol: 'USDC',
-        destinationSymbol: 'USDT',
+        destinationSymbol: 'USDT0',
         chain: 'monad',
-        routerAddress: '0x...',
-        feeTier: 3000,
+        routerAddress: UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3,
+        feeTier: DEFAULT_FEE_TIER,
       },
       {
-        sourceSymbol: 'USDT',
+        sourceSymbol: 'USDT0',
         destinationSymbol: 'USDC',
         chain: 'monad',
-        routerAddress: '0x...',
-        feeTier: 3000,
+        routerAddress: UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3,
+        feeTier: DEFAULT_FEE_TIER,
       },
     ],
-    feeTiers: [100, 500, 3000, 10000],
+    feeTiers: [100, 500],
     rpcUrl: 'https://rpc.monad.xyz',
     blockExplorerUrl: 'https://monadscan.com',
   },

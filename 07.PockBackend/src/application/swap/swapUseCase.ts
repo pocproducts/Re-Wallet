@@ -54,6 +54,22 @@ export interface ExecuteSwapInput {
   readonly signer: string;
   readonly slippageBips: number;
   readonly deadlineSeconds: number;
+  /**
+   * ── Por qué el par viaja con la cotización ─────────────────────────────────
+   *
+   * Antes el caso de uso hardcodeaba `USDC → USDT0 → monad` para resolver el
+   * proveedor, así que cotizar un par y ejecutar otro no daba error: la
+   * ejecución no encontraba el proveedor del par cotizado, y el adaptador
+   * terminaba resolviendo un par distinto al que la persona había visto y
+   * confirmado.
+   *
+   * El `quoteId` es opaco y el caso de uso no debe interpretarlo, así que el
+   * par viaja explícito junto a él. Si el par no está soportado, el swap no se
+   * ejecuta — que es distinto de ejecutarlo con el par equivocado.
+   */
+  readonly sourceSymbol: string;
+  readonly destinationSymbol: string;
+  readonly chain: DepositChain;
 }
 
 export interface ExecuteSwapOutput {
@@ -76,8 +92,9 @@ export const createSwapUseCase = (deps: SwapUseCaseDeps): SwapUseCase => {
 
   return {
     async getSupportedPairs() {
-      // For now, we need a chain to get supported pairs. We'll use 'monad' as default.
-      // In the future, this could aggregate across all chains.
+      // Los pares se declaran por DEX+cadena en el registry. Por ahora Monad es
+      // la única cadena con un motor configurado; cuando haya otro, este método
+      // agrega los pares de esa cadena en lugar de reemplazarlos.
       return swapProviderFactory.getSupportedPairs('monad');
     },
 
@@ -142,12 +159,12 @@ export const createSwapUseCase = (deps: SwapUseCaseDeps): SwapUseCase => {
       }
 
       try {
-        // We need to extract chain from quoteId or pass it separately
-        // For now, assume monad
+        // El par viaja con la cotización: sin esto, la ejecución resolvería un
+        // proveedor fijo y podría ejecutar algo distinto de lo que se confirmó.
         const provider = await swapProviderFactory.getProviderForPair(
-          'USDC', // This should come from the quote
-          'USDT',
-          'monad'
+          input.sourceSymbol,
+          input.destinationSymbol,
+          input.chain
         );
 
         const result = await provider.executeSwap({

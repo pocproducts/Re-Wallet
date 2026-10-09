@@ -193,10 +193,10 @@ export interface SwapExecutionParams {
  * Fee tiers estándar de Uniswap V3 (en bips * 100).
  */
 export const FEE_TIERS = {
-  readonly LOW: 100,      // 0.01%
-  readonly MEDIUM: 500,   // 0.05%
-  readonly STANDARD: 3000, // 0.3%
-  readonly HIGH: 10000,   // 1%
+  LOW: 100,      // 0.01%
+  MEDIUM: 500,   // 0.05%
+  STANDARD: 3000, // 0.3%
+  HIGH: 10000,   // 1%
 } as const;
 
 /**

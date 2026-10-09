@@ -11,7 +11,7 @@
  *   400: { status: 'unreadable', reason: SwapFailure }
  *
  * POST /execute
- *   Body: { quoteId, signer, slippageBips, deadlineSeconds }
+ *   Body: { quoteId, signer, slippageBips, deadlineSeconds, sourceSymbol, destinationSymbol, chain }
  *   200: { status: 'ok', result: SwapExecutionResult }
  *   400: { status: 'unreadable', reason: SwapFailure }
  *
@@ -125,14 +125,23 @@ export const createSwapRoutes = (deps: SwapRoutesDeps) => {
       return c.json({ status: 'unreadable', reason: 'MALFORMED_REQUEST' }, 400);
     }
 
-    const { quoteId, signer, slippageBips, deadlineSeconds } = body as {
+    const { quoteId, signer, slippageBips, deadlineSeconds, sourceSymbol, destinationSymbol, chain } = body as {
       quoteId?: string;
       signer?: string;
       slippageBips?: number;
       deadlineSeconds?: number;
+      sourceSymbol?: string;
+      destinationSymbol?: string;
+      chain?: string;
     };
 
     if (!quoteId || !signer || slippageBips === undefined || deadlineSeconds === undefined) {
+      return c.json({ status: 'unreadable', reason: 'MALFORMED_REQUEST' }, 400);
+    }
+
+    // El par se exige aquí y no después: sin él, la ejecución no sabe qué
+    // cotizar y el caso de uso tendría que adivinarlo.
+    if (!sourceSymbol || !destinationSymbol || !chain) {
       return c.json({ status: 'unreadable', reason: 'MALFORMED_REQUEST' }, 400);
     }
 
@@ -151,6 +160,9 @@ export const createSwapRoutes = (deps: SwapRoutesDeps) => {
       signer,
       slippageBips: slippage,
       deadlineSeconds: deadline,
+      sourceSymbol,
+      destinationSymbol,
+      chain: chain as any,
     });
 
     if (result.status === 'unreadable') {

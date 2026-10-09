@@ -25,9 +25,11 @@ import {
   encodeAddress,
   encodeUint256,
   encodeUint160,
-} from '../../domain/swap/uniswapV3';
-import type { UniswapV3ChainConfig } from '../../domain/swap/uniswapV3Adapter';
-import { isDeadlineExceeded as isDeadlineExceededFn, transportDetail as transportDetailFn, withDeadline as withDeadlineFn, type DeadlinePolicy } from '../rpc/httpDeadline';
+} from '@domain/swap/uniswapV3';
+
+// El archivo que define este tipo es este mismo: se importa a sí mismo por
+// nombre cuando otro módulo lo necesita, no desde una ruta interna del dominio.
+export type { UniswapV3ChainConfig } from './uniswapV3Adapter';
 
 export interface UniswapV3AdapterOptions {
   readonly config: UniswapV3ChainConfig;
@@ -40,7 +42,7 @@ export const createUniswapV3Adapter = (
 ): SwapProvider => {
   const { config, fetchImpl = fetch, deadline } = options;
 
-  const send = withDeadlineFn(fetchImpl, {
+  const send = withDeadline(fetchImpl, {
     timeoutMs: 5_000,
     ...deadline,
   });

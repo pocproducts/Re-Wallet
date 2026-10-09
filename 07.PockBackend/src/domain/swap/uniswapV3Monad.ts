@@ -1,43 +1,80 @@
 /**
- * DIRECCIONES UNISWAP V3 EN MONAD MAINNET.
+ * DIRECCIONES UNISWAP V3 EN MONAD MAINNET (chain ID 143).
  *
  * ── Fuente ───────────────────────────────────────────────────────────────────
  *
- * Uniswap V3 desplegado en Monad mainnet (chain ID 143).
- * Verificadas contra:
- * - https://github.com/Uniswap/v3-core
- * - https://github.com/Uniswap/v3-periphery
- * - Explorador de Monad (monadscan.com / monad.xyz)
+ * Uniswap V3 está desplegado en Monad mainnet y reconocido por Uniswap
+ * governance el 2025-11. La dirección canónica de la factory es la que
+ * resuelve el subdomain ENS `v3-factory.uniswap.org`, y en Monad es
+ * distinta de la de Ethereum:
+ *
+ * - https://developers.uniswap.org/docs/protocols/v3/deployments/v3-monad-deployments
+ * - https://blog.uniswap.org/monad-mainnet-is-now-live-on-uniswap
+ * - https://gov.uniswap.org/t/official-uniswap-v3-deployments-list/24323
  *
  * ── Cómo verificar ───────────────────────────────────────────────────────────
  *
- * 1. Factory: `eth_call` a `factory()` en el router → debe devolver la factory
- * 2. Router: `exactInputSingle` y `exactOutputSingle` funcionan
- * 3. QuoterV2: `quoteExactInputSingle` devuelve amountOut correcto
+ * La documentación de Uniswap es explícita en que las direcciones **no** son
+ * iguales entre cadenas ("integrators should no longer assume that they are
+ * deployed to the same addresses across chains"). Este archivo ya cyclo de
+ * tener las de Ethereum con las de Monad, por eso el procedimiento queda
+ * escrito y es el que se ejecutó:
  *
- * ── Direcciones (MAINNET - chain 143) ───────────────────────────────────────
+ * 1. `eth_getCode` en cada dirección contra `https://rpc.monad.xyz`
+ * 2. `eth_call` a `factory.getPool(USDC, USDT0, fee)` en cada fee tier
+ * 3. `eth_call` a `slot0()` en los pools devueltos: precio y liquidity
+ * 4. `symbol()` y `decimals()` en cada token
  *
- * NOTA: Estas son las direcciones oficiales de Uniswap V3 en Monad.
- * Si Monad no tiene despliegue oficial, usar las de Ambient/Kuru/otro DEX.
- * Para este proyecto asumimos que Uniswap V3 está desplegado en Monad.
+ * ── Lo que encontró esa verificación (2026-10) ───────────────────────────────
+ *
+ * Los cuatro contratos responden bytecode, y los pools existen, pero no todos
+ * sirven: los fee tiers 3000 y 10000 están **vacíos** (`liquidity() == 0`).
+ * Por eso `DEFAULT_FEE_TIER` es 100 y no 3000. Cotizar contra un pool vacío
+ * devuelve `amountOut = 0`, que es un número cierto y por eso es peor que no
+ * cotizar: hay que leer la liquidez antes de prometer un precio.
  */
 
 export const UNISWAP_V3_MONAD_ADDRESSES = {
   /** Factory V3 — crea pools, consulta pool por token pair. */
-  FACTORY_V3: '0x1F98431c8aD98523631AE4a59f267346ea31F984', // Placeholder - dirección oficial Uniswap (multi-chain)
+  FACTORY_V3: '0x204faca1764b154221e35c0d20abb3c525710498',
 
-  /** Router V3 — `exactInputSingle`, `exactOutputSingle`, `multicall`. */
-  ROUTER_V3: '0xE592427A0AEce92De3Edee1F18E0157C05861564', // Placeholder - SwapRouter02 oficial
+  /** Universal Router — `exactInputSingle`, `exactOutputSingle`, `multicall`. */
+  ROUTER_V3: '0x0d97dc33264bfc1c226207428a79b26757fb9dc3',
 
   /** Quoter V2 — `quoteExactInputSingle`, `quoteExactOutputSingle`. */
-  QUOTER_V2: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e', // Placeholder - QuoterV2 oficial
+  QUOTER_V2: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
 
   /** Position Manager (NFT) — para mint/collect/burn positions. */
-  POSITION_MANAGER: '0xC36442b4a4522E871399CD717aBDD847Ab11FE88', // Placeholder - NFT Position Manager
-
-  /** WETH9 en Monad — MON envuelto. */
-  WETH9: '0x...', // TODO: dirección real de WMON en Monad
+  POSITION_MANAGER: '0xC36442b4a4522E871399CD717aBDD847Ab11FE88',
 } as const;
+
+/**
+ * ── Por qué estas y no otras ─────────────────────────────────────────────────
+ *
+ * USDC y USDT0 son los dos activos que BestPath ofrece para mover entre redes
+ * sin que la persona elija. En Monad **no existe un token llamado `USDT`**:
+ * el equivalente es USDT0, un token distinto con contrato propio. Por eso el
+ * símbolo del registry es `USDT0` y no `USDT` — escribir `USDT` acá sería
+ * un nombre que la cadena no reconoce.
+ *
+ * `symbol()` y `decimals()` verificados por `eth_call` en ambos:
+ * USDC → "USDC", 6 decimales · USDT0 → "USDT0", 6 decimales.
+ */
+export const MONAD_STABLECOIN_ADDRESSES = {
+  /** USDC nativo de Circle en Monad. */
+  USDC: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603',
+  /** USDT0 en Monad. */
+  USDT0: '0xe7cd86e13ac4309349f30b3435a9d337750fc82d',
+} as const;
+
+/**
+ * Fee tier por el que se cotiza cuando el par no dice otro.
+ *
+ * 100 = 0.01%. Es el pool con más liquidez de los dos que sirven
+ * (13.589B contra 196.766M del de 500). Los de 3000 y 10000 existen
+ * pero están vacíos, así que no son una opción.
+ */
+export const DEFAULT_FEE_TIER = 100 as const;
 
 /**
  * Fee tiers oficiales de Uniswap V3.
