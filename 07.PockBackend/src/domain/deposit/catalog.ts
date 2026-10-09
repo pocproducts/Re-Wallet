@@ -183,6 +183,38 @@ export const DEPOSIT_NETWORKS: readonly DepositNetworkSpec[] = [
         token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
         balanceReadable: true,
       },
+      {
+        symbol: 'OUSD',
+        name: 'Dólares digitales',
+        // Es un stablecoin que rinde solo: entra por el camino de dólares, y su
+        // diferencia con USDC no es la categoría sino que el saldo **crece**.
+        kind: 'dollar',
+        // **18, no 6.** Verificado por `decimals()` contra la RPC de Ethereum:
+        // OUSD es un token rebase de 18 decimales, y poner 6 haría que el saldo
+        // leído fuera mil millones de veces más chico que el real. Un error de
+        // escala acá no se ve como error: se ve como una persona con muy poco.
+        decimals: 18,
+        native: false,
+        // Registry oficial de Origin, sección "Ethereum":
+        // https://docs.originprotocol.com/registry/contracts/ousd-registry
+        // Verificado por `symbol()` = OUSD y `decimals()` = 18.
+        //
+        // ── Por qué sólo Ethereum ────────────────────────────────────────────
+        //
+        // Porque **en Monad no existe**, y declararlo ahí sería la forma más
+        // cara de mentir: la app affirmaría "se puede tener OUSD en Monad" sobre
+        // una red donde no hay contrato que leer.
+        //
+        // El registry tiene una sola sección de token, Ethereum. Lo que aparece
+        // como "Cross-Chain Strategy (Base)" es una *estrategia* de rendimiento
+        // con contrato en las dos redes, no el token: OUSD manda su USDC a Base
+        // para prestar contra Morpho, pero el token que la persona tiene vive
+        // en Ethereum. Los "OUSD" que aparecen en el explorador de Base tienen
+        // un solo holder y un supply máximo de 500 millones: son despliegues de
+        // prueba, no el token.
+        token: '0x2A8e1E676Ec238d8A992307B495b45B3fEAa5e86',
+        balanceReadable: true,
+      },
     ],
   },
   {

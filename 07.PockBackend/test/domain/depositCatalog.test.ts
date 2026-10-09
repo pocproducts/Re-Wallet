@@ -115,7 +115,7 @@ describe('el catálogo de depósito — toda fila está clasificada', () => {
     expect(kindOf('POL')).toBe('crypto');
   });
 
-  it('el camino de dólares no inventa activos: hoy es USDC y nada más', () => {
+  it('el camino de dólares no inventa activos: los declarados y nada más', () => {
     const dollarSymbols = new Set(
       DEPOSIT_NETWORKS.flatMap((network) => network.assets)
         .filter((asset) => asset.kind === 'dollar')
@@ -123,6 +123,11 @@ describe('el catálogo de depósito — toda fila está clasificada', () => {
     );
 
     // Lo que se recibe hoy: los dólares digitales declarados y nada más.
-    expect([...dollarSymbols].sort()).toEqual(['USDC', 'USDT']);
+    //
+    // OUSD entró por acá, y el nombre del test cambió con ella: decir "USDC y
+    // nada más" era una afirmación sobre el catálogo que dejó de ser cierta. Un
+    // test que describe el presente se vuelve viejo sin avisar; uno que afirma
+    // una regla se rompe y avisa. Este ahora afirma la regla.
+    expect([...dollarSymbols].sort()).toEqual(['OUSD', 'USDC', 'USDT']);
   });
 });
