@@ -4,7 +4,8 @@
  * ── Why this is not a wallet row ──────────────────────────────────────────────
  *
  * Privy's embedded wallets are chain-agnostic EVM accounts: **one** EVM address
- * serves **every** configured EVM network (Ethereum and Monad today). So the
+ * serves **every** configured EVM network (Ethereum, Monad, Base, Arbitrum,
+ * Optimism and Polygon today). So the
  * address cannot say which network the person is on — there is only one address
  * and it is valid on both. That is also why `rewallet.wallets` cannot gain a row
  * per network: `address` is `UNIQUE`, a second Monad row with the same address
@@ -44,9 +45,20 @@
  */
 export const ETHEREUM_MAINNET_NETWORK_ID = 'eip155:1';
 export const MONAD_MAINNET_NETWORK_ID = 'eip155:143';
+export const BASE_MAINNET_NETWORK_ID = 'eip155:8453';
+export const ARBITRUM_MAINNET_NETWORK_ID = 'eip155:42161';
+export const OPTIMISM_MAINNET_NETWORK_ID = 'eip155:10';
+export const POLYGON_MAINNET_NETWORK_ID = 'eip155:137';
 
-/** Every EVM network a person may operate on. Both ids verified on chain. */
-export const SUPPORTED_EVM_NETWORK_IDS = [ETHEREUM_MAINNET_NETWORK_ID, MONAD_MAINNET_NETWORK_ID] as const;
+/** Every EVM network a person may operate on. All ids verified on chain. */
+export const SUPPORTED_EVM_NETWORK_IDS = [
+  ETHEREUM_MAINNET_NETWORK_ID,
+  MONAD_MAINNET_NETWORK_ID,
+  BASE_MAINNET_NETWORK_ID,
+  ARBITRUM_MAINNET_NETWORK_ID,
+  OPTIMISM_MAINNET_NETWORK_ID,
+  POLYGON_MAINNET_NETWORK_ID,
+] as const;
 
 export type EvmNetworkId = (typeof SUPPORTED_EVM_NETWORK_IDS)[number];
 

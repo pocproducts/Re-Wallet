@@ -35,7 +35,7 @@
  */
 
 /** Las redes del catálogo de depósito. Las mismas que el backend reporta. */
-export type DepositChainId = 'monad' | 'ethereum' | 'solana';
+export type DepositChainId = 'monad' | 'ethereum' | 'solana' | 'base' | 'arbitrum' | 'optimism' | 'polygon';
 
 /**
  * En qué camino de la pantalla se ofrece un activo.

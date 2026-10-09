@@ -1,5 +1,5 @@
 import { defineChain } from 'viem';
-import { mainnet } from 'viem/chains';
+import { arbitrum, base, mainnet, optimism, polygon } from 'viem/chains';
 
 /**
  * LAS REDES EVM QUE SOPORTA LA APP.
@@ -72,6 +72,14 @@ export const monad = defineChain({
 /** Ethereum mainnet: la red por defecto, y la que no se reemplaza. */
 export const ethereumMainnet = mainnet;
 
+export const baseMainnet = base;
+export const arbitrumMainnet = arbitrum;
+export const optimismMainnet = optimism;
+export const polygonMainnet = polygon;
+
+/** Todas las redes EVM soportadas, en el orden en que se ofrecen. Ethereum primero. */
+export const SUPPORTED_EVM_CHAINS = [ethereumMainnet, monad, baseMainnet, arbitrumMainnet, optimismMainnet, polygonMainnet] as const;
+
 /**
  * LAS REDES QUE NO SON EVM QUE LA APP CONFIGURA.
  *
@@ -110,9 +118,6 @@ export const SOLANA_MAINNET = {
   cluster: 'solana:mainnet',
 } as const;
 
-/** Todas las redes EVM soportadas, en el orden en que se ofrecen. Ethereum primero. */
-export const SUPPORTED_EVM_CHAINS = [ethereumMainnet, monad] as const;
-
 /** La red en la que se inicializa la wallet embebida. Ethereum, a propósito. */
 export const DEFAULT_EVM_CHAIN = ethereumMainnet;
 
@@ -126,6 +131,10 @@ export const DEFAULT_EVM_CHAIN = ethereumMainnet;
 export const EVM_CHAIN_BY_ID: Readonly<Record<number, (typeof SUPPORTED_EVM_CHAINS)[number]>> = {
   [ethereumMainnet.id]: ethereumMainnet,
   [monad.id]: monad,
+  [baseMainnet.id]: baseMainnet,
+  [arbitrumMainnet.id]: arbitrumMainnet,
+  [optimismMainnet.id]: optimismMainnet,
+  [polygonMainnet.id]: polygonMainnet,
 };
 
 /**

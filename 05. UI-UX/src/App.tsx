@@ -39,6 +39,7 @@ import {
   ShieldCheck,
   Wallet,
   Link2,
+  QrCode,
 } from 'lucide-react';
 
 const TRANSACTIONS_STORAGE_KEY = 'rewallet_transactions_data';
@@ -335,7 +336,7 @@ export default function App() {
      */
     <div className="min-h-dvh w-full bg-[#f3f4f6] text-black flex justify-center selection:bg-[#ccff00] selection:text-black">
       {/* Contenedor Responsivo para Teléfonos */}
-      <main className="relative w-full max-w-md h-dvh flex flex-col overflow-hidden bg-[#f3f4f6] shadow-2xl">
+      <main className="relative w-full max-w-md min-h-dvh flex flex-col bg-[#f3f4f6] shadow-2xl">
         {/* =========================================================================
             LA PUERTA DE INGRESO, O NADA:
             `checking` (Privy arranca), `checking_session` (vuela el `GET`) y
@@ -459,6 +460,7 @@ export default function App() {
                         onOpenAction={(act) => setActiveActionModal(act)}
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenScanner={() => setIsScannerOpen(true)}
+                        onOpenChargeModal={() => setIsChargeModalOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
                         hasUnreadNotifications={notifications.hasUnread}
@@ -505,7 +507,7 @@ export default function App() {
 
             {/* DIV 2: Navbar mobile abajo (Oculto en layouts de 3er nivel) */}
             {!isAnyThirdLevelOpen && !activeActionModal && (
-              <div id="mobile-navbar-container" className="w-full shrink-0">
+              <div id="mobile-navbar-container" className="w-full shrink-0 relative">
                 <BottomNavbar
                   currentTab={currentTab}
                   onTabChange={(tab) => {
@@ -513,9 +515,17 @@ export default function App() {
                     setActiveActionModal(null);
                     setCurrentTab(tab);
                   }}
-                  onOpenChargeModal={() => setIsChargeModalOpen(true)}
-                  onOpenBugModal={() => setIsChargeModalOpen(true)}
                 />
+                {/* Botón QR flotante - fuera del navbar, mismo tamaño que los botones de acción */}
+                <button
+                  onClick={() => setIsChargeModalOpen(true)}
+                  type="button"
+                  aria-label="Escanear QR"
+                  title="Escanear QR"
+                  className="absolute bottom-20 right-4 z-50 w-14 h-14 rounded-full bg-black flex items-center justify-center shadow-[0_8px_25px_rgba(0,0,0,0.3)] active:scale-90 transition-transform cursor-pointer border border-slate-800"
+                >
+                  <QrCode className="w-6 h-6 text-[#ccff00] stroke-[2.2]" />
+                </button>
               </div>
             )}
           </>
@@ -539,13 +549,11 @@ export default function App() {
           }}
         />
 
-        {/*
-          MODAL DE ACCIÓN A PANTALLA COMPLETA VERDE LIMA (DEPOSITAR, ENVIAR).
+{/*
+           MODAL DE ACCIÓN A PANTALLA COMPLETA VERDE LIMA (DEPOSITAR, USAR, ENVIAR).
 
-          'usar' ya no se puede pasar: se sacó su único llamador —el botón
-          "Usar" de la billetera— porque su menú era compra y venta, y no hay
-          motor de swap.
-        */}
+           'usar' abre el menú de Comprar/Vender (swap).
+         */}
         <ActionFullscreenModal
           action={activeActionModal}
           onClose={() => setActiveActionModal(null)}
@@ -582,7 +590,7 @@ export default function App() {
           />
         )}
 
-        {/* 3. Bitcoin & Crypto (3er nivel desde Inversiones -> Bitcoin & Crypto, sumatoria + 10 assets) */}
+        {/* 3. Activos Digitales (3er nivel desde Inversiones -> Activos Digitales, sumatoria + 10 assets) */}
         {isCryptoListOpen && (
           <CryptoAssetsListView
             onBack={() => setIsCryptoListOpen(false)}
@@ -683,7 +691,7 @@ export default function App() {
                   }}
                   className="p-2.5 rounded-xl hover:bg-slate-50 flex items-center justify-between cursor-pointer transition-colors"
                 >
-                  <span className="font-bold text-black">Bitcoin & Crypto</span>
+                  <span className="font-bold text-black">Activos Digitales</span>
                   <span className="text-[11px] text-[#00c076] font-bold">Ver cartera</span>
                 </div>
                 <div

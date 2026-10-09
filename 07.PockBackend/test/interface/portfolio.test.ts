@@ -168,6 +168,18 @@ describe('GET /api/portfolio — happy path', () => {
       `erc20:monad:0x754704Bc059F8C67012fEd69BC8A327a5aafb603:${EVM_ADDRESS}`,
       `native:ethereum:${EVM_ADDRESS}`,
       `erc20:ethereum:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48:${EVM_ADDRESS}`,
+      `native:base:${EVM_ADDRESS}`,
+      `erc20:base:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913:${EVM_ADDRESS}`,
+      `erc20:base:0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2:${EVM_ADDRESS}`,
+      `native:arbitrum:${EVM_ADDRESS}`,
+      `erc20:arbitrum:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:${EVM_ADDRESS}`,
+      `erc20:arbitrum:0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9:${EVM_ADDRESS}`,
+      `native:optimism:${EVM_ADDRESS}`,
+      `erc20:optimism:0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85:${EVM_ADDRESS}`,
+      `erc20:optimism:0x94b008aA00579c1307B0EF2c499aD98a8ce58e58:${EVM_ADDRESS}`,
+      `native:polygon:${EVM_ADDRESS}`,
+      `erc20:polygon:0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359:${EVM_ADDRESS}`,
+      `erc20:polygon:0xc2132D05D31c914a87C6611C10748AEb04B58e8F:${EVM_ADDRESS}`,
     ]);
     expect(solana.asked).toEqual([SOLANA_ADDRESS]);
   });
@@ -217,7 +229,7 @@ describe('GET /api/portfolio — a chain that fails', () => {
       chains: { chain: string; status: string; assets?: { amount: string }[]; error?: { code: string; reason: string } }[];
     };
 
-    expect(chainsOf(body)).toEqual({ monad: 'ok', ethereum: 'ok', solana: 'error' });
+    expect(chainsOf(body)).toEqual({ monad: 'ok', ethereum: 'ok', base: 'ok', arbitrum: 'ok', optimism: 'ok', polygon: 'ok', solana: 'error' });
     expect(body.chains.find((c) => c.chain === 'solana')?.error).toEqual({
       code: 'CHAIN_READ_FAILED',
       reason: 'RPC_REJECTED',
@@ -268,7 +280,7 @@ describe('GET /api/portfolio — zeros and missing wallets', () => {
       chains: { chain: string; status: string; assets: { amount: string; raw: string }[] }[];
     };
 
-    expect(chainsOf(body)).toEqual({ monad: 'ok', ethereum: 'ok', solana: 'ok' });
+    expect(chainsOf(body)).toEqual({ monad: 'ok', ethereum: 'ok', base: 'ok', arbitrum: 'ok', optimism: 'ok', polygon: 'ok', solana: 'ok' });
     for (const chain of body.chains) {
       expect(chain.assets[0]?.amount).toBe('0');
       expect(chain.assets[0]?.raw).toBe('0');
@@ -293,7 +305,7 @@ describe('GET /api/portfolio — zeros and missing wallets', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { chains: { chain: string; status: string; assets?: unknown }[] };
 
-    expect(chainsOf(body)).toEqual({ monad: 'ok', ethereum: 'ok', solana: 'no_wallet' });
+    expect(chainsOf(body)).toEqual({ monad: 'ok', ethereum: 'ok', base: 'ok', arbitrum: 'ok', optimism: 'ok', polygon: 'ok', solana: 'no_wallet' });
     // An absent wallet is not an empty one, and it is not "ok" either.
     expect(body.chains.find((c) => c.chain === 'solana')?.assets).toBeUndefined();
     // Nothing was read for a chain this person has no address on.
@@ -429,7 +441,7 @@ describe('readPortfolio — the use case on its own', () => {
 
     const portfolio = await useCase(USER_ID);
 
-    expect(portfolio.chains.map((c) => c.chain)).toEqual(['monad', 'ethereum', 'solana']);
+    expect(portfolio.chains.map((c) => c.chain)).toEqual(['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'solana']);
     expect(portfolio.userId).toBe(USER_ID);
   });
 });

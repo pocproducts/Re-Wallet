@@ -1,14 +1,13 @@
 /**
- * Formateo y tipo de cambio: lo de este archivo que no es un dato inventado.
+ * Formateo: lo de este archivo que no es un dato inventado.
  *
  * ── Lo que queda y por qué ─────────────────────────────────────────────────
  *
  * Este archivo era el simulacro del mercado: precios escritos a mano, saldos
  * inventados y el tipo de cambio fijo. De todo eso, en esta pasada se fueron
- * **los precios y los saldos**, que son las dos cosas que la app se inventaba.
- * Quedan el tipo de cambio del dólar —que usa `config/displayCurrency.ts` para
- * pintar equivalentes en pesos, y que es otra decisión, la del formato de
- * pantalla— y el formateador de números, que no es un dato sino una convención.
+ * **los precios, los saldos y el tipo de cambio ARS**, que son las cosas que
+ * la app se inventaba. Queda solo el formateador de números, que no es un dato
+ * sino una convención.
  *
  * ── Por qué el precio no se reemplaza por otro número ───────────────────────
  *
@@ -36,28 +35,6 @@
 import { assetByTicker } from './assets';
 import type { Asset } from './assets';
 import type { AssetTicker } from './assets';
-
-/**
- * El precio del dólar en pesos.
- *
- * Queda sólo para las pantallas que muestran el equivalente en pesos. En los
- * flujos de comprar y vender ya no se usa, y para pasar de una moneda a otra
- * tampoco: eso salía de la tabla de precios, y sin motor no hay tasa real.
- *
- * No se borra porque lo importa `config/displayCurrency.ts`, que no es de este
- * cambio y formatea el equivalente en pesos de varias pantallas.
- */
-export const ARS_PER_USD = 1570;
-
-/** Convierte dólares a pesos. */
-export function toArs(usd: number): number {
-  return usd * ARS_PER_USD;
-}
-
-/** Convierte pesos a dólares. */
-export function fromArs(ars: number): number {
-  return ars / ARS_PER_USD;
-}
 
 /**
  * Un número como se muestra en pantalla: `"0,00852543"`, `"250,00"`.

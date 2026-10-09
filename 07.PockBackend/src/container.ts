@@ -66,6 +66,10 @@ import {
   DEFAULT_KAMINO_API_URL,
 } from './infrastructure/rpc/kaminoSharePriceFeed.http';
 import { createHttpSolanaTransferPreparer } from './infrastructure/rpc/solanaTransferPreparer.http';
+import { createUniswapV3MonadSwapProvider } from './infrastructure/swap/uniswapV3MonadSwap';
+import { createSwapUseCase } from './application/swap/swapUseCase';
+import { createSwapRoutes } from './interface/http/routes/swap';
+import { createSwapProviderFactory } from './infrastructure/swap/swapProviderFactory';
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
 import { createApp } from './interface/http/app';
 import type { Logger } from './domain/ports/logger';
@@ -91,6 +95,10 @@ export interface Config {
    */
   readonly monadRpcUrl: string;
   readonly ethereumRpcUrl: string;
+  readonly baseRpcUrl: string;
+  readonly arbitrumRpcUrl: string;
+  readonly optimismRpcUrl: string;
+  readonly polygonRpcUrl: string;
   readonly solanaRpcUrl: string;
   /**
    * Optional: the endpoint the **pool** reads go through.
@@ -135,6 +143,10 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
     ...required,
     monadRpcUrl: readEnv(env, 'MONAD_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.monad),
     ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.ethereum),
+    baseRpcUrl: readEnv(env, 'BASE_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.base),
+    arbitrumRpcUrl: readEnv(env, 'ARBITRUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.arbitrum),
+    optimismRpcUrl: readEnv(env, 'OPTIMISM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.optimism),
+    polygonRpcUrl: readEnv(env, 'POLYGON_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.polygon),
     // The escape hatch, and it wins: set `SOLANA_RPC_URL` and this line never
     // reaches the default. The default is the official public Solana RPC
     // (`api.mainnet-beta.solana.com`), free and aggressively rate-limited, which
@@ -171,6 +183,10 @@ export const buildApp = (config: Config, log: Logger) => {
     endpoints: {
       monad: [...(config.monadRpcUrl !== DEFAULT_EVM_ENDPOINTS.monad[0] ? [config.monadRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.monad],
       ethereum: [...(config.ethereumRpcUrl !== DEFAULT_EVM_ENDPOINTS.ethereum[0] ? [config.ethereumRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.ethereum],
+      base: [...(config.baseRpcUrl !== DEFAULT_EVM_ENDPOINTS.base[0] ? [config.baseRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.base],
+      arbitrum: [...(config.arbitrumRpcUrl !== DEFAULT_EVM_ENDPOINTS.arbitrum[0] ? [config.arbitrumRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.arbitrum],
+      optimism: [...(config.optimismRpcUrl !== DEFAULT_EVM_ENDPOINTS.optimism[0] ? [config.optimismRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.optimism],
+      polygon: [...(config.polygonRpcUrl !== DEFAULT_EVM_ENDPOINTS.polygon[0] ? [config.polygonRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.polygon],
     },
   });
   const solana = createHttpSolanaBalanceReader({ url: config.solanaRpcUrl });
@@ -344,6 +360,24 @@ export const buildApp = (config: Config, log: Logger) => {
      */
     prepareSend: sendFlow,
     /*
+     * Swap: cotización y ejecución de conversiones entre activos.
+     *
+     * Usa el factory agnóstico que resuelve el DEX correcto según el par.
+     */
+    swapProviderFactory: createSwapProviderFactory({
+      rpcUrlOverrides: {
+        monad: config.monadRpcUrl,
+      },
+    }),
+    swapUseCase: createSwapUseCase({
+      swapProviderFactory: createSwapProviderFactory({
+        rpcUrlOverrides: {
+          monad: config.monadRpcUrl,
+        },
+      }),
+      log,
+    }),
+    /*
      * The deposit catalog and the addresses that go with it, read through the
      * **same** store. One store, una sola fuente de dirección: si esta ruta
      * leyera las carteras por otro lado, la dirección que la pantalla muestra
@@ -377,6 +411,16 @@ export const buildApp = (config: Config, log: Logger) => {
       log,
     }),
     readNotifications: readNotifications({ store: webhookEvents, log }),
+    swapRoutes: createSwapRoutes({
+      sessions,
+      swapUseCase: createSwapUseCase({
+        swapProvider: createUniswapV3MonadSwapProvider({
+          rpcUrl: config.monadRpcUrl,
+        }),
+        log,
+      }),
+      log,
+    }),
     log,
   });
 };

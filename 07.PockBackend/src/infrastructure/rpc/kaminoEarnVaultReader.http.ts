@@ -216,13 +216,38 @@ export const createHttpKaminoEarnVaultReader = (
   };
 
   const dataOf = (account: ParsedAccount): string => {
-    // `jsonParsed` answers `{ program, space, data: "<base64>" }` for an account a
-    // Token program does not own.
-    const data = (account.data as { data?: unknown } | undefined)?.data;
-    if (typeof data !== 'string') {
-      throw new BalanceReadError('RPC_MALFORMED_RESPONSE', 'solana answered an account without its data');
+    // `jsonParsed` returns different shapes depending on the account's owner program:
+    // - Non-Token program: { program, space, data: "<base64>" }
+    // - Token program: { parsed: { info: {...} }, program: "spl-token", space: ... }
+    // We need the raw base64 bytes for our custom decoder.
+    
+    const dataContainer = account.data as { data?: unknown; parsed?: unknown; program?: unknown } | undefined;
+    
+    // DEBUG: log the actual structure
+    console.error('[KAMINO_VAULT] account structure:', JSON.stringify({
+      hasData: !!dataContainer?.data,
+      dataType: typeof dataContainer?.data,
+      hasParsed: !!dataContainer?.parsed,
+      program: dataContainer?.program,
+      keys: dataContainer ? Object.keys(dataContainer) : 'no dataContainer'
+    }, null, 2));
+    
+    // Case 1: account not owned by Token program -> has `data` as base64 string
+    if (dataContainer?.data && typeof dataContainer.data === 'string') {
+      return dataContainer.data;
     }
-    return data;
+    
+    // Case 2: account owned by Token program -> has `parsed` with info, no base64 data
+    // This shouldn't happen for KVault (owned by KVault program), but handle gracefully
+    if (dataContainer?.parsed) {
+      throw new BalanceReadError(
+        'RPC_MALFORMED_RESPONSE',
+        'solana answered a Token-program account where KVault program was expected (parsed instead of base64)'
+      );
+    }
+    
+    // Case 3: neither data nor parsed - malformed or unexpected response
+    throw new BalanceReadError('RPC_MALFORMED_RESPONSE', 'solana answered an account without its data');
   };
 
   return {

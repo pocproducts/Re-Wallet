@@ -598,7 +598,7 @@ describe('an amount that cannot be right', () => {
   it('refuses a chain the catalog does not know', async () => {
     const { prepare } = harness();
 
-    for (const chain of ['base', 'bitcoin', '', null, 143]) {
+    for (const chain of ['bitcoin', '', null, 143]) {
       expect(await codeOf(prepare(USER_ID, send({ chain: chain as never })))).toBe('CHAIN_UNKNOWN');
     }
   });
@@ -643,7 +643,7 @@ describe('the balance and the gas', () => {
   it('settles chain, asset, amount and recipient before it reads a single balance', async () => {
     const { prepare, asked } = harness();
 
-    await codeOf(prepare(USER_ID, send({ chain: 'base' })));
+    await codeOf(prepare(USER_ID, send({ chain: 'bitcoin' as never })));
     await codeOf(prepare(USER_ID, send({ asset: { symbol: 'DOGE', decimals: 8 } })));
     await codeOf(prepare(USER_ID, send({ amountRaw: '1.5' })));
     await codeOf(prepare(USER_ID, send({ recipient: '0x123' })));

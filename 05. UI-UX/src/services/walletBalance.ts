@@ -180,7 +180,9 @@ const formatPriceText = (usd: string): string => {
 };
 
 const toChain = (value: unknown): WalletBalanceChain | null =>
-  value === 'monad' || value === 'ethereum' || value === 'solana' ? value : null;
+  value === 'monad' || value === 'ethereum' || value === 'solana' || value === 'base' || value === 'arbitrum' || value === 'optimism' || value === 'polygon'
+    ? value
+    : null;
 
 const toSource = (value: unknown): 'free_wallet' | 'pool_position' =>
   value === 'pool_position' ? 'pool_position' : 'free_wallet';
@@ -756,6 +758,10 @@ export type VenueRowAction =
 const CHAIN_LABELS: Readonly<Record<WalletBalanceChain, string>> = {
   monad: 'Monad',
   ethereum: 'Ethereum',
+  base: 'Base',
+  arbitrum: 'Arbitrum One',
+  optimism: 'OP Mainnet',
+  polygon: 'Polygon',
   solana: 'Solana',
 };
 
@@ -768,7 +774,7 @@ const CHAIN_LABELS: Readonly<Record<WalletBalanceChain, string>> = {
  * cada una —eso lo responde el servidor—; por eso el cruce se arma acá y el
  * destino de cada fila nunca se escribe a mano.
  */
-export const YIELD_VENUE_CHAINS: readonly WalletBalanceChain[] = ['monad', 'ethereum', 'solana'];
+export const YIELD_VENUE_CHAINS: readonly WalletBalanceChain[] = ['monad', 'solana'];
 
 /**
  * ¿QUÉ HACE LA FILA DE ESTE VENUE?

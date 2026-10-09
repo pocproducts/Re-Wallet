@@ -516,8 +516,17 @@ export interface ReadWalletBalanceDeps {
 export type ReadWalletBalance = (userId: string, now?: Date) => Promise<WalletBalance>;
 
 /** The chain name a screen can read, next to the figure it is about. */
-const chainLabel = (chain: PortfolioChain): string =>
-  chain === 'monad' ? 'Monad' : chain === 'ethereum' ? 'Ethereum' : 'Solana';
+const CHAIN_LABELS: Readonly<Record<PortfolioChain, string>> = {
+  monad: 'Monad',
+  ethereum: 'Ethereum',
+  base: 'Base',
+  arbitrum: 'Arbitrum One',
+  optimism: 'OP Mainnet',
+  polygon: 'Polygon',
+  solana: 'Solana',
+};
+
+const chainLabel = (chain: PortfolioChain): string => CHAIN_LABELS[chain];
 
 /**
  * The key of a free piece, and the first half of it is the bucket it belongs to.

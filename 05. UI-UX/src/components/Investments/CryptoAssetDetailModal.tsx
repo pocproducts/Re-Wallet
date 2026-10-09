@@ -13,9 +13,12 @@ import {
   Clipboard,
   Layers,
   Sparkles,
+  TrendingUp,
+  TrendingDown,
 } from 'lucide-react';
 import { AssetTradeCard } from '../common';
-import { defaultDisplayCurrency } from '../../config/displayCurrency';
+import { PriceChart } from './PriceChart';
+import { usePriceHistory } from '../../hooks/usePriceHistory';
 import {
   TRADE_UNAVAILABLE_TEXT,
   useAssetTrade,
@@ -144,13 +147,6 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
   balance,
 }) => {
   const [currentView, setCurrentView] = useState<ModalView>('overview');
-  /*
-   * El interruptor USD | ARS sigue siendo una decisión de la persona, y lo que
-   * decide acá es por dónde se abre. Esa apertura no está escrita en esta línea
-   * a propósito: sale de `config/displayCurrency`, que es donde vive la decisión
-   * de qué moneda muestra la app y que hoy está atada a que no hay rampas.
-   */
-  const [currencyMode, setCurrencyMode] = useState<'USD' | 'ARS'>(defaultDisplayCurrency);
   const [timeframe, setTimeframe] = useState<'24H' | '7D' | '1M' | '1A' | 'MAX'>('24H');
   const [isFavorite, setIsFavorite] = useState(false);
   const [keypadAmount, setKeypadAmount] = useState('0');
@@ -163,6 +159,12 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
   } | null>(null);
   const [destinationAddress, setDestinationAddress] = useState('');
   const [copied, setCopied] = useState(false);
+
+  // Price history from CoinGecko
+  const { data: priceHistory, marketData, loading: priceLoading, error: priceError } = usePriceHistory(
+    asset?.ticker,
+    timeframe
+  );
 
   /*
    * El par de conversión de las dos pantallas de teclado.
@@ -412,92 +414,84 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </div>
             </div>
 
-            {/* Toggle de Moneda [ USD | ARS ] */}
-            <div className="flex justify-center pt-2">
-              <div className="bg-slate-200/80 p-1 rounded-2xl flex items-center gap-1 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setCurrencyMode('USD')}
-                  className={`px-6 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                    currencyMode === 'USD'
-                      ? 'bg-white text-black shadow-xs'
-                      : 'text-slate-500 hover:text-black'
-                  }`}
-                >
-                  USD
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCurrencyMode('ARS')}
-                  className={`px-6 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                    currencyMode === 'ARS'
-                      ? 'bg-white text-black shadow-xs'
-                      : 'text-slate-500 hover:text-black'
-                  }`}
-                >
-                  ARS
-                </button>
-              </div>
-            </div>
+            
 
-            {/*
-              Precio y variación.
-
-              Antes esta fila pintaba `formatFiat(currentPriceUsd, currencyMode)`
-              con el precio de la tabla de `config/markets` —y su
-              `'-1,15%'` de repuesto cuando no venía nada— así que un activo sin
-              precio de tabla se veía en cero, y la variación era un número fijo
-              para todos. `/api/portfolio` no trae precios ni variaciones, así que
-              acá se dice que no hay dato: el precio queda en blanco y la
-              variación **no se pinta**, en lugar de inventarla para llenar.
-            */}
+{/* Precio actual y variación 24h — datos reales de CoinGecko */}
             <div className="text-center space-y-0.5 pt-1">
               <div className="flex items-baseline justify-center gap-1.5 font-display">
-                <span className="text-2xl font-black text-slate-300">—</span>
-                <span className="text-xs font-bold text-slate-400">
-                  {currencyMode}
-                </span>
+                {marketData !== null && marketData.currentPrice > 0 ? (
+                  <>
+                    <span className="text-2xl font-black text-black tracking-tight">
+                      U${marketData.currentPrice.toLocaleString('en-US', {
+                        minimumFractionDigits: marketData.currentPrice >= 1 ? 2 : 6,
+                        maximumFractionDigits: marketData.currentPrice >= 1 ? 2 : 6,
+                      })}
+                    </span>
+                    <span className="text-xs font-bold text-slate-400">USD</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-2xl font-black text-slate-300">—</span>
+                    <span className="text-xs font-bold text-slate-400">USD</span>
+                  </>
+                )}
               </div>
-              {asset.change24h.length > 0 && (
-                <span
-                  className={`text-xs font-bold ${
-                    asset.isPositive ? 'text-emerald-500' : 'text-red-500'
-                  }`}
-                >
-                  {asset.change24h}
+              {marketData?.change24h !== null && marketData?.change24h !== undefined && (
+                <div className="flex items-center justify-center gap-1">
+                  {marketData.change24h >= 0 ? (
+                    <TrendingUp className="w-3 h-3 text-emerald-500 stroke-[2]" />
+                  ) : (
+                    <TrendingDown className="w-3 h-3 text-red-500 stroke-[2]" />
+                  )}
+                  <span className={`text-xs font-bold ${marketData.change24h >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                    {marketData.change24h >= 0 ? '+' : ''}{marketData.change24h.toFixed(2)}%
+                  </span>
+                </div>
+              )}
+              {priceError && (
+                <span className="text-[11px] text-amber-600 font-medium">
+                  {priceError}
                 </span>
               )}
             </div>
 
-            {/*
-              Aquí ya no hay gráfico.
-
-              Antes dibujaba una curva púrpura fija en el SVG —la misma para todos los
-              activos, idéntica para Bitcoin y para el activo que saliera al
-             azar— y sin ninguna serie de precios detrás. Una curva ascendente
-              dibujada sin datos no es decoración: es la forma de una ganancia.
-              La persona la lee como “esto subió” y no hay nada medido detrás.
-
-              `/api/portfolio` no trae precios ni variaciones, y este archivo ya
-              lo decía arriba: el precio se muestra como guion. El gráfico se
-              va con la misma regla —si no hay serie, no hay curva— y en su lugar
-              queda el mismo espacio con un estado vacío que forma parte de la
-              pantalla en vez de una apology.
-
-              Los selectores de período quedan: son una elección de la persona y no
-              son un dato. Cuando exista la serie, la curva vuelve a este mismo
-              lugar.
+{/*
+              Aquí ya no hay gráfico fijo: ahora usamos datos reales de CoinGecko.
+              
+              Cuando exista la serie, la curva vuelve a este mismo lugar.
             */}
-            <div className="w-full h-44 relative flex items-center justify-center overflow-hidden">
-              <div className="space-y-1.5 text-center px-8">
-                <span className="text-sm font-bold text-slate-500 block">
-                  Todavía no hay gráfico
-                </span>
-                <span className="text-[11px] text-slate-400 font-medium block leading-snug">
-                  No estamos leyendo precios, así que no hay nada honesto que dibujar
-                  acá.
-                </span>
-              </div>
+            <div className="w-full h-44 relative flex items-center justify-center overflow-hidden bg-white rounded-xl border border-slate-100">
+              {priceLoading ? (
+                <div className="space-y-1.5 text-center px-8">
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm font-bold text-slate-500">Cargando gráfico…</span>
+                  </div>
+                </div>
+              ) : priceError ? (
+                <div className="space-y-1.5 text-center px-8">
+                  <span className="text-sm font-bold text-amber-600 block">No se pudo cargar el gráfico</span>
+                  <span className="text-[11px] text-slate-400 font-medium block leading-snug">
+                    {priceError}
+                  </span>
+                </div>
+              ) : priceHistory.length > 0 ? (
+                <PriceChart
+                  data={priceHistory}
+                  strokeColor="#1a1a2e"
+                  fillColor="rgba(26, 26, 46, 0.15)"
+                  showArea
+                  showGrid
+                />
+              ) : (
+                <div className="space-y-1.5 text-center px-8">
+                  <span className="text-sm font-bold text-slate-500 block">Sin datos de precio</span>
+                  <span className="text-[11px] text-slate-400 font-medium block leading-snug">
+                    No hay serie histórica disponible para este activo
+                  </span>
+                </div>
+              )}
+            </div>
             </div>
 
             {/* Selector de Periodo [ 24H | 7D | 1M | 1A | MAX ] */}
@@ -516,20 +510,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                   {tf}
                 </button>
               ))}
-            </div>
-          </div>
-
-          {/*
-            ACÁ ESTABA LA HOJA DE COMPRAVENTA: "Comprá" y "Vendé".
-
-            Es el mismo menú que "Usar" tenía en la billetera, y se va por la
-            misma razón: las dos opciones son cambio de activo y no hay motor
-            de swap que las ejecute. Una acción que no se puede hacer no se
-            ofrece. Las dos pantallas que abría —`buy_keypad` y `sell_keypad`—
-            quedan más abajo, estacionadas a propósito: son la Fase 2 ya
-            decidida, con el catálogo real y los saldos reales ya resueltos.
-            Falta el motor, no la pantalla.
-          */}
+</div>
         </div>
       )}
 

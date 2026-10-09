@@ -482,7 +482,7 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
     const created = await create(h);
 
     const cases: readonly [unknown, string][] = [
-      [{ chain: 'base', asset: { symbol: 'USDC', decimals: 6 } }, 'CHAIN_UNKNOWN'],
+      [{ chain: 'bitcoin', asset: { symbol: 'USDC', decimals: 6 } }, 'CHAIN_UNKNOWN'],
       [{ chain: 'monad', asset: { symbol: 'DOGE', decimals: 8 } }, 'ASSET_NOT_ON_CHAIN'],
       [{ chain: 'monad', asset: { symbol: 'USDC', decimals: 18 } }, 'INVALID_AMOUNT'],
     ];

@@ -280,7 +280,7 @@ describe('POST /api/send/prepare', () => {
 
     const cases: readonly [unknown, string][] = [
       [{ ...validBody, requestId: undefined }, 'REQUEST_ID_INVALID'],
-      [{ ...validBody, chain: 'base' }, 'CHAIN_UNKNOWN'],
+      [{ ...validBody, chain: 'bitcoin' }, 'CHAIN_UNKNOWN'],
       [{ ...validBody, asset: { symbol: 'DOGE', decimals: 8 } }, 'ASSET_NOT_ON_CHAIN'],
       [{ ...validBody, asset: { symbol: 'USDC', decimals: 18 } }, 'INVALID_AMOUNT'],
       [{ ...validBody, recipient: '0x123' }, 'INVALID_RECIPIENT'],

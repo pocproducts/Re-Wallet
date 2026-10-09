@@ -6,7 +6,9 @@ import {
 import { CryptoAssetDetailModal } from './CryptoAssetDetailModal';
 import { BalancePieceRow } from './BalancePieceRow';
 import { byUsdValueDesc } from '../../services/walletBalance';
-import type { WalletBalancePart } from '../../services/walletBalance';
+import { identityOf } from '../../services/portfolioIdentity';
+import type { WalletBalancePart, AmountView } from '../../services/walletBalance';
+import type { DepositChainId } from '../../types/deposit.types';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import type { PortfolioView } from '../../hooks/usePortfolio';
 import type { DepositInfoView } from '../../hooks/useDepositInfo';
@@ -97,47 +99,112 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
     return index;
   }, [cryptoValue?.parts]);
 
-  /*
-   * Los activos son los que la cadena reportó, y sólo esos.
+/*
+   * Los activos crypto: **una fila por símbolo**.
    *
-   * Antes eran doce filas escritas a mano: Bitcoin, Ethereum, Solana, Tron,
-   * Dogecoin, Cardano, Avalanche, Polygon, Chainlink, Ripple, Polkadot y BNB,
-   * con cantidades inventadas como `0,00156 ETH` y saldos que se presentaban
-   * como de la persona. Seis de esos activos ni siquiera los lee el backend, así
-   * que sus cifras no eran de ejemplo: eran falsas.
-   *
-   * Ahora sale de `portfolio.cryptoHoldings`: si la cadena no lo reportó, no se
-   * lista. Los dólares digitales tampoco, porque tienen su propia pantalla y acá
-   * no son cripto.
+   * Para EVM (ethereum, base, arbitrum, optimism, polygon, monad):
+   * la misma dirección sirve en todas → ETH se suma conceptualmente,
+   * pero mostramos el primer balance leído como referencia (evita sumar
+   * bigint que rompe la UI). MON nativo de Monad. SOL nativo de Solana.
    */
   const assets: readonly CryptoAsset[] = useMemo(
-    () =>
-      (portfolio?.cryptoHoldings ?? []).map((holding) => ({
-        id: holding.id,
-        name: holding.name,
-        ticker: holding.symbol,
-        iconBg: holding.iconBg,
-        iconText: holding.glyph,
-        /* `CryptoAssetData` exige un texto de cantidad: el que se pinta. */
-        totalCrypto: `${holding.amountLabel} ${holding.unit}`,
-        /* Sin precio de mercado no hay variación que mostrar: cadena vacía. */
-        change24h: '',
-        isPositive: false,
-        networks: holding.networks.map((network) => ({
-          label: network.label,
-          address: network.address,
-        })),
-        /* La pieza del backend para esta fila, si la envió.
+    () => {
+      const networks = depositInfo?.networks ?? [];
+      console.debug('[CryptoAssetsListView] depositInfo status:', depositInfo?.status, 'networks:', networks.map(n => ({ chain: n.chain, label: n.label, hasWallet: n.hasWallet, cryptoAssets: n.assets.filter(a => a.kind === 'crypto').map(a => a.symbol) })));
+      
+      // Chains EVM que comparten la misma dirección
+      const EVM_CHAINS: readonly DepositChainId[] = ['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon'];
+      
+      // Tipo para parts con status 'ok'
+      type OkPart = WalletBalancePart & { status: 'ok'; quantity: AmountView };
+      
+      type PortfolioAssetIdentity = NonNullable<ReturnType<typeof identityOf>>;
+      
+      // Agrupar por símbolo: recolectar la primera pieza ok por símbolo
+      const bySymbol = new Map<string, {
+        identity: PortfolioAssetIdentity;
+        symbol: string;
+        native: boolean;
+        isEvm: boolean;
+        part: OkPart | null;
+        networkInfos: { label: string; address: string | null }[];
+      }>();
 
-           La clave se arma con `chain` y `symbol` del holding, NO con
-           `holding.id`. `holding.id` es `${chain}:${symbol}` — dos puntos —
-           mientras que la clave del backend es `crypto.${chain}.${symbol}` —
-           punto. Con `holding.id` la búsqueda nunca encontraba nada, `part`
-           daba `null` en todas las filas y cada activo caía al fallback que
-           pinta sólo la cantidad, sin el valor en dólares. Ese fue el bug. */
-        part: partsByKey.get(`crypto.${holding.chain}.${holding.symbol}`) ?? null,
-      })),
-    [portfolio?.cryptoHoldings, partsByKey],
+      for (const network of networks) {
+        const cryptoAssets = network.assets.filter((a) => a.kind === 'crypto');
+        if (cryptoAssets.length === 0) continue;
+
+        for (const asset of cryptoAssets) {
+          const identity = identityOf(asset.symbol);
+          if (identity === null) continue;
+
+          const part = partsByKey.get(`crypto.${network.chain}.${asset.symbol}`);
+          const isEvm = EVM_CHAINS.includes(network.chain);
+
+          // Type guard
+          const isOkPart = (p: WalletBalancePart | undefined): p is OkPart =>
+            p !== undefined && p.status === 'ok';
+
+          const okPart = isOkPart(part) ? part : null;
+
+          const existing = bySymbol.get(asset.symbol);
+          if (existing === undefined) {
+            bySymbol.set(asset.symbol, {
+              identity,
+              symbol: asset.symbol,
+              native: asset.native,
+              isEvm,
+              part: okPart,
+              networkInfos: network.hasWallet ? [{ label: network.label, address: network.address ?? null }] : [],
+            });
+          } else {
+            // Para EVM: si ya teníamos parte, no sobrescribir (ya tenemos referencia)
+            // Solo agregar info de red si es nueva
+            if (network.hasWallet && !existing.networkInfos.some(n => n.label === network.label)) {
+              existing.networkInfos.push({ label: network.label, address: network.address ?? null });
+            }
+          }
+        }
+      }
+
+      const result: CryptoAsset[] = [];
+
+      for (const [symbol, data] of bySymbol.entries()) {
+        const { identity, native, isEvm, part, networkInfos } = data;
+
+        let totalAmountLabel = '—';
+        let totalUnit = '';
+        let displayPart: OkPart | null = null;
+
+        if (part !== null) {
+          totalUnit = part.quantity.unit;
+          displayPart = part;
+          totalAmountLabel = part.quantity.formatted;
+        } else {
+          totalAmountLabel = 'No se pudo leer';
+        }
+
+        const networkLabel = isEvm 
+          ? 'Ethereum, Base, Arbitrum One, OP Mainnet, Polygon, Monad'
+          : networkInfos.map(n => n.label).join(', ');
+
+        result.push({
+          id: symbol,
+          name: identity.name,
+          ticker: symbol,
+          iconBg: identity.iconBg,
+          iconText: identity.glyph,
+          totalCrypto: totalAmountLabel ? `${totalAmountLabel} ${totalUnit}`.trim() : 'No se pudo leer',
+          change24h: '',
+          isPositive: false,
+          networks: [{ label: networkLabel, address: networkInfos[0]?.address ?? null }],
+          part: displayPart,
+        });
+      }
+
+      return result;
+    },
+    [depositInfo?.networks, partsByKey],
   );
 
   const filteredAssets = useMemo(
@@ -196,7 +263,7 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
         </button>
 
         <h1 className="text-base font-extrabold font-display text-black tracking-tight">
-          Bitcoin & Crypto
+          Activos Digitales
         </h1>
 
         <div className="w-10" />
@@ -210,7 +277,7 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
         <div className="bg-white rounded-[32px] p-6 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 font-display">
-              TOTAL EN CRYPTO
+              TOTAL EN ACTIVOS DIGITALES
             </span>
             {/*
               La píldora de la derecha antes decía `+4,28% hoy`, con flecha verde y
@@ -229,17 +296,15 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
           </div>
 
           {/*
-            La frase de abajo describe la cifra, así que sólo aparece cuando hay
-            cifra. Cuando la lectura no llegó no se escribe nada: ni el número en
-            cero, ni un guion, ni una frase que diga qué faltó —la parte que no se
-            pudo leer no se nombra— y el subtítulo vuelve solo con la lectura.
+            Sin cifra no se escribe nada: ni el número en cero, ni un guion, ni
+            una frase que diga qué faltó —la parte que no se pudo leer no se nombra—.
           */}
           <p className="text-xs font-semibold text-slate-400 font-mono tracking-tight pt-0.5">
             {balance === undefined || balance.status === 'idle' || balance.status === 'loading'
               ? 'Leyendo la cadena…'
               : cryptoUsd === null
                 ? null
-                : 'Es lo que tenés libre en tus billeteras y no está pegado al dólar. Tus dólares digitales van en la tarjeta de Dólares digitales.'}
+                : null}
           </p>
         </div>
 
@@ -273,7 +338,7 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
                 onClick={() => setSelectedAsset(asset)}
                 className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors cursor-pointer active:scale-99"
               >
-                {/* IZQUIERDA: Avatar + Nombre y Ticker */}
+                {/* IZQUIERDA: Avatar + Activo (resaltado) + Símbolo (subtítulo) */}
                 <div className="flex items-center gap-3">
                   <div
                     className={`w-11 h-11 rounded-2xl ${asset.iconBg} text-white font-black flex items-center justify-center text-sm shadow-xs shrink-0`}
@@ -281,11 +346,11 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
                     {asset.iconText}
                   </div>
 
-                  <div>
-                    <span className="text-sm font-extrabold text-black font-display block leading-none">
+                  <div className="min-w-0">
+                    <span className="text-base font-extrabold text-black font-display block leading-tight truncate">
                       {asset.name}
                     </span>
-                    <span className="text-xs font-mono font-bold text-slate-400 block mt-1">
+                    <span className="text-xs font-medium text-slate-500 block mt-0.5 truncate">
                       {asset.ticker}
                     </span>
                   </div>
@@ -297,13 +362,15 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
                     leer: la fila ilegible se resuelve acá, en el mapa, y la
                     pieza cae a la cantidad de la cadena, que la cadena sí
                     reportó y es un dato verdadero. Un cero leído también entra
-                    por acá, sólo que en gris. */}
+                    por acá, sólo que en gris.
+                    Si no hay pieza (RPC falló), decimos "No se pudo leer" — no
+                    inventamos un cero ni un guion. */}
                 <div className="text-right shrink-0">
                   {asset.part !== null && asset.part.status === 'ok' ? (
                     <BalancePieceRow part={asset.part} hideLabel />
                   ) : (
-                    <span className="text-sm font-extrabold font-display text-black block leading-none">
-                      {asset.totalCrypto}
+                    <span className="text-sm font-medium text-slate-500 block leading-none">
+                      No se pudo leer
                     </span>
                   )}
                 </div>

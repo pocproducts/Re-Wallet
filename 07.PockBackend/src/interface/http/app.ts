@@ -44,6 +44,7 @@ import { createSendRoutes } from './routes/send';
 import { createPaymentRequestsRoutes } from './routes/paymentRequests';
 import { createPoolRoutes } from './routes/pool';
 import { createWalletBalanceRoutes } from './routes/walletBalance';
+import { createSwapRoutes } from './routes/swap';
 import { createWalletsRoutes } from './routes/wallets';
 import { createWebhookRoutes } from './routes/webhooks';
 
@@ -103,6 +104,14 @@ export interface AppDeps {
    * between "this deployment cannot send" and "your send was refused".
    */
   readonly prepareSend?: PrepareSend;
+
+  /**
+   * Swap routes: quote, execute, and list supported pairs.
+   *
+   * Only mounted when the swap use case is wired. A swap screen without a route
+   * behind it is a screen that promises conversions it cannot do.
+   */
+  readonly swapRoutes?: ReturnType<typeof import('./routes/swap').createSwapRoutes>;
   /**
    * The charge surface: create, read by id, and pay.
    *
@@ -270,6 +279,14 @@ export const createApp = (deps: AppDeps) => {
         log,
       }),
     );
+  }
+
+  /*
+   * `/api/wallet/swap`. Mounted only when the swap use case is wired.
+   * A swap screen without a route is a screen that promises conversions it cannot do.
+   */
+  if (deps.swapRoutes) {
+    app.route('/api/wallet/swap', deps.swapRoutes);
   }
 
   /*

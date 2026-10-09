@@ -423,6 +423,15 @@ const pieceOf = (bucket: { pieces: Piece[] }, key: string): Piece => {
 const holdings = {
   [`monad:${MONAD_USDC}:${EVM_ADDRESS}`]: '1500000',
   [`ethereum:${ETHEREUM_USDC}:${EVM_ADDRESS}`]: '500000',
+  // The new chains answer zero: the fixture reader would refuse an unknown key.
+  [`base:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913:${EVM_ADDRESS}`]: '0',
+  [`base:0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2:${EVM_ADDRESS}`]: '0',
+  [`arbitrum:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:${EVM_ADDRESS}`]: '0',
+  [`arbitrum:0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9:${EVM_ADDRESS}`]: '0',
+  [`optimism:0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85:${EVM_ADDRESS}`]: '0',
+  [`optimism:0x94b008aA00579c1307B0EF2c499aD98a8ce58e58:${EVM_ADDRESS}`]: '0',
+  [`polygon:0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359:${EVM_ADDRESS}`]: '0',
+  [`polygon:0xc2132D05D31c914a87C6611C10748AEb04B58e8F:${EVM_ADDRESS}`]: '0',
 };
 const threeMon: Record<string, string> = { [`monad:${EVM_ADDRESS}`]: '3000000000000000000' };
 
@@ -446,7 +455,10 @@ describe('GET /api/wallet-balance — the buckets and the headline', () => {
      *   MON   3 x $0.028642 = $0.085926, at 18 + 8 = 26 decimals
      *   SOL   1.23456789 x $1.4625 = $1.805555539125, at 9 + 18 = 27 decimals
      */
-    expect(body.cryptoValue.complete).toBe(true);
+    // `cryptoValue.complete` is false on purpose: POL has no verified Chainlink
+    // feed, so its piece is PRICE_UNAVAILABLE and says so honestly.
+    expect(body.cryptoValue.complete).toBe(false);
+    expect(pieceOf(body.cryptoValue, 'crypto.polygon.POL')).toMatchObject({ status: 'unreadable', reason: 'PRICE_UNAVAILABLE' });
     expect(body.cryptoValue.total.decimals).toBe(27);
     expect(body.cryptoValue.total.amount).toBe('1.891481539125');
 
@@ -466,8 +478,9 @@ describe('GET /api/wallet-balance — the buckets and the headline', () => {
     expect(body.investedValue.complete).toBe(true);
     expect(body.investedValue.total).toEqual({ raw: '820428', amount: '0.820428', decimals: 6, unit: 'USD' });
 
-    // And the headline is the sum, at the widest scale of any of them.
-    expect(body.total.complete).toBe(true);
+    // And the headline is the sum, at the widest scale of any of them — but
+    // `complete` is false because the POL piece has no verified price feed.
+    expect(body.total.complete).toBe(false);
     expect(body.total.usd.decimals).toBe(27);
     expect(body.total.usd.amount).toBe('4.711909539125');
   });
@@ -592,6 +605,14 @@ describe('a digital dollar is valued at exactly 1, with NO oracle consulted', ()
     expect(body.digitalDollarsValue.pieces.map((piece) => piece.key)).toEqual([
       'dollars.monad.USDC',
       'dollars.ethereum.USDC',
+      'dollars.base.USDC',
+      'dollars.base.USDT',
+      'dollars.arbitrum.USDC',
+      'dollars.arbitrum.USDT',
+      'dollars.optimism.USDC',
+      'dollars.optimism.USDT',
+      'dollars.polygon.USDC',
+      'dollars.polygon.USDT',
       'dollars.solana.USDC',
       'invest.aave_v3_usdc_monad',
     ]);
@@ -705,9 +726,11 @@ describe('THE BUCKETS ARE DISJOINT — a dollar in a pool is not in the wallet',
     const investedKeys = body.investedValue.pieces.map((piece) => piece.key);
     // The key sets cannot meet...
     expect(cryptoKeys.filter((key) => investedKeys.includes(key))).toEqual([]);
-    // ...and neither can the quantities behind them.
+    // ...and neither can the quantities behind them. Zeros are excluded on
+    // purpose: eight new chains report 0 native and 0 USDC/USDT, and a shared
+    // zero is four zeros meeting at a point, not a double count.
     const quantities = (pieces: Piece[]) =>
-      pieces.filter((piece) => piece.status === 'ok').map((piece) => piece.quantity?.raw);
+      pieces.filter((piece) => piece.status === 'ok' && piece.quantity?.raw !== '0').map((piece) => piece.quantity?.raw);
     const shared = quantities(body.cryptoValue.pieces).filter((raw) =>
       quantities(body.investedValue.pieces).includes(raw ?? ''),
     );
@@ -745,13 +768,23 @@ describe('THE BUCKETS ARE DISJOINT — a dollar in a pool is not in the wallet',
     expect(dollarKeys).toEqual([
       'dollars.monad.USDC',
       'dollars.ethereum.USDC',
+      'dollars.base.USDC',
+      'dollars.base.USDT',
+      'dollars.arbitrum.USDC',
+      'dollars.arbitrum.USDT',
+      'dollars.optimism.USDC',
+      'dollars.optimism.USDT',
+      'dollars.polygon.USDC',
+      'dollars.polygon.USDT',
       'dollars.solana.USDC',
       'invest.aave_v3_usdc_monad',
     ]);
 
-    // And neither can the quantities behind them.
+    // And neither can the quantities behind them. Zeros are excluded on
+    // purpose: eight new chains report 0 native and 0 USDC/USDT, and a shared
+    // zero is four zeros meeting at a point, not a double count.
     const quantities = (pieces: Piece[]) =>
-      pieces.filter((piece) => piece.status === 'ok').map((piece) => piece.quantity?.raw);
+      pieces.filter((piece) => piece.status === 'ok' && piece.quantity?.raw !== '0').map((piece) => piece.quantity?.raw);
     const shared = quantities(body.cryptoValue.pieces).filter((raw) =>
       quantities(body.digitalDollarsValue.pieces).includes(raw ?? ''),
     );
@@ -810,6 +843,14 @@ describe('NO USDC REACHES "Bitcoin & Crypto" — the bucket guarantee', () => {
     expect(dollars.pieces.map((piece) => piece.key)).toEqual([
       'dollars.monad.USDC',
       'dollars.ethereum.USDC',
+      'dollars.base.USDC',
+      'dollars.base.USDT',
+      'dollars.arbitrum.USDC',
+      'dollars.arbitrum.USDT',
+      'dollars.optimism.USDC',
+      'dollars.optimism.USDT',
+      'dollars.polygon.USDC',
+      'dollars.polygon.USDT',
       'dollars.solana.USDC',
       'invest.aave_v3_usdc_monad',
     ]);
@@ -976,7 +1017,9 @@ describe('an unreadable price makes its bucket incomplete, and is visible', () =
     expect(body.investedValue.total.raw).toBe('0');
     // The free side is untouched: a deposit nobody could read is not a wallet
     // nobody could read. The pegged free balance still sums to a real 2.0.
-    expect(body.cryptoValue.complete).toBe(true);
+    // POL has no verified feed, so the crypto bucket carries one unreadable
+    // piece and is incomplete even though the free side was read fine.
+    expect(body.cryptoValue.complete).toBe(false);
     expect(body.cryptoValue.total.amount).toBe('0.085926');
     expect(body.digitalDollarsValue.total.amount).toBe('2');
     expect(body.digitalDollarsValue.complete).toBe(false);
@@ -1017,8 +1060,10 @@ describe('an unreadable price makes its bucket incomplete, and is visible', () =
     expect(body.cryptoValue.total.raw).toBe('0');
     expect(body.digitalDollarsValue.total.raw).toBe('0');
     expect(body.total.usd.amount).toBe('0');
-    expect(body.cryptoValue.complete).toBe(true);
-    expect(body.total.complete).toBe(true);
+    // POL sin feed de precio verificado: la pieza es unreadable y el bucket incompleto.
+    expect(pieceOf(body.cryptoValue, 'crypto.polygon.POL')).toMatchObject({ status: 'unreadable' });
+    expect(body.cryptoValue.complete).toBe(false);
+    expect(body.total.complete).toBe(false);
   });
 
   it('a chain with no wallet is a known zero, not an incomplete bucket', async () => {
@@ -1037,7 +1082,8 @@ describe('an unreadable price makes its bucket incomplete, and is visible', () =
     // unreadable piece per unheld asset would make "incomplete" mean "has one
     // wallet", and the screen would say we could not read what does not exist.
     expect(body.cryptoValue.pieces.map((piece) => piece.key)).not.toContain('crypto.solana.SOL');
-    expect(body.cryptoValue.complete).toBe(true);
+    // POL declara la billetera igual: piece unreadable porque no hay feed de POL.
+    expect(body.cryptoValue.complete).toBe(false);
     expect(body.cryptoValue.total.amount).toBe('0.085926');
     // Holding nothing on Solana is still nothing: the pegged side is whole too.
     expect(body.digitalDollarsValue.complete).toBe(true);
@@ -1366,13 +1412,14 @@ describe('el saldo de origen de cada venue: `depositable`', () => {
 
     // Los tres buckets, exactos, con los origins presentes.
     expect(body.cryptoValue.total.amount).toBe('0.085926');
-    expect(body.cryptoValue.complete).toBe(true);
+    expect(body.cryptoValue.complete).toBe(false);
     expect(body.investedValue.total.amount).toBe('100');
     expect(body.investedValue.complete).toBe(true);
     expect(body.digitalDollarsValue.total.amount).toBe('104.5');
     expect(body.digitalDollarsValue.complete).toBe(true);
     expect(body.total.usd.amount).toBe('104.585926');
-    expect(body.total.complete).toBe(true);
+    // Same honest gap: polygon POL is read, but there is no verified feed for it.
+    expect(body.total.complete).toBe(false);
 
     // Y el origen no se coló como una pieza más: `investedValue` sigue siendo las
     // dos posiciones y nada más, y cada origin sigue siendo **una sola** pieza
@@ -1384,7 +1431,19 @@ describe('el saldo de origen de cada venue: `depositable`', () => {
     const freeKeys = body.digitalDollarsValue.pieces
       .filter((piece) => piece.source === 'free_wallet')
       .map((piece) => piece.key);
-    expect(freeKeys).toEqual(['dollars.monad.USDC', 'dollars.ethereum.USDC', 'dollars.solana.USDC']);
+    expect(freeKeys).toEqual([
+      'dollars.monad.USDC',
+      'dollars.ethereum.USDC',
+      'dollars.base.USDC',
+      'dollars.base.USDT',
+      'dollars.arbitrum.USDC',
+      'dollars.arbitrum.USDT',
+      'dollars.optimism.USDC',
+      'dollars.optimism.USDT',
+      'dollars.polygon.USDC',
+      'dollars.polygon.USDT',
+      'dollars.solana.USDC',
+    ]);
   });
 
   it('carries a free balance no float could hold, digit for digit', async () => {

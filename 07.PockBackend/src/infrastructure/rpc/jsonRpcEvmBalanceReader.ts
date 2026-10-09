@@ -43,6 +43,8 @@ import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy 
  * on its own; a deploy that answers is.**
  *
  * Both are overridable per environment (`MONAD_RPC_URL`, `ETHEREUM_RPC_URL`),
+ * and the new networks the same way (`BASE_RPC_URL`, `ARBITRUM_RPC_URL`,
+ * `OPTIMISM_RPC_URL`, `POLYGON_RPC_URL`),
  * because public endpoints go down and rate-limit. When one does, the chain
  * reports `error` and the screen says it could not be read — never zero.
  */
@@ -54,6 +56,10 @@ import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy 
 export interface EvmEndpointCandidates {
   readonly monad: readonly string[];
   readonly ethereum: readonly string[];
+  readonly base: readonly string[];
+  readonly arbitrum: readonly string[];
+  readonly optimism: readonly string[];
+  readonly polygon: readonly string[];
 }
 
 export const DEFAULT_EVM_ENDPOINTS: EvmEndpointCandidates = {
@@ -62,6 +68,32 @@ export const DEFAULT_EVM_ENDPOINTS: EvmEndpointCandidates = {
     'https://ethereum-rpc.publicnode.com',
     'https://rpc.mevblocker.io',
     'https://eth.drpc.org',
+  ],
+  // Verificados a mano 2026-10-08 (eth_blockNumber + eth_getBalance + balanceOf
+  // en USDC), igual que los de arriba. `polygon-rpc.com` devuelve 403 hoy, así
+  // que Polygon va por `polygon.drpc.org`.
+  // Cada red tiene varios fallbacks: desde Cloudflare Workers la latencia a
+  // RPCs públicos varía y un solo endpoint a 3s falla seguido. Con 2-3 por
+  // cadena el reader reintenta antes de dar error.
+  base: [
+    'https://mainnet.base.org',
+    'https://base.drpc.org',
+    'https://base-rpc.publicnode.com',
+  ],
+  arbitrum: [
+    'https://arb1.arbitrum.io/rpc',
+    'https://arbitrum.drpc.org',
+    'https://arbitrum-rpc.publicnode.com',
+  ],
+  optimism: [
+    'https://mainnet.optimism.io',
+    'https://optimism.drpc.org',
+    'https://optimism-rpc.publicnode.com',
+  ],
+  polygon: [
+    'https://polygon.drpc.org',
+    'https://polygon-rpc.com',
+    'https://polygon-rpc.publicnode.com',
   ],
 };
 
@@ -162,7 +194,7 @@ export interface JsonRpcEvmBalanceReaderOptions {
  * and the next candidate endpoint is a better use of the request than a fourth
  * second of waiting.
  */
-export const EVM_BALANCE_REQUEST_TIMEOUT_MS = 3_000;
+export const EVM_BALANCE_REQUEST_TIMEOUT_MS = 5_000;
 
 export const createJsonRpcEvmBalanceReader = (options: JsonRpcEvmBalanceReaderOptions = {}): EvmBalanceReader => {
   const endpoints = options.endpoints ?? DEFAULT_EVM_ENDPOINTS;

@@ -25,7 +25,7 @@
  */
 
 /** Las cadenas que el backend lee hoy. */
-export type PortfolioChainId = 'monad' | 'ethereum' | 'solana';
+export type PortfolioChainId = 'monad' | 'ethereum' | 'solana' | 'base' | 'arbitrum' | 'optimism' | 'polygon';
 
 /** Los tres estados de una cadena. Ninguno reemplaza a otro. */
 export type PortfolioChainStatus = 'ok' | 'error' | 'no_wallet';

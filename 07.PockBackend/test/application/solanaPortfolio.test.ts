@@ -250,9 +250,9 @@ describe('readPortfolio — the reads are issued together, and still decided apa
   };
 
   it('asks every chain and every asset at the same time', async () => {
-    // Six reads: three chains, two assets each. The number is the catalog's own,
-    // so a chain gaining an asset has to be counted here too.
-    const reads = together(6, () => 1n);
+    // Eighteen reads: seven chains, two or three assets each. The number is
+    // the catalog's own, so a chain gaining an asset has to be counted here too.
+    const reads = together(18, () => 1n);
     const solana: SolanaBalanceReader = {
       lamports: reads.read,
       tokenAmount: async () => 0n,
@@ -265,12 +265,12 @@ describe('readPortfolio — the reads are issued together, and still decided apa
 
     const portfolio = await readPortfolio({ wallets, evm, solana })(USER_ID, new Date(0));
 
-    expect(reads.issued).toHaveLength(6);
+    expect(reads.issued).toHaveLength(18);
     // The load-bearing assertion: every read was still outstanding when each of
     // them answered, which is what "asked at the same time" means.
-    expect(reads.overlapped).toEqual([6, 6, 6, 6, 6, 6]);
+    expect(reads.overlapped).toEqual(Array(18).fill(18));
     // And every chain still reported: overlap did not cost anybody a figure.
-    expect(portfolio.chains.map((chain) => chain.status)).toEqual(['ok', 'ok', 'ok']);
+    expect(portfolio.chains.map((chain) => chain.status)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
   });
 
   it('keeps one chain failing from taking the other two down', async () => {
@@ -306,7 +306,7 @@ describe('readPortfolio — the reads are issued together, and still decided apa
 
   it('reports the chains in the catalog order, whatever order they answered in', async () => {
     // Overlap must not reorder the response: the screen reads `chains[]` positionally.
-    const slowFirst = together(6, (index) => (index === 0 ? 0n : BigInt(index + 1)));
+    const slowFirst = together(18, (index) => (index === 0 ? 0n : BigInt(index + 1)));
     const solana: SolanaBalanceReader = {
       lamports: async () => {
         await new Promise<void>((resolve) => setTimeout(resolve, 20));
@@ -319,7 +319,7 @@ describe('readPortfolio — the reads are issued together, and still decided apa
 
     const portfolio = await readPortfolio({ wallets, evm, solana })(USER_ID, new Date(0));
 
-    expect(portfolio.chains.map((chain) => chain.chain)).toEqual(['monad', 'ethereum', 'solana']);
+    expect(portfolio.chains.map((chain) => chain.chain)).toEqual(['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'solana']);
   });
 });
 

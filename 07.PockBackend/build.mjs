@@ -121,6 +121,13 @@ const nodeBuiltins = [
 const alias = {
   '@solana/web3.js': fileURLToPath(new URL('./node_modules/@solana/web3.js/lib/index.browser.esm.js', import.meta.url)),
   'bigint-buffer': fileURLToPath(new URL('./node_modules/bigint-buffer/dist/browser.js', import.meta.url)),
+  '@domain/ports/logger': fileURLToPath(new URL('./src/domain/ports/logger.ts', import.meta.url)),
+  '@domain/portfolio/errors': fileURLToPath(new URL('./src/domain/portfolio/errors.ts', import.meta.url)),
+  '@domain/swap/uniswapV3': fileURLToPath(new URL('./src/domain/swap/uniswapV3.ts', import.meta.url)),
+  '@infrastructure/rpc/httpDeadline': fileURLToPath(new URL('./src/infrastructure/rpc/httpDeadline.ts', import.meta.url)),
+  '@domain/portfolio': fileURLToPath(new URL('./src/domain/portfolio', import.meta.url)),
+  '@domain/swap': fileURLToPath(new URL('./src/domain/swap', import.meta.url)),
+  '@infrastructure/rpc': fileURLToPath(new URL('./src/infrastructure/rpc', import.meta.url)),
 };
 
 const result = await build({

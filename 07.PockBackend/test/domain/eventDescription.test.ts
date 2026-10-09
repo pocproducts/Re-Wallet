@@ -195,7 +195,7 @@ describe('describeEvent — the amount a deposit may state', () => {
   });
 
   it('says nothing about the amount when the chain is one we do not carry', () => {
-    const unknown = { ...SOLANA_DEPOSIT, caip2: 'eip155:137', amount: '6006650' };
+    const unknown = { ...SOLANA_DEPOSIT, caip2: 'eip155:56', amount: '6006650' };
 
     const { message } = describeEvent('wallet.funds_deposited', unknown);
 

@@ -51,15 +51,11 @@ import { assetByTicker } from '../../config/assets';
 /**
  * Qué acción abre este modal.
  *
- * `'usar'` ya no es un valor posible: su menú tenía exactamente dos opciones,
- * Comprar y Vender, que son las dos caras del cambio de activo. No hay motor de
- * swap, así que la acción no se ofrece y no tiene por qué seguirEnumerada.
+ * `'usar'` abre el menú de Comprar/Vender (swap).
  *
- * Las pantallas de `use_buy` y `use_sell`, en cambio, **siguen en este archivo**
- * a propósito: son la base terminada de la Fase 2. Quedan sin puerta de entrada,
- * no muertas por accidente.
+ * `'depositar'` y `'enviar'` son las acciones de movimiento de plata.
  */
-export type ActionModalType = 'depositar' | 'enviar' | null;
+export type ActionModalType = 'depositar' | 'usar' | 'enviar' | null;
 
 interface ActionFlowModalProps {
   action: ActionModalType;
@@ -596,7 +592,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
-                  Dólares
+                  Dólares Digitales
                 </button>
 
                 <button
@@ -606,7 +602,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
-                  Crypto
+                  Activos Digitales
                 </button>
               </div>
             </div>
@@ -627,7 +623,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
-                  Dólar Digital
+                  Dólares Digitales
                 </button>
 
                 <button
@@ -637,7 +633,48 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
-                  Crypto
+                  Activos Digitales
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/*
+            ACÁ ESTABA EL MENÚ DE "USAR": "Comprar crypto" y "Vender crypto".
+
+            Sus dos opciones eran el mismo cambio de activo en dos direcciones, y
+            las dos Applican una conversión que hoy no tiene motor: no hay
+            backend que la cotice ni transacción que la ejecute. Un botón que no
+            puede hacer lo que promete no se ofrece. Las dos pantallas de compra y
+            venta NO se borraron — están más abajo, en `use_buy` y `use_sell`, y
+            son la base de la Fase 2 ya decidida. Lo que se cerró fue la puerta.
+          */}
+          {/* ACCIÓN: USAR (Comprar/Vender/Intercambiar) */}
+          {action === 'usar' && (
+            <div className="space-y-6">
+              <h2 className="text-3xl font-black font-display text-black tracking-tight mb-8">
+                ¿Qué querés hacer?
+              </h2>
+
+              <div className="space-y-4 flex flex-col items-start">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentStep('use_buy');
+                  }}
+                  className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
+                >
+                  Comprar
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentStep('use_sell');
+                  }}
+                  className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
+                >
+                  Vender
                 </button>
               </div>
             </div>
@@ -932,7 +969,10 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                         </div>
                       );
                     })()}
-                    <span className="text-base font-bold text-black">
+                    <span className="text-base font-bold text-black block">
+                      {coin.symbol}
+                    </span>
+                    <span className="text-xs text-slate-400 font-medium block">
                       {coin.name}
                     </span>
                   </div>

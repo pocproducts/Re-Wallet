@@ -83,18 +83,18 @@ describe('el catálogo de depósito — toda fila está clasificada', () => {
   });
 
   it('el mismo símbolo en dos redes es el mismo activo, con el mismo kind', () => {
-    // USDC vive en tres redes con tres direcciones distintas: es un activo, no tres.
+    // USDC vive en siete redes con siete direcciones distintas: es un activo, no siete.
     const usdc = DEPOSIT_NETWORKS.flatMap((network) =>
       network.assets
         .filter((asset) => asset.symbol === 'USDC')
         .map((asset) => ({ chain: network.chain, kind: asset.kind, token: asset.token })),
     );
-    expect(usdc.map((asset) => asset.chain)).toEqual(['monad', 'ethereum', 'solana']);
+    expect(usdc.map((asset) => asset.chain)).toEqual(['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'solana']);
     expect(new Set(usdc.map((asset) => asset.kind))).toEqual(new Set<DepositAssetKind>(['dollar']));
     // Y las direcciones NO son la misma: por eso la red es parte del activo. En
     // Solana la fila es un mint —una cuenta del Token Program— y no un contrato
     // desplegado, pero la regla es la misma: cada red declara la suya.
-    expect(new Set(usdc.map((asset) => asset.token)).size).toBe(3);
+    expect(new Set(usdc.map((asset) => asset.token)).size).toBe(7);
     // La de Solana no es una dirección EVM: usarla donde vive otra sería el bug
     // que este catálogo ya pagó una vez.
     expect(usdc.find((asset) => asset.chain === 'solana')?.token).toBe(
@@ -111,6 +111,8 @@ describe('el catálogo de depósito — toda fila está clasificada', () => {
     expect(kindOf('ETH')).toBe('crypto');
     expect(kindOf('SOL')).toBe('crypto');
     expect(kindOf('USDC')).toBe('dollar');
+    expect(kindOf('USDT')).toBe('dollar');
+    expect(kindOf('POL')).toBe('crypto');
   });
 
   it('el camino de dólares no inventa activos: hoy es USDC y nada más', () => {
@@ -120,8 +122,7 @@ describe('el catálogo de depósito — toda fila está clasificada', () => {
         .map((asset) => asset.symbol),
     );
 
-    // Lo que se recibe hoy, y no lo que se Quiere recibir: USDT y USDS entran al
-    // catálogo con su contrato verificado, no antes.
-    expect([...dollarSymbols]).toEqual(['USDC']);
+    // Lo que se recibe hoy: los dólares digitales declarados y nada más.
+    expect([...dollarSymbols].sort()).toEqual(['USDC', 'USDT']);
   });
 });

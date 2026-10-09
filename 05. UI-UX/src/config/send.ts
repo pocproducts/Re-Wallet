@@ -40,7 +40,7 @@
 
 import { checksumAddress } from 'viem';
 
-import { SOLANA_MAINNET, SUPPORTED_EVM_CHAINS, ethereumMainnet, monad } from './chains';
+import { SOLANA_MAINNET, SUPPORTED_EVM_CHAINS, arbitrumMainnet, baseMainnet, ethereumMainnet, monad, optimismMainnet, polygonMainnet } from './chains';
 import type { DepositChainId } from '../types/deposit.types';
 
 /**
@@ -99,6 +99,10 @@ type ConfiguredChainId = (typeof SUPPORTED_EVM_CHAINS)[number]['id'];
 const CHAIN_KEY_BY_ID = {
   [ethereumMainnet.id]: 'ethereum',
   [monad.id]: 'monad',
+  [baseMainnet.id]: 'base',
+  [arbitrumMainnet.id]: 'arbitrum',
+  [optimismMainnet.id]: 'optimism',
+  [polygonMainnet.id]: 'polygon',
 } as const satisfies Readonly<Record<ConfiguredChainId, SendChainId>>;
 
 /** Las redes EVM en las que se puede firmar un envío, en el orden de la configuración. */

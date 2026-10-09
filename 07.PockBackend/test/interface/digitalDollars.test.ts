@@ -202,6 +202,15 @@ const get = (app: ReturnType<typeof harness>['app'], query = '') =>
 const oneFiftyAndAHalf: Record<string, string> = {
   [`monad:${MONAD_USDC}:${EVM_ADDRESS}`]: '1500000',
   [`ethereum:${ETHEREUM_USDC}:${EVM_ADDRESS}`]: '500000',
+  // Las cuatro nuevas leen 0: sin clave explícita, el lector de prueba falla la red entera.
+  [`base:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913:${EVM_ADDRESS}`]: '0',
+  [`arbitrum:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:${EVM_ADDRESS}`]: '0',
+  [`optimism:0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85:${EVM_ADDRESS}`]: '0',
+  [`polygon:0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359:${EVM_ADDRESS}`]: '0',
+  [`base:0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2:${EVM_ADDRESS}`]: '0',
+  [`arbitrum:0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9:${EVM_ADDRESS}`]: '0',
+  [`optimism:0x94b008aA00579c1307B0EF2c499aD98a8ce58e58:${EVM_ADDRESS}`]: '0',
+  [`polygon:0xc2132D05D31c914a87C6611C10748AEb04B58e8F:${EVM_ADDRESS}`]: '0',
 };
 
 interface TotalBody {
@@ -254,6 +263,10 @@ describe('GET /api/digital-dollars — happy path', () => {
     expect(body.components.map((component) => component.key)).toEqual([
       'free_usdc_monad',
       'free_usdc_ethereum',
+      'free_usdc_base',
+      'free_usdc_arbitrum',
+      'free_usdc_optimism',
+      'free_usdc_polygon',
       'free_usdc_solana',
       'aave_v3_usdc_monad',
     ]);
@@ -298,9 +311,9 @@ describe('GET /api/digital-dollars — happy path', () => {
     expect(text).not.toContain('SOL');
     expect(text).not.toContain('price');
     const body = JSON.parse(text) as TotalBody;
-    // Three before the SPL read, four now: the Solana USDC component is the
-    // fourth, and it exists because the balance is read.
-    expect(body.components).toHaveLength(4);
+    // Three before the SPL read, four now, eight with the four new chains: one
+    // free_usdc_<chain> component per chain the catalog declares USDC on.
+    expect(body.components).toHaveLength(8);
     expect(body.components.map((component) => component.key)).toContain('free_usdc_solana');
   });
 
@@ -308,6 +321,14 @@ describe('GET /api/digital-dollars — happy path', () => {
     const empty: Record<string, string> = {
       [`monad:${MONAD_USDC}:${EVM_ADDRESS}`]: '0',
       [`ethereum:${ETHEREUM_USDC}:${EVM_ADDRESS}`]: '0',
+      [`base:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913:${EVM_ADDRESS}`]: '0',
+      [`arbitrum:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:${EVM_ADDRESS}`]: '0',
+      [`optimism:0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85:${EVM_ADDRESS}`]: '0',
+      [`polygon:0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359:${EVM_ADDRESS}`]: '0',
+      [`base:0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2:${EVM_ADDRESS}`]: '0',
+      [`arbitrum:0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9:${EVM_ADDRESS}`]: '0',
+      [`optimism:0x94b008aA00579c1307B0EF2c499aD98a8ce58e58:${EVM_ADDRESS}`]: '0',
+      [`polygon:0xc2132D05D31c914a87C6611C10748AEb04B58e8F:${EVM_ADDRESS}`]: '0',
     };
     const { app } = harness({ evm: evmReader(empty), pool: fakePool({ aTokenBalance: 0n }) });
 

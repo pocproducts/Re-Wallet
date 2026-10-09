@@ -625,7 +625,9 @@ describe('the second venue in the composed balance', () => {
     // nine decimals against an eighteen-decimal feed, so the headline is at 27 and
     // the Kamino value at 25 was scaled up to it exactly.
     expect(balance.investedValue.complete).toBe(true);
-    expect(balance.total.complete).toBe(true);
+    // POL tiene lector pero no feed de precio verificado: la pieza queda
+    // PRICE_UNAVAILABLE y el total declara incompleto con honestidad.
+    expect(balance.total.complete).toBe(false);
     expect(balance.investedValue.total.decimals).toBe(25);
     expect(balance.total.usd.decimals).toBe(27);
 
@@ -708,7 +710,8 @@ describe('the second venue in the composed balance', () => {
 
     expect(balance.investedValue.pieces.map((piece) => piece.key)).toEqual([AAVE_V3_USDC_MONAD_KEY]);
     expect(balance.investedValue.total.raw).toBe('820428');
-    expect(balance.total.complete).toBe(true);
+    // Mismo detalle honesto: POL se lee, su pieza es PRICE_UNAVAILABLE.
+    expect(balance.total.complete).toBe(false);
   });
 });
 /* ── The one yield figure, across both venues ─────────────────────────────── */

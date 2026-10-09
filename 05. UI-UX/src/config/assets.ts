@@ -139,6 +139,13 @@ export const ASSETS: readonly Asset[] = [
     iconBg: 'bg-[#7B3FE4]',
     decimals: 18,
   },
+  {
+    ticker: 'POL',
+    name: 'Polygon',
+    glyph: 'P',
+    iconBg: 'bg-[#8247E5]',
+    decimals: 18,
+  },
 ] as const;
 
 /** Los tickers que existen, derivados de la lista y no maintained aparte. */

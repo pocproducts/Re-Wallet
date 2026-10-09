@@ -1,19 +1,9 @@
 import React, { useMemo, useState } from 'react';
 
+import { Bug, Bell, Eye, EyeOff, ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
+import { UserProfileData } from '../../types';
 import { splitUsdDisplay } from '../../services/portfolio';
 import { formatVenueRate } from '../../services/walletBalance';
-import { usePortfolio, type PortfolioView } from '../../hooks/usePortfolio';
-import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
-import {
-  Bug,
-  Bell,
-  Eye,
-  EyeOff,
-  ArrowDown,
-  ArrowUp,
-  ChevronRight,
-} from 'lucide-react';
-import { UserProfileData } from '../../types';
 
 /**
  * El lugar de Aave V3 en Monad, por la **key** que publica el backend.
@@ -53,6 +43,7 @@ interface WalletViewProps {
    * la Fase 2, que ya está decidida; sólo se les cerró la puerta de entrada.
    */
   onOpenAction?: (action: 'depositar' | 'enviar') => void;
+  onOpenChargeModal?: () => void;
   onOpenSearch?: () => void;
   onOpenScanner?: () => void;
   onOpenBugModal?: () => void;
@@ -74,6 +65,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
   onOpenProfile,
   onNavigateToInvestments,
   onOpenAction,
+  onOpenChargeModal,
   onOpenSearch,
   onOpenScanner,
   onOpenBugModal,
@@ -311,17 +303,10 @@ export const WalletView: React.FC<WalletViewProps> = ({
             </div>
 
             {/*
-              Dos botones, no tres.
-
-              La fila era `grid-cols-3` porque había tres acciones. Sacado "Usar"
-              —que era la puerta a Comprar y Vender, y no hay motor de swap— la
-              grilla queda en dos columnas y el hueco que dejó la tercera no se
-              rellena con nada: las dos acciones que quedan miden lo mismo y
-              siguen leyéndose como una fila de acciones, no como dos botones
-              descolgados. No se rediseña la fila; se le sacan las tres
-              columnas que ya no tiene contenido.
+              Tres acciones: Depositar, Usar ($), Enviar.
+              El botón Usar es redondo, fondo negro, símbolo $ en lima.
             */}
-            <div className="grid grid-cols-2 gap-3 pt-4">
+            <div className="grid grid-cols-3 gap-3 pt-4">
               {/* Depositar */}
               <div className="flex flex-col items-center">
                 <button
@@ -336,17 +321,19 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 </span>
               </div>
 
-              {/*
-                ACÁ ESTABA "USAR", LA PUERTA A LAS PANTALLAS DE COMPRA Y VENTA.
-
-                No se borran esas pantallas: quedan en `ActionFlowModal`
-                (`use_buy` y `use_sell`), que son la base de la Fase 2 ya
-                decidida —1inch para EVM, Jupiter para Solana— y están
-                terminadas a falta del motor. Lo que se sacó fue la puerta,
-                porque una acción que no se puede ejecutar no se ofrece. Cuando
-                el motor exista, la puerta vuelve y las pantallas siguen ahí,
-                con el mismo catálogo y los mismos saldos.
-              */}
+              {/* Usar: fondo negro, símbolo $ en lima */}
+              <div className="flex flex-col items-center">
+                <button
+                  onClick={() => onOpenAction?.('usar')}
+                  type="button"
+                  className="w-14 h-14 rounded-full bg-black flex items-center justify-center text-[#ccff00] shadow-md hover:bg-slate-900 active:scale-90 transition-transform cursor-pointer"
+                >
+                  <span className="text-2xl font-black">$</span>
+                </button>
+                <span className="text-xs font-semibold text-black mt-2">
+                  Usar
+                </span>
+              </div>
 
               {/* Enviar */}
               <div className="flex flex-col items-center">

@@ -26,5 +26,16 @@
   // PRIVY_APP_ID, PRIVY_APP_SECRET, DATABASE_URL, SESSION_SECRET.
   "routes": [{ "pattern": "app-dev.rewallet.win", "custom_domain": true }],
 
-  "observability": { "enabled": false }
+  "observability": { "enabled": false },
+
+  // RPC endpoints (contienen API key de Alchemy — para producción considerar wrangler secret put)
+  "vars": {
+    "ETHEREUM_RPC_URL": "https://eth-mainnet.g.alchemy.com/v2/alch_B0r4hPucJhGprG0iz22YJ",
+    "BASE_RPC_URL": "https://base-mainnet.g.alchemy.com/v2/alch_B0r4hPucJhGprG0iz22YJ",
+    "ARBITRUM_RPC_URL": "https://arb-mainnet.g.alchemy.com/v2/alch_B0r4hPucJhGprG0iz22YJ",
+    "OPTIMISM_RPC_URL": "https://opt-mainnet.g.alchemy.com/v2/alch_B0r4hPucJhGprG0iz22YJ",
+    "POLYGON_RPC_URL": "https://polygon-mainnet.g.alchemy.com/v2/alch_B0r4hPucJhGprG0iz22YJ",
+    "SOLANA_RPC_URL": "https://solana-mainnet.g.alchemy.com/v2/alch_B0r4hPucJhGprG0iz22YJ",
+    "MONAD_POOL_RPC_URL": "https://rpc.monad.xyz"
+  }
 }
