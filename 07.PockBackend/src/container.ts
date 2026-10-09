@@ -66,10 +66,10 @@ import {
   DEFAULT_KAMINO_API_URL,
 } from './infrastructure/rpc/kaminoSharePriceFeed.http';
 import { createHttpSolanaTransferPreparer } from './infrastructure/rpc/solanaTransferPreparer.http';
-import { createUniswapV3MonadSwapProvider } from './infrastructure/swap/uniswapV3MonadSwap';
 import { createSwapUseCase } from './application/swap/swapUseCase';
 import { createSwapRoutes } from './interface/http/routes/swap';
-import { createSwapProviderFactory } from './infrastructure/swap/swapProviderFactory';
+import { createUniswapTradingApiAdapter } from './infrastructure/swap/adapters/uniswapTradingApiAdapter';
+import type { SwapProviderFactory } from './infrastructure/swap/swapProviderFactory';
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
 import { createApp } from './interface/http/app';
 import type { Logger } from './domain/ports/logger';
@@ -117,6 +117,15 @@ export interface Config {
    * the shares are read on chain, and the position is never written anywhere.
    */
   readonly kaminoApiUrl?: string;
+  /**
+   * La API key del Trading API de Uniswap. Sin ella el swap no puede cotizar:
+   * el endpoint responde 401 a cualquier pedido sin `x-api-key`.
+   *
+   * Opcional a propósito — para que `readConfig` no rompa el arranque de un
+   * despliegue que todavia no la tiene — pero sin ella el provider devuelve
+   * `RPC_UNAVAILABLE`, que es "no pude preguntar" y no "no hay mercado".
+   */
+  readonly uniswapApiKey?: string;
 }
 
 /** The one place that knows which environment variables exist. */
@@ -155,6 +164,7 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
     solanaRpcUrl: readEnv(env, 'SOLANA_RPC_URL') || DEFAULT_SOLANA_RPC_URL,
     monadPoolRpcUrl: readEnv(env, 'MONAD_POOL_RPC_URL') || firstCandidate(DEFAULT_POOL_ENDPOINTS),
     kaminoApiUrl: readEnv(env, 'KAMINO_API_URL') || DEFAULT_KAMINO_API_URL,
+    uniswapApiKey: readEnv(env, 'UNISWAP_API_KEY'),
   };
 };
 
@@ -293,6 +303,35 @@ export const buildApp = (config: Config, log: Logger) => {
     kamino: kaminoDeposits,
   });
 
+  /*
+   * Swap: cotización y ejecución de conversiones entre activos.
+   *
+   * El provider que responde es el **Trading API de Uniswap**, no el Quoter
+   * on-chain: Monad no tiene QuoterV2 desplegado, y `quoteExactInputSingle`
+   * devuelve `0x` a cualquier monto. El API corre el mismo ruteo que el web app
+   * y devuelve la transacción ya armada para que la firme la persona.
+   *
+   * Sin `UNISWAP_API_KEY` el provider no dice "no hay mercado": dice "no pude
+   * preguntar", y el caso de uso lo traduce a `RPC_UNAVAILABLE`.
+   *
+   * Se construye **una sola vez** y se comparte entre el caso de uso y las
+   * rutas. Antes se armaban tres instancias distintas, y las rutas usaban un
+   * provider que el caso de uso nunca veía.
+   */
+  const swapProvider = createUniswapTradingApiAdapter({
+    apiKey: config.uniswapApiKey,
+  });
+
+  const swapProviderFactory: SwapProviderFactory = {
+    getProviderForPair: async () => swapProvider,
+    getSupportedPairs: async () => swapProvider.getSupportedPairs(),
+    getProvider: () => swapProvider,
+  };
+
+  const swapUseCase = createSwapUseCase({ swapProviderFactory, log });
+
+  const swapRoutes = createSwapRoutes({ sessions, swapUseCase, log });
+
   return createApp({
     mint: mintSession({
       verify,
@@ -359,24 +398,8 @@ export const buildApp = (config: Config, log: Logger) => {
      * tablas que ya existen; no se crea nada acá.
      */
     prepareSend: sendFlow,
-    /*
-     * Swap: cotización y ejecución de conversiones entre activos.
-     *
-     * Usa el factory agnóstico que resuelve el DEX correcto según el par.
-     */
-    swapProviderFactory: createSwapProviderFactory({
-      rpcUrlOverrides: {
-        monad: config.monadRpcUrl,
-      },
-    }),
-    swapUseCase: createSwapUseCase({
-      swapProviderFactory: createSwapProviderFactory({
-        rpcUrlOverrides: {
-          monad: config.monadRpcUrl,
-        },
-      }),
-      log,
-    }),
+    swapUseCase,
+    swapRoutes,
     /*
      * The deposit catalog and the addresses that go with it, read through the
      * **same** store. One store, una sola fuente de dirección: si esta ruta
@@ -411,16 +434,6 @@ export const buildApp = (config: Config, log: Logger) => {
       log,
     }),
     readNotifications: readNotifications({ store: webhookEvents, log }),
-    swapRoutes: createSwapRoutes({
-      sessions,
-      swapUseCase: createSwapUseCase({
-        swapProvider: createUniswapV3MonadSwapProvider({
-          rpcUrl: config.monadRpcUrl,
-        }),
-        log,
-      }),
-      log,
-    }),
     log,
   });
 };

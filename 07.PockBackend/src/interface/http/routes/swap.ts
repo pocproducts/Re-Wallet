@@ -22,8 +22,8 @@
 import { Hono } from 'hono';
 
 import type { SwapUseCase } from '../../application/swap/swapUseCase';
-import type { Logger } from '@domain/ports/logger';
-import { noopLogger } from '@domain/ports/logger';
+import type { Logger } from '../../../domain/ports/logger';
+import { noopLogger } from '../../../domain/ports/logger';
 import { readSessionCookie, SESSION_COOKIE_NAME } from '../cookie';
 import { UNAUTHENTICATED_BODY } from './auth';
 

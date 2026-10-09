@@ -38,14 +38,56 @@ export const UNISWAP_V3_MONAD_ADDRESSES = {
   /** Factory V3 — crea pools, consulta pool por token pair. */
   FACTORY_V3: '0x204faca1764b154221e35c0d20abb3c525710498',
 
-  /** Universal Router — `exactInputSingle`, `exactOutputSingle`, `multicall`. */
-  ROUTER_V3: '0x0d97dc33264bfc1c226207428a79b26757fb9dc3',
+  /**
+   * Universal Router **2.1.2** — el que usa el Trading API.
+   *
+   * ── Por qué este y no el de la página de deployments ───────────────────────
+   *
+   * Hay dos Universal Routers vivos en Monad y no son el mismo contrato:
+   *
+   * - `0x0d97dc33264bfc1c226207428a79b26757fb9dc3` (19.499 bytes) — el de la
+   *   página de deployments de Uniswap v3.
+   * - `0xa6CE4F10d83dBdDAc17E68e1837ca9cE6a1b596e` (24.380 bytes) — el 2.1.2
+   *   que lista "Supported Chains & Tokens" de la Trading API.
+   *
+   * Cuando el Trading API arma la transacción, la arma apuntando al 2.1.2. Si
+   * se guardara el otro para reconstruir el calldata a mano, la persona
+   * firmaría contra un contrato distinto del que el API fotografo.
+   */
+  UNIVERSAL_ROUTER: '0xa6CE4F10d83dBdDAc17E68e1837ca9cE6a1b596e',
 
-  /** Quoter V2 — `quoteExactInputSingle`, `quoteExactOutputSingle`. */
-  QUOTER_V2: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+  /**
+   * Universal Router de la página de deployments de Uniswap v3.
+   *
+   * Se conserva porque sirve para leer pools y cotizar contra la Factory. No
+   * debe usarse como destino de la transaccion de un swap ejecutado por el API.
+   */
+  ROUTER_V3_DEPLOYMENTS: '0x0d97dc33264bfc1c226207428a79b26757fb9dc3',
 
   /** Position Manager (NFT) — para mint/collect/burn positions. */
   POSITION_MANAGER: '0xC36442b4a4522E871399CD717aBDD847Ab11FE88',
+} as const;
+
+/**
+ * ── Por qué no hay un Quoter ────────────────────────────────────────────────
+ *
+ * La documentación oficial de Uniswap lista cuatro contratos para Monad
+ * (Factory, Universal Router, Multicall, TickLens). **El Quoter no esta
+ * entre ellos.** El `0x61fFE014bA17989E743c5F6cB21bF9697530B21e` canonico tiene
+ * bytecode y expone `0x38571708`, pero `quoteExactInputSingle` devuelve `0x` a
+ * 1, 10 y 100 USDC: es un stub en esta cadena.
+ *
+ * Por eso la cotizacion no va contra un Quoter on-chain sino contra el Trading
+ * API, que corre la misma logica de ruteo del web app de Uniswap y devuelve la
+ * transaccion ya armada. Es la unica via que produce un `amountOut` real.
+ */
+export const UNISWAP_TRADING_API = {
+  /** Base del endpoint de cotizacion. */
+  BASE_URL: 'https://trade-api.gateway.uniswap.org/v1',
+  /** Header donde viaja la API key. */
+  API_KEY_HEADER: 'x-api-key',
+  /** El header de la API key es obligatorio: sin el responde 401. */
+  UNAUTHENTICATED_STATUS: 401,
 } as const;
 
 /**

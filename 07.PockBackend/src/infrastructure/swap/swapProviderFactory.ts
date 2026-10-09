@@ -6,7 +6,7 @@
  */
 
 import { BalanceReadError } from '../../domain/portfolio/errors';
-import type { SwapProvider, SwapPairInfo, SwapQuote, SwapExecutionInput, SwapExecutionResult, SwapFailure } from '../../domain/ports/swap-provider';
+import type { SwapProvider, SwapPairInfo } from '../../domain/ports/swap-provider';
 import type { DepositChain } from '../../domain/deposit/catalog';
 import { DEX_REGISTRY, getDexConfig, findPairInRegistry, getSupportedPairsForChain, type DexConfig } from './dexRegistry';
 import { createUniswapV3Adapter, type UniswapV3ChainConfig } from './adapters/uniswapV3Adapter';
@@ -38,8 +38,14 @@ const resolveTokenAddress = (symbol: string): string => {
 };
 
 type SwapProviderFactory = {
-  readonly getProviderForPair: (sourceSymbol: string, destinationSymbol: string, chain: DepositChain) => Promise<SwapProvider>;
-  readonly getSupportedPairs: (chain: DepositChain) => Promise<readonly SwapPairInfo[]>;
+  readonly getProviderForPair: (
+    sourceSymbol: string,
+    destinationSymbol: string,
+    chain: DepositChain,
+  ) => Promise<SwapProvider>;
+  readonly getSupportedPairs: (
+    chain: DepositChain,
+  ) => Promise<readonly SwapPairInfo[]>;
   readonly getProvider: (dexId: string, chain: DepositChain) => SwapProvider | null;
 };
 
