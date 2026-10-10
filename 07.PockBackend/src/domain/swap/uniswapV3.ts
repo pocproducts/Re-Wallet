@@ -200,7 +200,26 @@ export const FEE_TIERS = {
 } as const;
 
 /**
- * Verifica si un fee tier es válido.
+ * Los cuatro fee tiers de Uniswap V3, como union de literales numericos.
+ *
+ * `FEE_TIERS` es `as const`, asi que sus valores ya son literales; esto solo les
+ * da nombre. Sirve para que un type guard pueda estrechar `number` (que es lo
+ * que viajan `SwapPairInfo.feeTier` y `DexConfig.feeTiers`) a este conjunto.
  */
-export const isValidFeeTier = (fee: number): fee is (typeof FEE_TIERS)[keyof typeof FEE_TIERS] =>
-  Object.values(FEE_TIERS).includes(fee);
+export type UniswapFeeTier = (typeof FEE_TIERS)[keyof typeof FEE_TIERS];
+
+/**
+ * Verifica si un fee tier es válido.
+ *
+ * Acepta `number` a propósito — todo el dominio de swap modela el fee tier como
+ * `number`, y un caller no tiene por que tener un literal a mano para poder
+ * validar. Lo que devuelve es el estrechamiento: despues del guard, `fee` es uno
+ * de los cuatro valores.
+ *
+ * Por eso compara con `some` y no con `includes`: sobre un objeto `as const`,
+ * `Object.values` devuelve un array tipado con los literales, y `includes`
+ * exige que el argumento ya sea uno de ellos — que es justo lo que todavia no
+ * sabemos cuando estamos por decidir si lo es.
+ */
+export const isValidFeeTier = (fee: number): fee is UniswapFeeTier =>
+  Object.values(FEE_TIERS).some((tier) => tier === fee);

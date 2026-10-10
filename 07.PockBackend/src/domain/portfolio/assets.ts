@@ -126,6 +126,16 @@ export const ASSETS_BY_CHAIN: Readonly<Record<PortfolioChain, readonly Portfolio
     { symbol: 'USDC', decimals: 6, token: USDC_ADDRESS_BY_CHAIN.optimism },
     { symbol: 'USDT', decimals: 6, token: USDT_ADDRESS_BY_CHAIN.optimism },
   ],
+  /*
+   * Polygon declara solo USDC y USDT, y la ausencia de `POL` es la corrección,
+   * no un olvido. Ningún otro chain EVM omite su nativo: acá el nativo no tiene
+   * saldo legible verificado, así que no se ofrece.
+   *
+   * La consecuencia no es cosmetics. Un activo en el catálogo es un activo que
+   * la app lee, muestra y ofrece enviar; agregar `POL` acá lo devolvería sin
+   * que nadie haya comprobado que la lectura funciona. Si algún día se verifica,
+   * el camino es probarlo primero y recién después agregar la fila.
+   */
   polygon: [
     { symbol: 'USDC', decimals: 6, token: USDC_ADDRESS_BY_CHAIN.polygon },
     { symbol: 'USDT', decimals: 6, token: USDT_ADDRESS_BY_CHAIN.polygon },

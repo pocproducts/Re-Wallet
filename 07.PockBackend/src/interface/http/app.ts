@@ -29,6 +29,9 @@ import type { PayPaymentRequest } from '../../application/payment-requests/payPa
 import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
 import type { IngestPrivyWebhook } from '../../application/webhooks/ingestPrivyWebhook';
 import type { ReadNotifications } from '../../application/webhooks/readNotifications';
+import type { ReadPrivyMetrics } from '../../application/webhooks/readPrivyMetrics';
+import type { ReadContacts } from '../../application/contacts/readContacts';
+import { createContactsRoutes } from './routes/contacts';
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 import type { SessionCodec } from '../../domain/ports/session-codec';
@@ -47,6 +50,9 @@ import { createWalletBalanceRoutes } from './routes/walletBalance';
 import { createSwapRoutes } from './routes/swap';
 import { createWalletsRoutes } from './routes/wallets';
 import { createWebhookRoutes } from './routes/webhooks';
+import { createMetricsRoutes } from './routes/metrics';
+import { createFeedbackRoutes } from './routes/feedback';
+import type { SubmitFeedback } from '../../application/feedback/submitFeedback';
 
 export interface AppDeps {
   readonly mint: MintSession;
@@ -134,6 +140,15 @@ export interface AppDeps {
   /** Absent when no signing secret is wired: the intake is then not there. */
   readonly ingestWebhook?: IngestPrivyWebhook;
   readonly readNotifications?: ReadNotifications;
+  /** Absent when the webhook store is not wired: the metrics route is then not there. */
+  readonly readMetrics?: ReadPrivyMetrics;
+  /** Absent when the contacts store is not wired: the route is then not there. */
+  readonly readContacts?: ReadContacts;
+  /**
+   * Absent when no GitHub token is configured: the feedback route is then not
+   * there — a report button that answered 500 would lie about having a tracker.
+   */
+  readonly submitFeedback?: SubmitFeedback;
   readonly cookieName?: string;
   readonly now?: () => Date;
   readonly log?: Logger;
@@ -330,6 +345,37 @@ export const createApp = (deps: AppDeps) => {
    * *not* mounted without it is an endpoint that would accept anything anybody on
    * the internet sends.
    */
+  if (deps.readMetrics) {
+    // Counts over the whole table, nothing per person: a status-page fact, public by nature.
+    app.route('/api/metrics/privy', createMetricsRoutes({ readMetrics: deps.readMetrics }));
+  }
+
+  if (deps.submitFeedback) {
+    app.route(
+      '/api/feedback',
+      createFeedbackRoutes({
+        sessions: deps.sessions,
+        submit: deps.submitFeedback,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
+  if (deps.readContacts) {
+    app.route(
+      '/api/contacts',
+      createContactsRoutes({
+        sessions: deps.sessions,
+        readContacts: deps.readContacts,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
   if (deps.ingestWebhook) {
     app.route('/api/webhooks/privy', createWebhookRoutes({ ingest: deps.ingestWebhook, now: deps.now, log }));
   }

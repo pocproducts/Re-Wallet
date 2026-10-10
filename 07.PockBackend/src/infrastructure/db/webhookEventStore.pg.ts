@@ -75,8 +75,8 @@
  * how much, on which chain, in which asset. Every other field of it stays
  * unreadable from the feed, and none of it reaches the item.
  */
-import type { PersonWebhookEvent, WebhookEventStore } from '../../domain/ports/webhook-event-store';
-import { PERSON_WALLET_ID_PATHS, personDidContainments } from '../../domain/webhooks/attribution';
+import type { PersonWebhookEvent, PrivyMetrics, WebhookEventStore } from '../../domain/ports/webhook-event-store';
+import { PERSON_DID_PATHS, PERSON_WALLET_ID_PATHS, personDidContainments } from '../../domain/webhooks/attribution';
 import type { Database } from './client';
 
 interface EventRow {
@@ -168,5 +168,50 @@ export const createPostgresWebhookEventStore = (db: Database): WebhookEventStore
       createdAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
       payload: row.payload ?? {},
     }));
+  },
+
+  async metrics({ now }) {
+    /*
+     * One statement, three aggregates. The event-type counts are trivial; the
+     * 24-hour distinct-person count reads the DID out of the jsonb payload along
+     * the **same paths the intake attributes with** (`PERSON_DID_PATHS`) — a
+     * second, hand-written list would silently disagree with ingestion the day
+     * a path is added there. `payload #>> '{a,b}'` resolves a nested path to
+     * text, yielding NULL when the path is absent, so `COALESCE` over all known
+     * paths is the DID or NULL, and `COUNT(DISTINCT ...)` ignores NULLs.
+     *
+     * The window edge is a bound parameter, not `now()` in the SQL: the caller
+     * owns the clock, and a test can stand still.
+     */
+    const didExpressions = PERSON_DID_PATHS.map(
+      (path) => `payload #>> '{${path.split('.').join(',')}}'`,
+    );
+    const didExtraction = `COALESCE(${didExpressions.join(', ')})`;
+
+    const rows = (await db.query(
+      `
+        SELECT
+          COUNT(*) FILTER (WHERE event_type = 'wallet.created')::int AS wallets_created,
+          COUNT(*) FILTER (WHERE event_type = 'user.signed_in')::int AS sign_ins,
+          (
+            SELECT COUNT(DISTINCT did)::int
+              FROM (
+                SELECT ${didExtraction} AS did
+                  FROM rewallet.webhook_events
+                 WHERE created_at >= $1::timestamptz - INTERVAL '24 hours'
+              ) recent
+          ) AS active_users_24h
+          FROM rewallet.webhook_events
+      `,
+      [now],
+    )) as unknown as { wallets_created: number; sign_ins: number; active_users_24h: number }[];
+
+    const row = rows[0] ?? { wallets_created: 0, sign_ins: 0, active_users_24h: 0 };
+    const metrics: PrivyMetrics = {
+      walletsCreated: row.wallets_created,
+      activeUsers24h: row.active_users_24h,
+      signIns: row.sign_ins,
+    };
+    return metrics;
   },
 });

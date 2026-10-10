@@ -162,6 +162,11 @@ describe('GET /api/portfolio — happy path', () => {
      * USDC de Monad no es USDC de Ethereum. Con una sola direccion para las dos,
      * la llamada de Ethereum caia en una direccion sin contrato y la cadena
      * entera se declaraba ilegible.
+     *
+     * Polygon declares **no native coin**: el nativo de Polygon no tiene saldo
+     * legible verificado, asi que no se ofrece (ver `depositCatalog.test.ts`).
+     * The absence is the correction, so there is no `native:polygon:` read here,
+     * and this exact list is where that absence stays pinned.
      */
     expect(evm.asked).toEqual([
       `native:monad:${EVM_ADDRESS}`,
@@ -177,7 +182,6 @@ describe('GET /api/portfolio — happy path', () => {
       `native:optimism:${EVM_ADDRESS}`,
       `erc20:optimism:0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85:${EVM_ADDRESS}`,
       `erc20:optimism:0x94b008aA00579c1307B0EF2c499aD98a8ce58e58:${EVM_ADDRESS}`,
-      `native:polygon:${EVM_ADDRESS}`,
       `erc20:polygon:0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359:${EVM_ADDRESS}`,
       `erc20:polygon:0xc2132D05D31c914a87C6611C10748AEb04B58e8F:${EVM_ADDRESS}`,
     ]);

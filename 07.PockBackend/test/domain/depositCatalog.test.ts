@@ -112,7 +112,15 @@ describe('el catálogo de depósito — toda fila está clasificada', () => {
     expect(kindOf('SOL')).toBe('crypto');
     expect(kindOf('USDC')).toBe('dollar');
     expect(kindOf('USDT')).toBe('dollar');
-    expect(kindOf('POL')).toBe('crypto');
+    // OUSD es un stablecoin que rinde solo: mismo camino de dólares, no otra categoría.
+    expect(kindOf('OUSD')).toBe('dollar');
+    /*
+     * `POL` ya no está en el catálogo: el nativo de Polygon no tiene saldo
+     * legible verificado, así que no se ofrece. La ausencia es la corrección —
+     * una fila que promete una cifra que no se puede leer es peor que no
+     * tenerla.
+     */
+    expect(kindOf('POL')).toBeUndefined();
   });
 
   it('el camino de dólares no inventa activos: los declarados y nada más', () => {

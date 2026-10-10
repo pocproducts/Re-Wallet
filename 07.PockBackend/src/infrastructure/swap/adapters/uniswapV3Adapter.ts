@@ -5,7 +5,7 @@
  * para cualquier cadena donde Uniswap V3 esté desplegado.
  */
 
-import { BalanceReadError } from '@domain/portfolio/errors';
+import { BalanceReadError } from '../../../domain/portfolio/errors';
 import type {
   SwapProvider,
   SwapPairInfo,
@@ -13,19 +13,16 @@ import type {
   SwapExecutionInput,
   SwapExecutionResult,
   SwapFailure,
-} from '../../domain/ports/swap-provider';
-import type { DepositChain } from '../../domain/deposit/catalog';
-import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy } from '@infrastructure/rpc/httpDeadline';
+} from '../../../domain/ports/swap-provider';
+import type { DepositChain } from '../../../domain/deposit/catalog';
+import { isDeadlineExceeded, transportDetail, withDeadline, type DeadlinePolicy } from '../../rpc/httpDeadline';
 import {
   encodeQuoteExactInputSingle,
   decodeQuoteExactInputSingle,
   applySlippage,
   FEE_TIERS,
   QUOTE_EXACT_INPUT_SINGLE_SELECTOR,
-  encodeAddress,
-  encodeUint256,
-  encodeUint160,
-} from '@domain/swap/uniswapV3';
+} from '../../../domain/swap/uniswapV3';
 
 // El archivo que define este tipo es este mismo: se importa a sí mismo por
 // nombre cuando otro módulo lo necesita, no desde una ruta interna del dominio.

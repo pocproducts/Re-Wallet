@@ -5,8 +5,7 @@
  * y devuelve el adapter correspondiente ya configurado.
  */
 
-import { BalanceReadError } from '../../domain/portfolio/errors';
-import type { SwapProvider, SwapPairInfo } from '../../domain/ports/swap-provider';
+import type { SwapProvider, SwapPairInfo, SwapFailure } from '../../domain/ports/swap-provider';
 import type { DepositChain } from '../../domain/deposit/catalog';
 import { DEX_REGISTRY, getDexConfig, findPairInRegistry, getSupportedPairsForChain, type DexConfig } from './dexRegistry';
 import { createUniswapV3Adapter, type UniswapV3ChainConfig } from './adapters/uniswapV3Adapter';
@@ -37,7 +36,37 @@ const resolveTokenAddress = (symbol: string): string => {
   return address;
 };
 
-type SwapProviderFactory = {
+/**
+ * Un par que el registry no conoce no es un fallo de RPC.
+ *
+ * `BalanceReadError` esta acotado a proposito a tres razones de transporte
+ * (`RPC_UNAVAILABLE`, `RPC_MALFORMED_RESPONSE`, `RPC_REJECTED`) y agrandarlo con
+ * `PAIR_NOT_SUPPORTED`eria mentir sobre ese tipo: pasaria a decir que un par no
+ * soportado es una lectura de balance que fallo. El vocabulario de swap ya
+ * existe y es `SwapFailure`, asi que el error de este archivo lo usa.
+ *
+ * El `detail` no va en el mensaje por el mismo motivo que en `BalanceReadError`:
+ * es para el log, nunca para el navegador.
+ */
+export class SwapProviderError extends Error {
+  readonly reason: SwapFailure;
+
+  constructor(reason: SwapFailure, detail: string, options?: { cause?: unknown }) {
+    super(`Swap provider failed (${reason}): ${detail}`, options);
+    this.name = 'SwapProviderError';
+    this.reason = reason;
+  }
+}
+
+/**
+ * El tipo del factory, exportado.
+ *
+ * El container lo usa para anotar el objeto que arma, asi que tiene que ser un
+ * tipo importable y no solo el tipo de retorno (inferido) de
+ * `createSwapProviderFactory`. Son la misma forma: esto describe lo que devuelve
+ * el constructor, no una segunda interface.
+ */
+export type SwapProviderFactory = {
   readonly getProviderForPair: (
     sourceSymbol: string,
     destinationSymbol: string,
@@ -103,12 +132,12 @@ export const createSwapProviderFactory = (options: {
   const getProviderForPair = async (sourceSymbol: string, destinationSymbol: string, chain: DepositChain): Promise<SwapProvider> => {
     const result = findPairInRegistry(sourceSymbol, destinationSymbol, chain);
     if (!result) {
-      throw new BalanceReadError('PAIR_NOT_SUPPORTED', `Pair ${sourceSymbol}/${destinationSymbol} not supported on ${chain}`);
+      throw new SwapProviderError('PAIR_NOT_SUPPORTED', `Pair ${sourceSymbol}/${destinationSymbol} not supported on ${chain}`);
     }
 
     const provider = getProvider(result.dexConfig.dexId, chain);
     if (!provider) {
-      throw new BalanceReadError('PAIR_NOT_SUPPORTED', `No provider for ${result.dexConfig.dexId} on ${chain}`);
+      throw new SwapProviderError('PAIR_NOT_SUPPORTED', `No provider for ${result.dexConfig.dexId} on ${chain}`);
     }
 
     return provider;

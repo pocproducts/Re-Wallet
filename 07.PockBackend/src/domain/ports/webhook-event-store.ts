@@ -31,6 +31,19 @@ export interface StoredWebhookEvent {
   readonly inserted: boolean;
 }
 
+/**
+ * Aggregate counts over every stored Privy event, for the public metrics
+ * endpoint. Counts only — no payload, no per-person breakdown: the numbers are
+ * a property of the table, not of anybody in it, which is exactly why they can
+ * leave the server without a session.
+ */
+export interface PrivyMetrics {
+  readonly walletsCreated: number;
+  /** Distinct people whose events arrived in the 24 hours before `now`. */
+  readonly activeUsers24h: number;
+  readonly signIns: number;
+}
+
 export interface PersonWebhookEvent {
   readonly id: string;
   readonly eventType: string;
@@ -66,4 +79,10 @@ export interface WebhookEventStore {
    * than leaking into the nearest feed.
    */
   listForPerson(privyDid: string, limit: number): Promise<readonly PersonWebhookEvent[]>;
+
+  /**
+   * The aggregates above, in one read. `now` is the edge of the 24-hour window,
+   * parameterised for the same reason every clock is: a test can stand still.
+   */
+  metrics(input: { readonly now: Date }): Promise<PrivyMetrics>;
 }

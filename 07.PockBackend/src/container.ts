@@ -39,6 +39,7 @@ import { readDepositInfo } from './application/deposit-info/readDepositInfo';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
 import { ingestPrivyWebhook } from './application/webhooks/ingestPrivyWebhook';
 import { readNotifications } from './application/webhooks/readNotifications';
+import { readPrivyMetrics } from './application/webhooks/readPrivyMetrics';
 import { createDatabase, readEnv } from './infrastructure/db/client';
 import { createPostgresUserStore } from './infrastructure/db/userStore.pg';
 import { createPostgresWalletStore } from './infrastructure/db/walletStore.pg';
@@ -75,6 +76,10 @@ import { createUniswapTradingApiAdapter } from './infrastructure/swap/adapters/u
 import type { SwapProviderFactory } from './infrastructure/swap/swapProviderFactory';
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
 import { createApp } from './interface/http/app';
+import { readContacts } from './application/contacts/readContacts';
+import { createPostgresContactsStore } from './infrastructure/db/contactsStore.pg';
+import { submitFeedback } from './application/feedback/submitFeedback';
+import { createGitHubIssueReporter } from './infrastructure/github/githubIssueReporter';
 import type { Logger } from './domain/ports/logger';
 
 export interface Config {
@@ -129,6 +134,14 @@ export interface Config {
    * `RPC_UNAVAILABLE`, que es "no pude preguntar" y no "no hay mercado".
    */
   readonly uniswapApiKey?: string;
+  /**
+   * Token de GitHub con `issues:write` sobre el repo, para que el reporte de
+   * beta se convierta en una issue real. Sin el token la ruta `/api/feedback`
+   * no se monta: la honestidad es que sin tracker no hay reporte, no un 500.
+   */
+  readonly githubFeedbackToken?: string;
+  /** `owner/repo`; por defecto el repo de este proyecto. */
+  readonly githubFeedbackRepo?: string;
 }
 
 /** The one place that knows which environment variables exist. */
@@ -168,6 +181,8 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
     monadPoolRpcUrl: readEnv(env, 'MONAD_POOL_RPC_URL') || firstCandidate(DEFAULT_POOL_ENDPOINTS),
     kaminoApiUrl: readEnv(env, 'KAMINO_API_URL') || DEFAULT_KAMINO_API_URL,
     uniswapApiKey: readEnv(env, 'UNISWAP_API_KEY'),
+    githubFeedbackToken: readEnv(env, 'GITHUB_FEEDBACK_TOKEN'),
+    githubFeedbackRepo: readEnv(env, 'GITHUB_FEEDBACK_REPO') || 'pocproducts/ReWALLET',
   };
 };
 
@@ -183,6 +198,8 @@ export const buildApp = (config: Config, log: Logger) => {
   const ownership = createPrivyWalletOwnershipVerifier(privy);
   const walletStore = createPostgresWalletStore(db);
   const webhookEvents = createPostgresWebhookEventStore(db);
+  // La agenda sale de los propios envíos con tag: ninguna otra fuente sabe a quién le mandaste.
+  const contacts = createPostgresContactsStore(db);
   const sessions = createJwtSessionCodec({ secret: config.sessionSecret });
 
   /*
@@ -322,7 +339,12 @@ export const buildApp = (config: Config, log: Logger) => {
    * provider que el caso de uso nunca veía.
    */
   const swapProvider = createUniswapTradingApiAdapter({
-    apiKey: config.uniswapApiKey,
+    // `readEnv` devuelve `string` y nunca `undefined`: una variable ausente
+    // llega como `''`. El adaptador usa `null` para "no hay key" y ya trata
+    // `''` igual (`apiKey === null || apiKey.trim() === ''`), asi que el `||`
+    // traduce el "ausente" del env al "no configurado" del adaptador. Es la
+    // misma convencion que el resto del archivo: `readEnv(...) || default`.
+    apiKey: config.uniswapApiKey || null,
   });
 
   const swapProviderFactory: SwapProviderFactory = {
@@ -413,7 +435,10 @@ export const buildApp = (config: Config, log: Logger) => {
      * tablas que ya existen; no se crea nada acá.
      */
     prepareSend: sendFlow,
-    swapUseCase,
+    // El caso de uso no va acá: `AppDeps` no lo declara y nadie lo lee. Llega
+    // al HTTP dentro de `swapRoutes`, que es quien lo recibe de
+    // `createSwapRoutes`. Pasarlo tambien como dep era una segunda puerta al
+    // mismo objeto que nadie abria.
     swapRoutes,
     policyRoutes,
     /*
@@ -450,6 +475,21 @@ export const buildApp = (config: Config, log: Logger) => {
       log,
     }),
     readNotifications: readNotifications({ store: webhookEvents, log }),
+    // Same store, aggregate-only read: the landing's numbers come from the rows
+    // the intake already wrote.
+    readMetrics: readPrivyMetrics({ store: webhookEvents }),
+    readContacts: readContacts({ store: contacts, log }),
+    // Sin token no hay issue que crear: la ruta `/api/feedback` no se monta.
+    ...(config.githubFeedbackToken
+      ? {
+          submitFeedback: submitFeedback({
+            reporter: createGitHubIssueReporter({
+              token: config.githubFeedbackToken,
+              repo: config.githubFeedbackRepo ?? 'pocproducts/ReWALLET',
+            }),
+          }),
+        }
+      : {}),
     log,
   });
 };

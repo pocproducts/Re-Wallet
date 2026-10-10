@@ -31,7 +31,9 @@
 
   // Secrets are NOT in this file. They are set with `wrangler secret put`:
   // PRIVY_APP_ID, PRIVY_APP_SECRET, DATABASE_URL, SESSION_SECRET.
-  "routes": [{ "pattern": "app-dev.rewallet.win", "custom_domain": true }],
+  "routes": [
+    { "pattern": "beta.rewallet.win", "custom_domain": true }
+  ],
 
   "observability": { "enabled": false },
 

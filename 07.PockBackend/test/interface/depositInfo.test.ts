@@ -164,11 +164,11 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
 
     expect(body.networks.map((network) => network.assets.map((asset) => asset.symbol))).toEqual([
       ['MON', 'USDC'],
-      ['ETH', 'USDC'],
+      ['ETH', 'USDC', 'OUSD'],
       ['ETH', 'USDC', 'USDT'],
       ['ETH', 'USDC', 'USDT'],
       ['ETH', 'USDC', 'USDT'],
-      ['POL', 'USDC', 'USDT'],
+      ['USDC', 'USDT'],
       ['SOL', 'USDC'],
     ]);
 
@@ -259,6 +259,7 @@ describe('GET /api/deposit-info — la clasificación viaja con cada activo', ()
       { chain: 'monad', symbol: 'USDC', kind: 'dollar' },
       { chain: 'ethereum', symbol: 'ETH', kind: 'crypto' },
       { chain: 'ethereum', symbol: 'USDC', kind: 'dollar' },
+      { chain: 'ethereum', symbol: 'OUSD', kind: 'dollar' },
       { chain: 'base', symbol: 'ETH', kind: 'crypto' },
       { chain: 'base', symbol: 'USDC', kind: 'dollar' },
       { chain: 'base', symbol: 'USDT', kind: 'dollar' },
@@ -268,7 +269,6 @@ describe('GET /api/deposit-info — la clasificación viaja con cada activo', ()
       { chain: 'optimism', symbol: 'ETH', kind: 'crypto' },
       { chain: 'optimism', symbol: 'USDC', kind: 'dollar' },
       { chain: 'optimism', symbol: 'USDT', kind: 'dollar' },
-      { chain: 'polygon', symbol: 'POL', kind: 'crypto' },
       { chain: 'polygon', symbol: 'USDC', kind: 'dollar' },
       { chain: 'polygon', symbol: 'USDT', kind: 'dollar' },
       { chain: 'solana', symbol: 'SOL', kind: 'crypto' },

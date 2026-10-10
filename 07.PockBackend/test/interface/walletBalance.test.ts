@@ -455,10 +455,13 @@ describe('GET /api/wallet-balance — the buckets and the headline', () => {
      *   MON   3 x $0.028642 = $0.085926, at 18 + 8 = 26 decimals
      *   SOL   1.23456789 x $1.4625 = $1.805555539125, at 9 + 18 = 27 decimals
      */
-    // `cryptoValue.complete` is false on purpose: POL has no verified Chainlink
-    // feed, so its piece is PRICE_UNAVAILABLE and says so honestly.
-    expect(body.cryptoValue.complete).toBe(false);
-    expect(pieceOf(body.cryptoValue, 'crypto.polygon.POL')).toMatchObject({ status: 'unreadable', reason: 'PRICE_UNAVAILABLE' });
+    // `cryptoValue.complete` is true, and the reason is a decision, not an
+    // accident: Polygon declares **no native coin** — el nativo de Polygon no
+    // tiene saldo legible verificado, asi que no se ofrece (ver
+    // `depositCatalog.test.ts`). There is no `crypto.polygon.POL` piece to
+    // price, so nothing is missing and the bucket says so.
+    expect(body.cryptoValue.pieces.map((piece) => piece.key)).not.toContain('crypto.polygon.POL');
+    expect(body.cryptoValue.complete).toBe(true);
     expect(body.cryptoValue.total.decimals).toBe(27);
     expect(body.cryptoValue.total.amount).toBe('1.891481539125');
 
@@ -478,9 +481,10 @@ describe('GET /api/wallet-balance — the buckets and the headline', () => {
     expect(body.investedValue.complete).toBe(true);
     expect(body.investedValue.total).toEqual({ raw: '820428', amount: '0.820428', decimals: 6, unit: 'USD' });
 
-    // And the headline is the sum, at the widest scale of any of them — but
-    // `complete` is false because the POL piece has no verified price feed.
-    expect(body.total.complete).toBe(false);
+    // And the headline is the sum, at the widest scale of any of them — and
+    // `complete` is true, because every asset the catalog declares was both read
+    // and priced.
+    expect(body.total.complete).toBe(true);
     expect(body.total.usd.decimals).toBe(27);
     expect(body.total.usd.amount).toBe('4.711909539125');
   });
@@ -1016,10 +1020,9 @@ describe('an unreadable price makes its bucket incomplete, and is visible', () =
     expect(body.investedValue.complete).toBe(false);
     expect(body.investedValue.total.raw).toBe('0');
     // The free side is untouched: a deposit nobody could read is not a wallet
-    // nobody could read. The pegged free balance still sums to a real 2.0.
-    // POL has no verified feed, so the crypto bucket carries one unreadable
-    // piece and is incomplete even though the free side was read fine.
-    expect(body.cryptoValue.complete).toBe(false);
+    // nobody could read. The pegged free balance still sums to a real 2.0, and
+    // the crypto bucket is **whole** — the failed position left no hole in it.
+    expect(body.cryptoValue.complete).toBe(true);
     expect(body.cryptoValue.total.amount).toBe('0.085926');
     expect(body.digitalDollarsValue.total.amount).toBe('2');
     expect(body.digitalDollarsValue.complete).toBe(false);
@@ -1044,6 +1047,13 @@ describe('an unreadable price makes its bucket incomplete, and is visible', () =
         {
           [`monad:${MONAD_USDC}:${EVM_ADDRESS}`]: '0',
           [`ethereum:${ETHEREUM_USDC}:${EVM_ADDRESS}`]: '0',
+          // The rest of the chains answer zero too, and this test is about a zero
+          // being a truth — not about a chain that could not be read. This fake
+          // reader *throws* for any erc20 it was not given, so leaving a chain
+          // out would make `unreadable` here and test something else entirely.
+          ...holdings,
+          [`monad:${MONAD_USDC}:${EVM_ADDRESS}`]: '0',
+          [`ethereum:${ETHEREUM_USDC}:${EVM_ADDRESS}`]: '0',
         },
         { [`monad:${EVM_ADDRESS}`]: '0' },
       ),
@@ -1060,10 +1070,19 @@ describe('an unreadable price makes its bucket incomplete, and is visible', () =
     expect(body.cryptoValue.total.raw).toBe('0');
     expect(body.digitalDollarsValue.total.raw).toBe('0');
     expect(body.total.usd.amount).toBe('0');
-    // POL sin feed de precio verificado: la pieza es unreadable y el bucket incompleto.
-    expect(pieceOf(body.cryptoValue, 'crypto.polygon.POL')).toMatchObject({ status: 'unreadable' });
-    expect(body.cryptoValue.complete).toBe(false);
-    expect(body.total.complete).toBe(false);
+    // Not one piece in the whole answer is unreadable — the claim of this test,
+    // asserted over every piece rather than read off a bucket flag.
+    expect(
+      [...body.cryptoValue.pieces, ...body.digitalDollarsValue.pieces, ...body.investedValue.pieces].filter(
+        (piece) => piece.status !== 'ok',
+      ),
+    ).toEqual([]);
+    // Y no hay ninguna pieza ilegible: Polygon no declara nativo, asi que todo
+    // lo declarado se leyo y se valuo. Los tres say `complete`.
+    expect(body.cryptoValue.pieces.map((piece) => piece.key)).not.toContain('crypto.polygon.POL');
+    expect(body.cryptoValue.complete).toBe(true);
+    expect(body.digitalDollarsValue.complete).toBe(true);
+    expect(body.total.complete).toBe(true);
   });
 
   it('a chain with no wallet is a known zero, not an incomplete bucket', async () => {
@@ -1082,8 +1101,9 @@ describe('an unreadable price makes its bucket incomplete, and is visible', () =
     // unreadable piece per unheld asset would make "incomplete" mean "has one
     // wallet", and the screen would say we could not read what does not exist.
     expect(body.cryptoValue.pieces.map((piece) => piece.key)).not.toContain('crypto.solana.SOL');
-    // POL declara la billetera igual: piece unreadable porque no hay feed de POL.
-    expect(body.cryptoValue.complete).toBe(false);
+    // Polygon si declara la billetera, y aun asi su lado cripto es entero:
+    // declara USDC y USDT, ningun nativo.
+    expect(body.cryptoValue.complete).toBe(true);
     expect(body.cryptoValue.total.amount).toBe('0.085926');
     // Holding nothing on Solana is still nothing: the pegged side is whole too.
     expect(body.digitalDollarsValue.complete).toBe(true);
@@ -1412,14 +1432,14 @@ describe('el saldo de origen de cada venue: `depositable`', () => {
 
     // Los tres buckets, exactos, con los origins presentes.
     expect(body.cryptoValue.total.amount).toBe('0.085926');
-    expect(body.cryptoValue.complete).toBe(false);
+    expect(body.cryptoValue.complete).toBe(true);
     expect(body.investedValue.total.amount).toBe('100');
     expect(body.investedValue.complete).toBe(true);
     expect(body.digitalDollarsValue.total.amount).toBe('104.5');
     expect(body.digitalDollarsValue.complete).toBe(true);
     expect(body.total.usd.amount).toBe('104.585926');
-    // Same honest gap: polygon POL is read, but there is no verified feed for it.
-    expect(body.total.complete).toBe(false);
+    // Y el total es entero: no hay ninguna pieza sin valuar.
+    expect(body.total.complete).toBe(true);
 
     // Y el origen no se coló como una pieza más: `investedValue` sigue siendo las
     // dos posiciones y nada más, y cada origin sigue siendo **una sola** pieza

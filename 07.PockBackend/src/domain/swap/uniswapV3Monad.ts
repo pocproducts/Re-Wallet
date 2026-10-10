@@ -134,9 +134,14 @@ export const FEE_TIERS = {
 
 /**
  * Verifica si un fee tier es válido.
+ *
+ * Misma decisión que en `uniswapV3.ts`: se compara con `some` porque
+ * `Object.values` sobre un objeto `as const` devuelve un array de literales, y
+ * `includes` pediría un argumento ya estrechado a uno de ellos — que es
+ * precisamente lo que el guard está por decidir.
  */
 export const isValidFeeTier = (fee: number): boolean =>
-  Object.values(FEE_TIERS).includes(fee);
+  Object.values(FEE_TIERS).some((tier) => tier === fee);
 
 /**
  * Tick spacing por fee tier (regla Uniswap V3).
