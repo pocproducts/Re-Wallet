@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ReWALLET — Tu dinero, en dólares digitales</title>
+  <meta name="description" content="ReWALLET: una cuenta en dólares digitales para ahorrar, enviar y hacer rendir tu dinero sin aprender cripto." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="navbar liquid-glass">
+    <div class="logo">
+      <span class="logo-icon"></span>
+      ReWALLET
+    </div>
+    <div class="nav-links">
+      <a href="#producto">Producto</a>
+      <a href="#planes">Rendimiento</a>
+      <a href="#seguridad">Seguridad</a>
+      <a href="#preguntas">Preguntas</a>
+    </div>
+    <a href="https://beta.rewallet.win" class="btn-primary">Beta App</a>
+  </nav>
+
+  <!-- Hero Section -->
+  <main>
+    <section class="hero">
+      <!-- Background Giant Text -->
+      <div class="hero-bg-text" id="parallax-text">REWALLET</div>
+
+      <div class="hero-container">
+        <!-- Left Text Block -->
+        <div class="hero-content">
+          <h1 class="hero-title">Tu dinero, <em>siempre creciendo</em>.</h1>
+          <p class="hero-subtitle">Una cuenta en dólares digitales para ahorrar, enviar y hacer rendir tu dinero. Sin bancos, sin vueltas, sin aprender cripto.</p>
+        </div>
+
+        <!-- Right 3D Carousel -->
+        <div class="carousel-container">
+          <div class="carousel-track" id="carousel">
+            <!-- Card 1 -->
+            <div class="carousel-card liquid-glass clay-border">
+              <div class="card-image card-art-1"></div>
+              <div class="card-info">
+                <h3>Dólares digitales</h3>
+                <p>USDC, un dólar por dólar</p>
+              </div>
+            </div>
+            <!-- Card 2 -->
+            <div class="carousel-card liquid-glass clay-border">
+              <div class="card-image card-art-2"></div>
+              <div class="card-info">
+                <h3>Rendimiento real</h3>
+                <p>Tu plata trabaja sola</p>
+              </div>
+            </div>
+            <!-- Card 3 -->
+            <div class="carousel-card liquid-glass clay-border">
+              <div class="card-image card-art-3"></div>
+              <div class="card-info">
+                <h3>Envíos instantáneos</h3>
+                <p>A cualquiera, en segundos</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Discover Section -->
+    <section class="discover" id="producto">
+      <div class="discover-header">
+        <h2 class="gsap-reveal">Una sola cuenta</h2>
+        <p class="gsap-reveal">Todo lo que necesitás para tu dinero digital: guardarlo, hacerlo rendir y moverlo por el mundo, desde una sola app.</p>
+      </div>
+
+      <div class="discover-grid" id="planes">
+        <div class="grid-item chunky-clay gsap-card">
+          <div class="grid-art grid-art-1"></div>
+          <div class="grid-content">
+            <h4>Ahorrá en dólares</h4>
+          </div>
+        </div>
+        <div class="grid-item chunky-clay gsap-card">
+          <div class="grid-art grid-art-2"></div>
+          <div class="grid-content">
+            <h4>Tu plata crece sola</h4>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Trust / Seguridad -->
+    <!--
+      ESTA SECCIÓN ES LA RAZÓN por la que el nav tiene un link "Seguridad".
+
+      Antes ese link apuntaba a `id="seguridad"`, que estaba puesto sobre la
+      tarjeta "Rendí sin aprender DeFi" del bloque de arriba: el menú prometía
+      seguridad y aterrizaba en una tarjeta de rendimiento. El ancla se movió
+      acá, que es donde de verdad hay algo que contar.
+    -->
+    <section class="trust" id="seguridad">
+      <div class="trust-header">
+        <h2 class="gsap-reveal">Tu dinero, antes de moverse</h2>
+        <p class="gsap-reveal">
+          Guardar tu plata es fácil. Lo difícil es confiar en que nadie la mueve
+          sin que vos lo decidas. Esto es lo que hace ReWALLET.
+        </p>
+      </div>
+
+      <div class="trust-grid">
+        <div class="trust-card liquid-glass clay-border">
+          <h3>Tu llave no sale de un lugar seguro</h3>
+          <p>Ni nosotros podemos verla. No es una promesa: es que la llave nunca
+            sale de ese lugar.</p>
+        </div>
+
+        <div class="trust-card liquid-glass clay-border">
+          <h3>No hay 12 palabras que anotar</h3>
+          <p>Nada que puedas perder, nada que te puedan pedir. Entrás con tu
+            huella o tu cara, como desbloqueás el teléfono.</p>
+        </div>
+
+        <div class="trust-card liquid-glass clay-border">
+          <h3>Cada envío consulta reglas antes de salir</h3>
+          <p>Un monto raro, o un destino al que nunca le mandaste, no salen
+            solos: se frenan y te piden confirmación.</p>
+        </div>
+
+        <div class="trust-card liquid-glass clay-border">
+          <h3>Todo queda registrado</h3>
+          <p>Cada movimiento de tu plata, a la vista. Podés ver cuánto tenés,
+            cuánto rinde y a quién se lo mandaste.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Live Metrics -->
+    <section class="metrics" id="metricas">
+      <div class="metrics-header">
+        <h2>ReWALLET en números</h2>
+        <p>Datos reales de la beta, en vivo.</p>
+      </div>
+      <div class="metrics-grid" id="metrics-grid">
+        <div class="metric-card liquid-glass">
+          <span class="metric-value" id="metric-wallets" aria-live="polite">—</span>
+          <span class="metric-label">Wallets creadas</span>
+        </div>
+        <div class="metric-card liquid-glass">
+          <span class="metric-value" id="metric-active" aria-live="polite">—</span>
+          <span class="metric-label">Usuarios activos (24h)</span>
+        </div>
+        <div class="metric-card liquid-glass">
+          <span class="metric-value" id="metric-signins" aria-live="polite">—</span>
+          <span class="metric-label">Ingresos a la app</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Preguntas frecuentes -->
+    <!--
+      Las seis objeciones que frenan el depósito, en el orden en que aparecen.
+      `<details>` sin JavaScript: abre y cierra solo, y ya es accesible con
+      teclado y con lector de pantalla.
+    -->
+    <section class="faq" id="preguntas">
+      <div class="faq-header">
+        <h2>Preguntas frecuentes</h2>
+      </div>
+
+      <div class="faq-list">
+        <details class="faq-item liquid-glass">
+          <summary>¿Está seguro mi dinero?</summary>
+          <p>Tu llave vive cifrada en un lugar seguro y nunca sale de ahí. Cada
+            envío se contrasta contra un conjunto de reglas antes de salir, y
+            todo movimiento queda registrado y a la vista.</p>
+        </details>
+
+        <details class="faq-item liquid-glass">
+          <summary>¿Qué pasa si pierdo o me robo el teléfono?</summary>
+          <p>No perdés nada, justamente porque no hay nada que yours: ni una
+            contraseña ni 12 palabras. Entrás desde otro dispositivo y seguís
+            viendo lo mismo.</p>
+        </details>
+
+        <details class="faq-item liquid-glass">
+          <summary>¿Necesito saber de cripto?</summary>
+          <p>No. Nunca elegís una red, nunca elegís un token, nunca ves una
+            comisión de red. Son dólares, se leen como dólares y hacen lo que
+            los dólares hacen.</p>
+        </details>
+
+        <details class="faq-item liquid-glass">
+          <summary>¿Cómo es que mi plata crece?</summary>
+          <p>El saldo que tenés rindiendo se invierte por vos y la diferencia
+            se suma a tu cuenta. Vas a poder ver el rendimiento acumulado y el
+            detalle de cada día.</p>
+        </details>
+
+        <details class="faq-item liquid-glass">
+          <summary>¿Puedo sacar mi dinero cuando quiera?</summary>
+          <p>Sí. Tu saldo es tuyo y podés retirarlo cuando quieras. No hay
+            permanencia, ni penalidad de salida, ni letra chica.</p>
+        </details>
+
+        <details class="faq-item liquid-glass">
+          <summary>¿En qué se diferencia de un banco?</summary>
+          <p>Un banco te da una cuenta y te paga casi nada. Acá el saldo rinde
+            mientras está quieto, los envíos son instantáneos, y podés ver cada
+            movimiento. Lo que un banco esconde detrás de un extracto, acá está
+            a la vista.</p>
+        </details>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>© 2026 ReWALLET</span>
+      <div class="footer-social">
+        <a href="https://x.com/ReWallwin" target="_blank" rel="noopener noreferrer" aria-label="ReWALLET en X">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+          </svg>
+        </a>
+        <a href="https://t.me/+u0NYA22BsKFmOWFh" target="_blank" rel="noopener noreferrer" aria-label="ReWALLET en Telegram">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+            <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm4.962 7.224c.1-.002.321.023.465.14a.5.5 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+          </svg>
+        </a>
+      </div>
+      <a href="https://beta.rewallet.win">beta.rewallet.win</a>
+    </footer>
+  </main>
+
+  <!-- GSAP & ScrollTrigger -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
