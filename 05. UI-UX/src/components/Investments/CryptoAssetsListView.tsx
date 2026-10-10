@@ -340,6 +340,22 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
               >
                 {/* IZQUIERDA: Avatar + Activo (resaltado) + Símbolo (subtítulo) */}
                 <div className="flex items-center gap-3">
+                  {/*
+                    PENDIENTE: acá debería entrar `AssetIcon` con `ticker={asset.ticker}`,
+                    que en este mapa ya es el símbolo limpio del activo y está en el mismo
+                    objeto que `iconText`. NO se hizo a propósito:
+
+                    - La forma no es un círculo. Es `w-11 h-11 rounded-2xl shadow-xs` y
+                      `AssetIcon` fuerza `rounded-full` y no lleva sombra, así que usarlo
+                      acá cambia el diseño de la fila.
+                    - `AssetIcon` no acepta la forma del contenedor, y ese archivo es el
+                      contrato de los iconos: hasta que acepte `shape`/`rounded` + sombra,
+                      este avatar se queda como está.
+
+                    `iconText` no es el problema de todos modos: acá nunca lleva el ticker,
+                    es el glifo de `identity.glyph` (`CryptoAsset.iconText`). El logo se
+                    resuelve desde `asset.ticker`.
+                  */}
                   <div
                     className={`w-11 h-11 rounded-2xl ${asset.iconBg} text-white font-black flex items-center justify-center text-sm shadow-xs shrink-0`}
                   >

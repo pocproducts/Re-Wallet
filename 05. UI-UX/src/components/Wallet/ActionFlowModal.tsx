@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { AssetTradeCard } from '../common';
+import { AssetIcon, ChainIcon } from '../common/AssetIcon';
 import { BalancePieceRow } from '../Investments/BalancePieceRow';
 import { byUsdValueDesc } from '../../services/walletBalance';
 import type { WalletBalancePart } from '../../services/walletBalance';
@@ -1057,11 +1058,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                       // pantalla ya no lleva su propia lista de activos.
                       const identity = identityOf(coin.symbol);
                       return (
-                        <div
-                          className={`w-10 h-10 rounded-full ${identity?.iconBg ?? 'bg-slate-400'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                        >
-                          {identity?.glyph ?? coin.symbol.slice(0, 1)}
-                        </div>
+                        <AssetIcon
+                          ticker={coin.symbol}
+                          glyph={identity?.glyph ?? coin.symbol.slice(0, 1)}
+                          iconBg={identity?.iconBg ?? 'bg-slate-400'}
+                          sizeClass="w-10 h-10"
+                        />
                       );
                     })()}
                     <span className="text-base font-bold text-black block">
@@ -1144,7 +1146,6 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             {/* Sólo las redes del catálogo donde este activo existe. */}
             {networksForCoin(selectedCoin).map((network) => {
               const asset = assetOn(network, selectedCoin);
-              const identity = identityOf(selectedCoin);
               const receivable = network.address !== null;
 
               return (
@@ -1162,11 +1163,31 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }
                 >
                   <div className="flex items-center gap-3.5">
-                    <div
-                      className={`w-10 h-10 rounded-full ${identity?.iconBg ?? 'bg-slate-300'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                    >
-                      {identity?.glyph ?? network.label.slice(0, 1)}
-                    </div>
+                    {/*
+                      LA FILA MUESTRA UNA RED, NO UN ACTIVO.
+
+                      Antes dibujábamos acá el logo de {selectedCoin}, el activo que
+                      se está depositando, al lado del nombre de la red: el círculo
+                      de USDC junto a la palabra "Ethereum" no dice nada, porque el
+                      activo es el mismo en todas las filas de esta pantalla. Lo
+                      que cambia de fila a fila es la RED, así que lo que se dibuja
+                      es el logo de la red.
+
+                      `network.chain` ya es el key de cadena —el mismo de las rutas
+                      de la API y de `SUPPORTED_EVM_CHAINS`— y `iconForChain` se
+                      encarga de normalizarlo, así que se pasa tal cual.
+
+                      El color NO se toca: sigue saliendo del `identity` del activo,
+                      porque cambiar el fondo del círculo para que el logo de cadena
+                      se lea es un cambio de diseño, no un cableado.
+                    */}
+                    <ChainIcon
+                      chain={network.chain}
+                      fallbackGlyph={network.label.slice(0, 1)}
+                      iconBg={identityOf(selectedCoin)?.iconBg ?? 'bg-slate-300'}
+                      sizeClass="w-10 h-10"
+                      glyphClass="text-sm"
+                    />
                     <div>
                       <span className="text-sm font-bold text-black block">{network.label}</span>
                       <span className="text-xs text-slate-400 font-medium block leading-tight">
@@ -1251,9 +1272,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                 <div className="bg-white rounded-[32px] p-6 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80 space-y-4 text-center">
                   <div className="text-left space-y-2">
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-slate-100 text-black flex items-center justify-center text-xs font-bold">
-                        {(identityOf(selectedCoin)?.glyph ?? selectedCoin.slice(0, 1))}
-                      </div>
+                      <AssetIcon
+                        ticker={selectedCoin}
+                        glyph={identityOf(selectedCoin)?.glyph ?? selectedCoin.slice(0, 1)}
+                        iconBg="bg-slate-100 text-black"
+                        sizeClass="w-6 h-6"
+                      />
                       <div>
                         <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Depositás</span>
                         <span className="text-xs font-extrabold text-black">
@@ -1272,9 +1296,19 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                       "cualquiera de las dos".
                     */}
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-black text-[#ccff00] flex items-center justify-center text-xs font-bold">
-                        {depositNetwork.label.slice(0, 1)}
-                      </div>
+                      {/*
+                        Este chip es una RED, no un activo: `depositNetwork.chain`
+                        y el glifo de respaldo son los de antes. Mismo círculo, mismo
+                        `bg-black` y mismo tamaño — sólo cambia qué se dibuja
+                        adentro.
+                      */}
+                      <ChainIcon
+                        chain={depositNetwork.chain}
+                        fallbackGlyph={depositNetwork.label.slice(0, 1)}
+                        iconBg="bg-black text-[#ccff00]"
+                        sizeClass="w-6 h-6"
+                        glyphClass="text-xs"
+                      />
                       <div>
                         <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Red</span>
                         <span className="text-xs font-extrabold text-black">{depositNetwork.label}</span>
@@ -1490,11 +1524,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     className="p-4 mb-2 bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] flex items-center justify-between cursor-pointer hover:bg-slate-50 active:scale-99 transition-all"
                   >
                     <div className="flex items-center gap-3.5">
-                      <div
-                        className={`w-10 h-10 rounded-full ${identity?.iconBg ?? 'bg-slate-300'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                      >
-                        {identity?.glyph ?? asset.symbol.slice(0, 1)}
-                      </div>
+                      <AssetIcon
+                        ticker={asset.symbol}
+                        glyph={identity?.glyph ?? asset.symbol.slice(0, 1)}
+                        iconBg={identity?.iconBg ?? 'bg-slate-300'}
+                        sizeClass="w-10 h-10"
+                      />
                       <div>
                         {/*
                           Título arriba y símbolo abajo, como en las filas de
@@ -1935,11 +1970,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
                   >
                     <div className="flex items-center gap-3.5">
-                      <div
-                        className={`w-10 h-10 rounded-full ${known?.iconBg ?? 'bg-slate-200'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                      >
-                        {known?.glyph ?? coin.symbol.slice(0, 1)}
-                      </div>
+                      <AssetIcon
+                        ticker={coin.symbol}
+                        glyph={known?.glyph ?? coin.symbol.slice(0, 1)}
+                        iconBg={known?.iconBg ?? 'bg-slate-200'}
+                        sizeClass="w-10 h-10"
+                      />
                       <div>
                         <span className="text-base font-bold text-black block">{coin.symbol}</span>
                         <span className="text-xs text-slate-400 font-medium block">{coin.name}</span>
@@ -2455,11 +2491,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
                   >
                     <div className="flex items-center gap-3.5">
-                      <div
-                        className={`w-10 h-10 rounded-full ${known?.iconBg ?? 'bg-slate-200'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                      >
-                        {known?.glyph ?? c.symbol.slice(0, 1)}
-                      </div>
+                      <AssetIcon
+                        ticker={c.symbol}
+                        glyph={known?.glyph ?? c.symbol.slice(0, 1)}
+                        iconBg={known?.iconBg ?? 'bg-slate-200'}
+                        sizeClass="w-10 h-10"
+                      />
                       <div>
                         {/* Nombre arriba y símbolo abajo, como en *Bitcoin & Crypto*. */}
                         <span className="text-sm font-extrabold text-black block leading-none">{c.name}</span>

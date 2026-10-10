@@ -83,6 +83,11 @@ export const AssetTradeCard: React.FC<AssetTradeCardProps> = ({
    * se está armando depende justamente de eso. Cuando la fila no tiene red —el
    * respaldo sin catálogo— se muestra el símbolo solo, porque ahí no hay una red
    * que pueda mentir.
+   *
+   * Ojo con este string: viaja entero ("USDC · Ethereum") hasta `TradePairCard`
+   * porque es el texto que la persona lee. El logo del círculo NO lo usa entero:
+   * `TradePairCard` corta antes del ` · ` y busca el archivo con el ticker del
+   * activo. Esta tarjeta no hace falta que le pase el ticker por separado.
    */
   const tickerOf = (row: TradeAssetRow): string =>
     row.chainLabel === null ? row.ticker : `${row.ticker} · ${row.chainLabel}`;

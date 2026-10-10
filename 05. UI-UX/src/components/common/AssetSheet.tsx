@@ -48,6 +48,7 @@ import { Check } from 'lucide-react';
 
 import type { TradeAssetRow } from '../../types/trade.types';
 import { groupAssetsByChain } from '../../hooks/useAssetTrade';
+import { AssetIcon } from './AssetIcon';
 
 /**
  * El título de la hoja.
@@ -259,11 +260,12 @@ export function AssetSheet({
                     : 'cursor-pointer active:bg-slate-100'
                 } ${isSelected ? 'bg-slate-50' : ''}`}
               >
-                <span
-                  className={`flex h-10 w-10 max-[360px]:h-8 max-[360px]:w-8 shrink-0 items-center justify-center rounded-full font-bold text-xs ${asset.iconBg}`}
-                >
-                  {asset.glyph}
-                </span>
+                <AssetIcon
+                  ticker={asset.ticker}
+                  glyph={asset.glyph}
+                  iconBg={asset.iconBg}
+                  sizeClass="h-10 w-10 max-[360px]:h-8 max-[360px]:w-8"
+                />
 
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[15px] font-bold leading-tight text-black">

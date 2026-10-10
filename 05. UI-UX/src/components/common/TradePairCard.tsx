@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChevronDown, RotateCw } from 'lucide-react';
 
+import { AssetIcon } from './AssetIcon';
 import { FittedNumber } from './FittedNumber';
 
 export interface TradePairCardProps {
@@ -97,6 +98,24 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
   onInvert,
 }) => {
   /*
+   * EL TICKER QUE DIBUJA EL CÍRCULO NO ES EL QUE SE LEE.
+   *
+   * En la tarjeta el ticker se muestra como "USDC · Ethereum": el par depende de
+   * la red, y una "USDC" suelta no dice de cuál. Ese string, tal cual, no es una
+   * clave de activo: buscar el logo con "USDC · Ethereum" nunca encuentra nada y
+   * el círculo queda en glifo para siempre.
+   *
+   * El activo es lo que va antes del separador, así que el logo se busca con esa
+   * parte. Cuando la fila no tiene red el separador no está —el respaldo sin
+   * catálogo muestra el símbolo solo— y el string entero ya es un ticker limpio,
+   * así que el mismo corte sirve para los dos casos sin ninguno de los dos.
+   *
+   * El texto de la fila NO se toca: sigue mostrando la red, que es lo que hay
+   * que ver.
+   */
+  const tickerForIcon = (ticker: string): string => ticker.split(' · ')[0].trim();
+
+  /*
    * El bloque ticker + chevron es el mismo elemento en las dos tarjetas, y solo
    * se vuelve táctil cuando el padre pasa el handler. Las pantallas que no
    * permiten cambiar el activo (Comprar y Vender del detalle del cripto) siguen
@@ -113,11 +132,21 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
   ) => {
     const row = (
       <>
-        <div
-          className={`w-8 h-8 max-[360px]:w-6 max-[360px]:h-6 rounded-full ${iconBg} text-white font-bold flex items-center justify-center text-xs shadow-2xs`}
-        >
-          {iconText}
-        </div>
+        {/*
+          Mismo círculo, mismo tamaño y misma sombra que el `div` que había antes:
+          `AssetIcon` pone `rounded-full` y el `shadow-2xs` viaja en `sizeClass`
+          porque esa prop va entera a la clase del círculo. `text-white` también
+          pasa por `iconBg`, que es donde vive el color de la clase de fondo: es
+          lo que pintaba el glifo. `text-xs` es el `glyphClass`, para que el
+          respaldo se vea exactamente igual de grande que antes.
+        */}
+        <AssetIcon
+          ticker={tickerForIcon(ticker)}
+          glyph={iconText}
+          iconBg={`${iconBg} text-white`}
+          sizeClass="w-8 h-8 max-[360px]:w-6 max-[360px]:h-6 shadow-2xs"
+          glyphClass="text-xs"
+        />
         <div className={`flex items-center gap-1 min-w-0 text-black font-display ${tickerClassName}`}>
           <span className="truncate max-w-[9rem] max-\[360px\]:max-w-[6.5rem]">{ticker}</span>
           <ChevronDown className="w-4 h-4 stroke-[2.5]" />
