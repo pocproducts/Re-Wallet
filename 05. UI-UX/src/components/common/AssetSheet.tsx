@@ -252,7 +252,7 @@ export function AssetSheet({
                   // `h-16` son 64px: con el mínimo táctil de 44 de la plataforma
                   // y dos renglones (nombre y ticker) la fila se ve aireada sin
                   // que entren menos de cinco en la hoja.
-                  'h-16 shrink-0 my-0.5 '
+                  'h-16 max-[360px]:h-14 shrink-0 my-0.5 '
                 } ${
                   isDisabled
                     ? 'cursor-not-allowed opacity-35'
@@ -260,7 +260,7 @@ export function AssetSheet({
                 } ${isSelected ? 'bg-slate-50' : ''}`}
               >
                 <span
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-bold text-xs ${asset.iconBg}`}
+                  className={`flex h-10 w-10 max-[360px]:h-8 max-[360px]:w-8 shrink-0 items-center justify-center rounded-full font-bold text-xs ${asset.iconBg}`}
                 >
                   {asset.glyph}
                 </span>
@@ -290,15 +290,30 @@ export function AssetSheet({
                   guion se leen como "no tenés", y acá no sabemos eso — sabemos
                   que no lo supimos.
                 */}
-                <span className="shrink-0 text-right">
-                  {asset.priceText !== null && (
-                    <span className="block font-mono text-xs font-semibold text-slate-600">
-                      {asset.priceText} USD
+                {/*
+                  La columna derecha tiene **un** dato principal: el saldo.
+
+                  Antes el saldo y el precio iban apilados con el mismo peso,
+                  los dos en gris y los dos en mono: dos renglones chicos en los
+                  que no se sabía cuál era el importante. En una pantalla de
+                  selección la pregunta es "¿cuánto tengo de esto?" — el precio
+                  es contexto de la conversión, no del elegir — así que el saldo
+                  va primero, en negro y más grande, y el precio queda debajo,
+                  chico y en gris.
+
+                  Los dos se muestran **sólo si se leyeron**: sin lectura la
+                  celda queda vacía. Un `0` o un guion se leerían como "no
+                  tenés", y acá no sabemos eso — sabemos que no lo supimos.
+                */}
+                <span className="shrink-0 max-w-[38%] text-right">
+                  {asset.balanceText !== null && (
+                    <span className="block truncate font-mono text-[13px] font-bold text-black">
+                      {asset.balanceText}
                     </span>
                   )}
-                  {asset.balanceText !== null && (
-                    <span className="block font-mono text-xs font-semibold text-slate-400">
-                      {asset.balanceText}
+                  {asset.priceText !== null && (
+                    <span className="block truncate font-mono text-[11px] font-medium text-slate-400">
+                      {asset.priceText} USD
                     </span>
                   )}
                 </span>

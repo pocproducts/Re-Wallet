@@ -1,14 +1,14 @@
 /**
- * `src/config/markets.ts`: el formateador y el tipo de cambio.
+ * `src/config/markets.ts`: el formateador y el catálogo.
  *
- * Lo que **no** está acá también importa: este archivo ya no tiene precios ni
- * saldos inventados. Los tests de abajo no pueden proteger una tabla que ya no
- * existe; protegen lo que queda, que es la convención de formato con la que se
- * pintan los números.
+ * Lo que **no** está acá también importa: este archivo ya no tiene precios,
+ * saldos inventados ni tipo de cambio. Los tests de abajo no pueden proteger
+ * una tabla que ya no existe; protegen lo que queda, que es la convención de
+ * formato con la que se pintan los números y el fallback del catálogo.
  */
 
 import { describe, expect, it } from 'vitest';
-import { ARS_PER_USD, assetOrDefault, formatAmount, fromArs, toArs } from '../../src/config/markets';
+import { assetOrDefault, formatAmount } from '../../src/config/markets';
 
 describe('formatAmount — el mismo formato en todas las pantallas', () => {
   it('separa con coma y rellena los decimales que se pidieron', () => {
@@ -42,29 +42,27 @@ describe('formatAmount — el mismo formato en todas las pantallas', () => {
   });
 });
 
-describe('toArs / fromArs — el tipo de cambio que quedó', () => {
-  it('convierte y vuelve sin perder un centavo', () => {
-    // La ida y vuelta tiene que devolver el mismo número: si no, el
-    // equivalente en pesos que muestra una pantalla contradice al de otra.
-    expect(toArs(100)).toBe(157000);
-    expect(fromArs(157000)).toBe(100);
-  });
-
-  it('es exactamente el valor declarado, sin comisión ni redondeo escondido', () => {
-    expect(ARS_PER_USD).toBe(1570);
-    expect(toArs(0)).toBe(0);
-    expect(fromArs(0)).toBe(0);
-  });
-
-  it('mantiene el centavo al ida y vuelta a dos decimales', () => {
-    // El tipo de cambio es el único número de la app que sigue siendo `double`,
-    // porque acá no hay aritmética de dinero: hay una convención de pantalla.
-    // Lo que se protege es que la ida y la vuelta no pierdan el centavo que se
-    // va a pintar.
-    expect(fromArs(toArs(12.34))).toBeCloseTo(12.34, 10);
-    expect(formatAmount(toArs(12.34), 2)).toBe('19.373,80');
-  });
-});
+/*
+ * ── El bloque `toArs / fromArs` que estaba acá se borró a propósito ──────────
+ *
+ * Este archivo pruebaba un tipo de cambio fijo (`ARS_PER_USD = 1570`) con ida
+ * y vuelta sin pérdida de centavo. Esa conversión **se eliminó del producto y
+ * no se reemplaza por nada**: un cociente de dos constantes en el cliente no es
+ * una cotización, es un número con la ropa de una.
+ *
+ * El bug concreto que motivó borrarla: el mismo Bitcoin valía 1.573,41 en pesos
+ * en una pantalla y 813,33 dólares en las otras cuatro, porque cada pantalla
+ * armaba su propio número. `CryptoAssetDetailModal.tsx` lo deja escrito donde
+ * importaba: el «≈ en pesos» desapareció y no se reemplaza por nada.
+ *
+ * Por qué esto importa para el archivo que queda: si en seis meses alguien
+ * reimplementa `toArs` sobre un tipo de cambio fijo y lo reintroduce, este test
+ * vuelve a pasar y el bug vuelve con él. No lo resucites.
+ *
+ * Si la conversión vuelve, entra con su cotización real —el motor de swap, 1inch
+ * para EVM y Jupiter para Solana, con el precio del activo y su origen—, no con
+ * una tabla en el cliente. Y cuando vuelva, este test vuelve con ella.
+ */
 
 describe('assetOrDefault — nunca devuelve null', () => {
   it('devuelve el activo del catálogo cuando el ticker existe', () => {

@@ -14,15 +14,26 @@ import { fileURLToPath } from 'node:url';
  *
  * ── Por qué `environment: 'node'` ───────────────────────────────────────────
  *
- * Todo lo que se prueba acá son normalizadores y aritmética `bigint`: no
+ * Todo lo que se prueba en `test/` son normalizadores y aritmética `bigint`: no
  * renderizan, no tocan `document` y no leen la red. Un entorno de navegador
  * sólo agregaría una superficie de mocking que escondería acoplamiento real.
- * El render se prueba en su propia tanda, con jsdom.
+ * El render se prueba en su propio proyecto, con jsdom.
  *
- * ── Por qué `include` es explícito ──────────────────────────────────────────
+ * ── Por qué dos proyectos y no un `environment` solo ────────────────────────
+ *
+ * Porque los dos grupos necesitan cosas opuestas: `test/` es aritmética pura y
+ * los tests que viven al lado del código, en `__tests__`, montan hooks de React
+ * con `renderHook`. Poner `jsdom` global obligaría a los 165 tests de servicio
+ * a arrancar un DOM que no tocan, y poner `node` global dejaría al primer test
+ * de hook sin renderizador posible.
+ *
+ * El ambiente va por proyecto y no por archivo porque es una propiedad del tipo
+ * de prueba: la que renderiza necesita DOM, la que no, no.
+ *
+ * ── Por qué `include` es explícito en cada proyecto ─────────────────────────
  *
  * Para que un archivo nuevo no entre por accidente: `npm test` corre lo que está
- * en `test/`, y nada más.
+ * en `test/` y lo que está junto al código que prueba, y nada más.
  */
 export default defineConfig({
   resolve: {
@@ -31,7 +42,21 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['test/**/*.test.ts'],
-    environment: 'node',
+    projects: [
+      {
+        test: {
+          name: 'servicios',
+          include: ['test/**/*.test.ts'],
+          environment: 'node',
+        },
+      },
+      {
+        test: {
+          name: 'hooks',
+          include: ['src/**/__tests__/**/*.test.ts'],
+          environment: 'jsdom',
+        },
+      },
+    ],
   },
 });

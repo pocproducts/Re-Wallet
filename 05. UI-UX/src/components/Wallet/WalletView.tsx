@@ -4,6 +4,15 @@ import { Bug, Bell, Eye, EyeOff, ArrowDown, ArrowUp, ChevronRight } from 'lucide
 import { UserProfileData } from '../../types';
 import { splitUsdDisplay } from '../../services/portfolio';
 import { formatVenueRate } from '../../services/walletBalance';
+/*
+ * Los dos tipos de las props de datos salen de los hooks que las producen, no
+ * de los servicios: `usePortfolio` devuelve `PortfolioView` y `useWalletBalance`
+ * devuelve `WalletBalanceScreenView`. Antes esta pantalla no los importaba y
+ * TS los daba por no definidos; el `any` implícito de `.find(...)` más abajo
+ * era la consecuencia, no una causa aparte.
+ */
+import type { PortfolioView } from '../../hooks/usePortfolio';
+import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 
 /**
  * El lugar de Aave V3 en Monad, por la **key** que publica el backend.
@@ -303,10 +312,16 @@ export const WalletView: React.FC<WalletViewProps> = ({
             </div>
 
             {/*
-              Tres acciones: Depositar, Usar ($), Enviar.
-              El botón Usar es redondo, fondo negro, símbolo $ en lima.
+              Dos acciones: Depositar y Enviar.
+
+              El tercer botón era "Usar" ($), y su llamada `onOpenAction('usar')`
+              ya no compila **a propósito**: `'usar'` no está en la unión de la
+              prop (ver el comentario de `onOpenAction` arriba) porque su menú
+              —Comprar/Vender— es un cambio de activo sin motor detrás. Un botón
+              que no puede hacer lo que promete no se ofrece, y el modal que lo
+              atendía sigue estacionado como base de la Fase 2.
             */}
-            <div className="grid grid-cols-3 gap-3 pt-4">
+            <div className="grid grid-cols-2 gap-3 pt-4">
               {/* Depositar */}
               <div className="flex flex-col items-center">
                 <button
@@ -318,20 +333,6 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 </button>
                 <span className="text-xs font-semibold text-black mt-2">
                   Depositar
-                </span>
-              </div>
-
-              {/* Usar: fondo negro, símbolo $ en lima */}
-              <div className="flex flex-col items-center">
-                <button
-                  onClick={() => onOpenAction?.('usar')}
-                  type="button"
-                  className="w-14 h-14 rounded-full bg-black flex items-center justify-center text-[#ccff00] shadow-md hover:bg-slate-900 active:scale-90 transition-transform cursor-pointer"
-                >
-                  <span className="text-2xl font-black">$</span>
-                </button>
-                <span className="text-xs font-semibold text-black mt-2">
-                  Usar
                 </span>
               </div>
 

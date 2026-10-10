@@ -17,7 +17,7 @@ import {
   type PaymentRequest,
 } from '../../services/paymentRequests';
 import { paymentRequestShareUrl } from '../../config/paymentLinks';
-import { encodeQrText, qrSvgPath } from '../../services/qrEncode';
+import { QrCode } from '../common/QrCode';
 
 /**
  * Una dirección de cobro y la red a la que pertenece.
@@ -124,7 +124,7 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
     [charge, origin],
   );
 
-  const qrMatrix = useMemo(() => (shareUrl === null ? null : encodeQrText(shareUrl)), [shareUrl]);
+  
 
   /*
    * El pago con QR ya no simula un pago.
@@ -472,29 +472,20 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
                 Antes esto no era un QR: era el ícono de un QR de la librería de
                 íconos, que es un dibujo y no un código. Ninguna cámara lo leía.
                 Ahora los módulos se calculan del link real —el mismo que se
-                copia y el mismo que abre `PayChargeView`— y si el link no se
+                copia y el mismo que abre `PayChargeView`—, y si el link no se
                 puede codificar no se dibuja nada en su lugar: se avisa abajo y
-                el link sigue disponible.
+                el link sigue disponible. El que decide eso es `QrCode`, que
+                además mide el marco con la misma zona quieta con la que dibuja:
+                antes el `viewBox` declaraba `size + 2` sobre un path que ocupa
+                `size + 8`, y el código salía cortado contra el borde.
               */}
-              {qrMatrix !== null ? (
-                <div className="bg-white rounded-[32px] p-6 shadow-2xl border-2 border-black/10 max-w-[280px] mx-auto flex items-center justify-center">
-                  <svg
-                    viewBox={`0 0 ${qrMatrix.size + 2} ${qrMatrix.size + 2}`}
-                    className="w-56 h-56 rounded-2xl"
-                    role="img"
-                    aria-label="Código QR del cobro"
-                    shapeRendering="crispEdges"
-                  >
-                    <rect width="100%" height="100%" fill="#ffffff" />
-                    <path d={qrSvgPath(qrMatrix)} fill="#000000" />
-                  </svg>
-                </div>
-              ) : (
-                <p className="text-[11px] font-bold text-black/70 bg-black/10 rounded-xl px-3 py-2 leading-snug">
-                  No pudimos dibujar el código. El link de abajo sirve igual: es
-                  el mismo cobro.
-                </p>
-              )}
+              <div className="max-w-[280px] mx-auto">
+                <QrCode
+                  value={shareUrl ?? ''}
+                  label="Código QR del cobro"
+                  fallback="No pudimos dibujar el código. El link de abajo sirve igual: es el mismo cobro."
+                />
+              </div>
 
               {/*
                 El link, escrito, seleccionable y copiable.

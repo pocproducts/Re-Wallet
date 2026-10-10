@@ -7,11 +7,14 @@
  * - Responsive nativo: `viewBox` escala solo
  * - Tooltip on hover: muestra precio y fecha del punto más cercano
  * - Sin labels de precio en Y (limpio), solo tiempo en X
+ * - Grilla horizontal opcional vía `showGrid` (sin labels: solo referencia visual)
  * - Línea suave (quadratic Bezier) + área semitransparente
  */
 
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import type { PricePoint } from '../services/coinGecko';
+// `services/` vive en `src/`, y este componente en `src/components/Investments/`:
+// hacen falta dos niveles (`../../`), no uno.
+import type { PricePoint } from '../../services/coinGecko';
 
 interface PriceChartProps {
   readonly data: PricePoint[];
@@ -21,6 +24,12 @@ interface PriceChartProps {
   readonly fillColor?: string;
   readonly strokeWidth?: number;
   readonly showArea?: boolean;
+  /**
+   * Dibuja líneas de referencia horizontales (3 pasos) detrás de la curva.
+   * Opt-in: el chart sigue siendo limpio por default, pero el call site del
+   * detalle de asset la pide explícitamente para leer mejor la pendiente.
+   */
+  readonly showGrid?: boolean;
   readonly className?: string;
 }
 
@@ -65,6 +74,7 @@ export const PriceChart: React.FC<PriceChartProps> = ({
   fillColor = 'rgba(26, 26, 46, 0.15)',
   strokeWidth = 2.5,
   showArea = true,
+  showGrid = false,
   className = '',
 }) => {
   if (data.length < 2) {
@@ -150,6 +160,13 @@ export const PriceChart: React.FC<PriceChartProps> = ({
     });
   }, [pathPoints]);
 
+  // Grilla horizontal (referencia visual, sin labels de precio).
+  const gridLines = useMemo(() => {
+    if (!showGrid) return [];
+    const steps = 3;
+    return Array.from({ length: steps }, (_, i) => ((i + 1) / (steps + 1)) * height);
+  }, [showGrid, height]);
+
   // Hover state
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -194,6 +211,22 @@ export const PriceChart: React.FC<PriceChartProps> = ({
         onMouseLeave={handleMouseLeave}
         style={{ cursor: 'crosshair' }}
       >
+        {/* Grilla: debajo de área y línea para no competir con el dato */}
+        {gridLines.map((y, i) => (
+          <line
+            key={`grid-${i}`}
+            x1={0}
+            y1={y}
+            x2={width}
+            y2={y}
+            stroke={strokeColor}
+            strokeWidth={1}
+            strokeDasharray="2 4"
+            strokeOpacity={0.15}
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+
         {/* Área bajo la curva */}
         {areaD && (
           <path d={areaD} fill={fillColor} fillOpacity={0.6} />
@@ -260,7 +293,9 @@ export const PriceChart: React.FC<PriceChartProps> = ({
           </g>
         )}
 
-        {/* Puntos en hover */}
+        {/* Puntos en hover. La transición va por CSS (clase de Tailwind),
+            no como atributo SVG: `transition` no existe en SVGProps y el
+            atributo crudo tampoco produce animación. */}
         {pathPoints.map((pt, i) => (
           <circle
             key={i}
@@ -269,8 +304,7 @@ export const PriceChart: React.FC<PriceChartProps> = ({
             r={3}
             fill={strokeColor}
             opacity={hoverIndex === i ? 1 : 0}
-            transition="opacity 0.15s"
-            style={{ transition: 'opacity 0.15s' }}
+            className="transition-opacity duration-150"
           />
         ))}
 

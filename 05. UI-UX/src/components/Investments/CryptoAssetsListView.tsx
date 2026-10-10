@@ -263,7 +263,7 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
         </button>
 
         <h1 className="text-base font-extrabold font-display text-black tracking-tight">
-          Activos Digitales
+          Criptoactivos
         </h1>
 
         <div className="w-10" />
@@ -395,7 +395,16 @@ export const CryptoAssetsListView: React.FC<CryptoAssetsListViewProps> = ({
         <CryptoAssetDetailModal
           asset={selectedAsset}
           onClose={() => setSelectedAsset(null)}
-          userTag={userTag || '$joadata'}
+          userTag={userTag ?? ''}
+          /*
+            El $ReTag va sin marcador de posición.
+
+            Antes se pasaba `userTag || '$joadata'`, y era inocuo porque el tag se
+            limitaba a mostrarse y copiarse como texto. Con el QR de #37 dejó de
+            serlo: el placeholder terminó dentro de un código escaneable, y un
+            QR que dice `$joadata` es una dirección de cobro que no pertenece a
+            nadie. Sin tag, el detalle cae en su `fallback` y lo dice, que es la
+            única respuesta honesta cuando la persona todavía no tiene ReTag.
           /*
             Las tres lecturas que el detalle necesita para no inventar nada: el
             catálogo de redes y activos, los saldos por cadena y el precio por

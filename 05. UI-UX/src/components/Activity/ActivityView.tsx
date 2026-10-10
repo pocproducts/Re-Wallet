@@ -7,10 +7,15 @@ import {
   CheckCircle2,
   Copy,
   Check,
-  QrCode,
+  /*
+   * El ícono de la librería de íconos entra con otro nombre que el componente que
+   * dibuja un QR de verdad: un ícono es un dibujo y ninguna cámara lo lee.
+   */
+  QrCode as QrCodeIcon,
   Clock,
   Share2,
 } from 'lucide-react';
+import { QrCode } from '../common/QrCode';
 import { UserProfileData, TransactionItem } from '../../types';
 
 interface ActivityViewProps {
@@ -76,7 +81,7 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
     if (type === 'qr_charge') {
       return (
         <div className="w-10 h-10 rounded-full bg-black text-[#ccff00] flex items-center justify-center shadow-2xs shrink-0 font-bold border border-slate-900">
-          <QrCode className="w-5 h-5 stroke-[2.2]" />
+          <QrCodeIcon className="w-5 h-5 stroke-[2.2]" />
         </div>
       );
     }
@@ -403,9 +408,24 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
                 <span className="text-[11px] font-extrabold text-black uppercase tracking-wider block">
                   Cobro por QR
                 </span>
-                <div className="w-36 h-36 bg-white mx-auto rounded-xl p-2 border border-black/10 flex items-center justify-center">
-                  <QrCode className="w-full h-full text-black stroke-[1.2]" />
-                </div>
+                {/*
+                  EL QR DEL COBRO.
+
+                  Antes esto no era un QR: era el ícono de un QR de la librería de
+                  íconos, un dibujo que ninguna cámara leía, en la pantalla donde
+                  el comprobante tiene que mostrar el cobro. Lo que se dibuja
+                  ahora es `qrPayload`: el mismo link que se genera al cobrar y
+                  que abre el cobro en otra billetera. Si un movimiento no trae
+                  link, se avisa en lugar de pintar un rectángulo blanco que
+                  parece escaneable.
+                */}
+                <QrCode
+                  value={selectedTx.qrPayload ?? ''}
+                  label="Código QR del cobro por ReWALLET QR Pay"
+                  size={144}
+                  className="mx-auto w-fit"
+                  fallback="Este movimiento no tiene un link de cobro, así que no hay código que mostrar."
+                />
                 <span className="text-[11px] text-slate-600 font-medium block">
                   {selectedTx.expiresAt || 'Expira mañana'}
                 </span>

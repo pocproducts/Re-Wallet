@@ -114,12 +114,12 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
     const row = (
       <>
         <div
-          className={`w-8 h-8 rounded-full ${iconBg} text-white font-bold flex items-center justify-center text-xs shadow-2xs`}
+          className={`w-8 h-8 max-[360px]:w-6 max-[360px]:h-6 rounded-full ${iconBg} text-white font-bold flex items-center justify-center text-xs shadow-2xs`}
         >
           {iconText}
         </div>
-        <div className={`flex items-center gap-1 text-black font-display ${tickerClassName}`}>
-          <span>{ticker}</span>
+        <div className={`flex items-center gap-1 min-w-0 text-black font-display ${tickerClassName}`}>
+          <span className="truncate max-w-[9rem] max-\[360px\]:max-w-[6.5rem]">{ticker}</span>
           <ChevronDown className="w-4 h-4 stroke-[2.5]" />
         </div>
       </>
@@ -144,9 +144,9 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
   };
 
   return (
-    <div className="space-y-3 w-full">
+    <div className="space-y-3 max-[360px]:space-y-2 [@media(max-height:620px)]:space-y-1.5 w-full">
       {/* TARJETA SUPERIOR (ORIGEN) */}
-      <div className="relative bg-white rounded-3xl p-4.5 border border-slate-200/80 shadow-xs space-y-2">
+      <div className="relative bg-white rounded-3xl max-[360px]:rounded-2xl p-4.5 max-[360px]:p-3 [@media(max-height:620px)]:p-3 border border-slate-200/80 shadow-xs space-y-2 [@media(max-height:620px)]:space-y-1">
         <div className="flex items-center justify-between text-xs">
           <span className="font-semibold text-slate-600">{sourceTitle}</span>
           {sourceEquivalent && (
@@ -164,7 +164,7 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
             sourceIconText,
             // El origen pesa más que el destino, y es a propósito: es el activo
             // del que se parte. Estos grosores vienen del diseño original.
-            'font-extrabold text-lg',
+            'font-extrabold text-lg max-[360px]:text-base',
             onSelectSourceAsset,
             sourceAssetSheetOpen,
             sourcePickerLabel,
@@ -174,7 +174,7 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
         </div>
 
         <div className="flex items-center justify-between pt-1">
-          <span className="text-[11px] text-slate-400 font-medium">
+          <span className="text-[11px] text-slate-400 font-medium truncate">
             Saldo: {sourceBalance}
           </span>
           {/*
@@ -204,7 +204,7 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
             onClick={onInvert}
             title="Invertir monedas"
             aria-label="Invertir monedas"
-            className="w-11 h-11 rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-200 flex items-center justify-center shadow-sm active:scale-90 transition-all cursor-pointer"
+            className="w-11 h-11 max-[360px]:w-9 max-[360px]:h-9 [@media(max-height:620px)]:w-9 [@media(max-height:620px)]:h-9 rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-200 flex items-center justify-center shadow-sm active:scale-90 transition-all cursor-pointer"
           >
             <RotateCw
               className={`w-5 h-5 stroke-[2.5] text-emerald-600 transition-transform duration-300 ${
@@ -216,7 +216,7 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
       )}
 
       {/* TARJETA INFERIOR (DESTINO) */}
-      <div className="relative bg-white rounded-3xl p-4.5 border border-slate-200/80 shadow-xs space-y-2">
+      <div className="relative bg-white rounded-3xl max-[360px]:rounded-2xl p-4.5 max-[360px]:p-3 [@media(max-height:620px)]:p-3 border border-slate-200/80 shadow-xs space-y-2 [@media(max-height:620px)]:space-y-1">
         <span className="font-semibold text-slate-600 text-xs block">
           {destinationTitle}
         </span>
@@ -226,7 +226,7 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
             destinationTicker,
             destinationIconBg,
             destinationIconText,
-            'font-bold text-base',
+            'font-bold text-base max-[360px]:text-sm',
             onSelectDestinationAsset,
             destinationAssetSheetOpen,
             destinationPickerLabel,
@@ -239,7 +239,7 @@ export const TradePairCard: React.FC<TradePairCardProps> = ({
         </div>
 
         <div className="flex items-center justify-between pt-1">
-          <span className="text-[11px] text-slate-400 font-medium">
+          <span className="text-[11px] text-slate-400 font-medium truncate">
             Saldo: {destinationBalance}
           </span>
           {feeBadgeText && (

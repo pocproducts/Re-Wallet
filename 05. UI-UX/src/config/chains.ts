@@ -77,7 +77,16 @@ export const arbitrumMainnet = arbitrum;
 export const optimismMainnet = optimism;
 export const polygonMainnet = polygon;
 
-/** Todas las redes EVM soportadas, en el orden en que se ofrecen. Ethereum primero. */
+/**
+ * Todas las redes EVM soportadas, en el orden en que se ofrecen. Ethereum primero.
+ *
+ * Monad está acá —y no queda fuera en un `defineChain` huérfano— porque el
+ * envío deriva sus redes firmables de esta lista: quien no está, no aparece en
+ * `Enviar → Criptoactivos` aunque el catálogo y el backend sí la sirvan. Es el
+ * bug del reporte #35: MON desaparecía de la lista por faltar en esta fila.
+ * La app ya la leía para saldos y el backend ya arma su transacción; lo que
+ * faltaba era la puerta.
+ */
 export const SUPPORTED_EVM_CHAINS = [ethereumMainnet, monad, baseMainnet, arbitrumMainnet, optimismMainnet, polygonMainnet] as const;
 
 /**

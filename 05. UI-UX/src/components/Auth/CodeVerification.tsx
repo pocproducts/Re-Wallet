@@ -175,7 +175,7 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
   };
 
   return (
-    <div className="w-full h-full bg-[#f8f9fa] text-black flex flex-col px-5 safe-top-5 safe-bottom-5 font-sans">
+    <div className="w-full h-full bg-[#0A0A0A] text-white flex flex-col px-6 safe-top-5 safe-bottom-5 font-sans">
       {/* Cabecera: volver + aviso de a dónde se manda el código */}
       <div className="flex items-center justify-between mb-6 pt-2 shrink-0">
         {onBack && (
@@ -183,15 +183,15 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
             onClick={onBack}
             type="button"
             aria-label="Volver"
-            className="w-11 h-11 flex items-center justify-center text-black rounded-full bg-white border border-slate-200/80 shadow-2xs hover:bg-slate-50 active:scale-95 transition-transform cursor-pointer"
+            className="w-11 h-11 flex items-center justify-center bg-[#1C1C1E] border border-[#2C2C2E] text-white rounded-full active:scale-95 transition-transform cursor-pointer"
           >
             <ChevronLeft className="w-5 h-5 stroke-[2.2]" />
           </button>
         )}
 
         <div className="flex items-center gap-2 ml-auto min-w-0">
-          <Mail className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-          <span className="text-[11px] font-extrabold text-black bg-white px-3 py-1 rounded-full border border-slate-200 shadow-2xs truncate">
+          <Mail className="w-3.5 h-3.5 text-[#8E8E93] shrink-0" />
+          <span className="text-[11px] font-extrabold text-white bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[#2C2C2E] truncate">
             {email}
           </span>
         </div>
@@ -199,19 +199,19 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
 
       {/* Título */}
       <div className="space-y-2 mb-6 shrink-0">
-        <h2 className="text-2xl font-black font-display text-black tracking-tight">
-          Verificá tu correo
+        <h2 className="text-2xl font-black text-white tracking-tight uppercase">
+          Verificar correo
         </h2>
-        <p className="text-xs text-slate-500 font-medium">
-          Te mandamos un código de {CODE_LENGTH} dígitos a <span className="font-bold text-black">{email}</span>. Ingresalo abajo para entrar.
+        <p className="text-sm text-[#8E8E93] font-medium leading-relaxed">
+          Te mandamos un código de {CODE_LENGTH} dígitos a <span className="font-bold text-white">{email}</span>.
         </p>
       </div>
 
       {/* Casillas */}
-      <div className="bg-white border border-slate-200/80 rounded-[28px] p-5 shadow-xs">
+      <div>
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-bold text-black flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-slate-500" />
+          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-[#8E8E93]" />
             <span>Código de {CODE_LENGTH} dígitos</span>
           </span>
 
@@ -220,7 +220,7 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
               onClick={clearAll}
               type="button"
               aria-label="Borrar el código"
-              className="text-[11px] font-bold text-slate-500 hover:text-black flex items-center gap-1 active:scale-95 transition-transform cursor-pointer"
+              className="text-[11px] font-bold text-[#8E8E93] hover:text-white flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
             >
               <X className="w-3.5 h-3.5" strokeWidth={2.4} />
               <span>Borrar todo</span>
@@ -245,7 +245,11 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
               maxLength={1}
               autoComplete={index === 0 ? 'one-time-code' : 'off'}
               aria-label={`Dígito ${index + 1} de ${CODE_LENGTH}`}
-              className="flex-1 min-w-0 h-[54px] bg-slate-50 border border-slate-200 focus:border-black rounded-2xl text-center text-xl font-extrabold text-black placeholder-slate-300 focus:outline-none transition-colors"
+              className={`flex-1 min-w-0 h-[55px] bg-[#1C1C1E] border rounded-xl text-center text-2xl font-black placeholder-[#555555] focus:outline-none transition-all caret-lemon ${
+                digit
+                  ? 'border-lemon text-lemon shadow-[0_0_15px_rgba(204,255,0,0.2)]'
+                  : 'border-[#2C2C2E] text-white focus:border-lemon'
+              }`}
             />
           ))}
         </div>
@@ -264,9 +268,9 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
          * eso no es simplicidad, es silencio.
          */}
         {error && (
-          <div className="mt-4 rounded-2xl bg-rose-50 border border-rose-200 p-3.5 flex items-start gap-2.5">
-            <AlertCircle className="w-4 h-4 text-rose-500 mt-0.5 shrink-0" />
-            <p className="text-[12px] font-bold text-black leading-snug flex-1">
+          <div className="mt-4 rounded-2xl bg-rose-500/10 border border-rose-500/40 p-3.5 flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
+            <p className="text-[12px] font-bold text-white leading-snug flex-1">
               {errorMessage ?? 'Ese código no sirvió. Pedí uno nuevo.'}
             </p>
           </div>
@@ -276,7 +280,7 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
       {/* Reenvío: el plazo lo recibe por prop, no lo decide esta pantalla */}
       <div className="flex-1 flex items-end justify-center pb-2">
         {secondsLeft > 0 ? (
-          <p className="text-xs font-medium text-slate-500 text-center">
+          <p className="text-xs font-medium text-[#8E8E93] text-center">
             Podés pedir otro código en {secondsLeft}{' '}
             {secondsLeft === 1 ? 'segundo' : 'segundos'}.
           </p>
@@ -284,9 +288,9 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
           <button
             onClick={handleResend}
             type="button"
-            className="text-xs font-bold text-black underline underline-offset-4 active:scale-95 transition-transform cursor-pointer"
+            className="text-sm font-bold text-lemon active:scale-95 transition-transform cursor-pointer"
           >
-            ¿No te llegó? Mandá otro código
+            ¿No te llegó? Reenviar código
           </button>
         )}
       </div>

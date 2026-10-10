@@ -42,7 +42,7 @@
  */
 import React, { useCallback, useState } from 'react';
 import { useLoginWithEmail, usePrivy } from '@privy-io/react-auth';
-import { Loader2, Mail } from 'lucide-react';
+import { ChevronLeft, Loader2, Mail } from 'lucide-react';
 
 import { CodeVerification } from './CodeVerification';
 import { API_BASE_URL } from '../../services/api';
@@ -61,13 +61,26 @@ const ETAPA_CODIGO = 'login_codigo';
 /** Lo más honesto que se puede validar en el navegador, sin adivinar. */
 const esCorreo = (valor: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valor.trim());
 
-type Etapa = 'correo' | 'codigo';
+/*
+ * Etapas del flujo: `bienvenida` es la puerta pure-visual de la maqueta — las
+ * dos palabras (“Crear cuenta” / “Ya tengo una cuenta”) llevan a la misma
+ * etapa `correo`, porque `sendCode({ email })` en Privy crea o entra igual:
+ * no hay bifurcación de lógica, solo de copy.
+ */
+type Etapa = 'bienvenida' | 'correo' | 'codigo';
+
+/*
+ * El neón de marca es `--color-lemon` (`#ccff00`) de `index.css`. La maqueta
+ * muestra `#D4FF00`, pero la app entera ya vive en lemon: se usa el token, no
+ * el valor literal de la maqueta. Los fondos dark vienen de la maqueta:
+ * `#0A0A0A` página, `#1C1C1E` superficies, `#2C2C2E` bordes, `#8E8E93` suaves.
+ */
 
 export const LoginGate: React.FC = () => {
   const { ready, authenticated } = usePrivy();
   const { sendCode, loginWithCode } = useLoginWithEmail();
 
-  const [etapa, setEtapa] = useState<Etapa>('correo');
+  const [etapa, setEtapa] = useState<Etapa>('bienvenida');
   const [email, setEmail] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [verificando, setVerificando] = useState(false);
@@ -156,9 +169,9 @@ export const LoginGate: React.FC = () => {
    */
   if (!ready) {
     return (
-      <div className="w-full h-full bg-[#f8f9fa] flex flex-col items-center justify-center gap-3 font-sans">
-        <Loader2 className="w-6 h-6 text-black animate-spin" />
-        <p className="text-xs font-medium text-slate-500">Preparando el ingreso…</p>
+      <div className="w-full h-full bg-[#0A0A0A] flex flex-col items-center justify-center gap-3 font-sans">
+        <Loader2 className="w-6 h-6 text-lemon animate-spin" />
+        <p className="text-xs font-medium text-[#8E8E93]">Preparando el ingreso…</p>
       </div>
     );
   }
@@ -195,8 +208,8 @@ export const LoginGate: React.FC = () => {
         />
 
         {verificando && (
-          <div className="absolute inset-0 bg-[#f8f9fa]/80 flex items-center justify-center">
-            <Loader2 className="w-6 h-6 text-black animate-spin" />
+          <div className="absolute inset-0 bg-[#0A0A0A]/80 flex items-center justify-center">
+            <Loader2 className="w-6 h-6 text-lemon animate-spin" />
           </div>
         )}
       </div>
@@ -205,25 +218,89 @@ export const LoginGate: React.FC = () => {
 
   const ocupado = enviando;
 
+  if (etapa === 'bienvenida') {
+    return (
+      <div className="w-full h-full bg-[#0A0A0A] text-white flex flex-col px-6 safe-top-5 safe-bottom-5 font-sans">
+        {/* Cabecera: marca */}
+        <div className="flex items-center justify-between pt-2 shrink-0">
+          <span className="text-lemon text-2xl font-black tracking-tight">rewallet.</span>
+          <span className="bg-white/10 text-white text-[12px] font-semibold px-3 py-1.5 rounded-full">
+            ES
+          </span>
+        </div>
+
+        {/* Claim */}
+        <div className="flex-1 flex flex-col justify-center">
+          <p className="text-[15px] text-[#8E8E93] mb-2">Tu dinero.</p>
+          <h1 className="text-[38px] leading-[1.05] font-black tracking-tight mb-4">
+            UNA BILLETERA INTELIGENTE
+          </h1>
+          <p className="text-[15px] leading-relaxed text-[#8E8E93] mb-10">
+            Gastá, enviá y ahorrá desde una sola cuenta. Transferencias
+            instantáneas a cualquiera en ReWALLET.
+          </p>
+        </div>
+
+        {/* Una puerta, dos palabras: ambas llevan al mismo paso correo→código */}
+        <div className="shrink-0 pb-2">
+          <button
+            type="button"
+            onClick={() => setEtapa('correo')}
+            className="w-full min-h-[56px] rounded-full bg-lemon text-black text-base font-bold active:scale-[0.98] transition-transform cursor-pointer mb-3"
+          >
+            Crear cuenta
+          </button>
+          <button
+            type="button"
+            onClick={() => setEtapa('correo')}
+            className="w-full min-h-[56px] rounded-full bg-[#1C1C1E] border border-[#2C2C2E] text-white text-base font-bold active:bg-[#2C2C2E] active:scale-[0.98] transition-all cursor-pointer"
+          >
+            Ya tengo una cuenta
+          </button>
+
+          <p className="text-[10px] text-[#555555] text-center leading-relaxed mt-6">
+            Al continuar aceptás nuestros Términos y Política de Privacidad.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="w-full h-full bg-[#f8f9fa] text-black flex flex-col px-5 safe-top-5 safe-bottom-5 font-sans">
+    <div className="w-full h-full bg-[#0A0A0A] text-white flex flex-col px-6 safe-top-5 safe-bottom-5 font-sans">
+      {/* Cabecera: volver a la bienvenida */}
+      <div className="flex items-center justify-between pt-2 mb-8 shrink-0">
+        <button
+          onClick={() => {
+            setErrorMessage(null);
+            setEtapa('bienvenida');
+          }}
+          type="button"
+          aria-label="Volver"
+          className="w-11 h-11 flex items-center justify-center bg-[#1C1C1E] border border-[#2C2C2E] text-white rounded-full active:scale-95 transition-transform cursor-pointer"
+        >
+          <ChevronLeft className="w-5 h-5 stroke-[2.2]" />
+        </button>
+        <span className="text-lemon text-xl font-black tracking-tight">rewallet.</span>
+      </div>
+
       <div className="flex-1 flex flex-col justify-center">
-        <div className="w-14 h-14 rounded-2xl bg-black text-[#ccff00] flex items-center justify-center shadow-md mb-6">
+        <div className="w-14 h-14 rounded-2xl bg-[#1C1C1E] border border-[#2C2C2E] text-lemon flex items-center justify-center mb-6">
           <Mail className="w-6 h-6 stroke-[2.2]" />
         </div>
 
-        <div className="space-y-2 mb-6">
-          <h1 className="text-2xl font-black font-display text-black tracking-tight">
-            Entrá a tu cuenta
+        <div className="space-y-2 mb-8">
+          <h1 className="text-2xl font-black text-white tracking-tight">
+            Entrá con tu correo
           </h1>
-          <p className="text-xs text-slate-500 font-medium">
+          <p className="text-xs text-[#8E8E93] font-medium">
             Escribí tu correo y te mandamos un código de 6 dígitos. Con ese código
             entrás: si es la primera vez, la cuenta se crea sola.
           </p>
         </div>
 
-        <div className="bg-white border border-slate-200/80 rounded-[28px] p-5 shadow-xs space-y-4">
-          <label htmlFor="login-email" className="block text-xs font-bold text-black">
+        <div className="space-y-4">
+          <label htmlFor="login-email" className="block text-xs font-bold text-white">
             Correo electrónico
           </label>
 
@@ -245,18 +322,18 @@ export const LoginGate: React.FC = () => {
             }}
             placeholder="vos@correo.com"
             disabled={ocupado}
-            className="w-full min-h-[48px] bg-slate-50 border border-slate-200 focus:border-black rounded-2xl px-3.5 text-base text-black placeholder-slate-400 focus:outline-none transition-colors font-medium disabled:opacity-60"
+            className="w-full min-h-[52px] bg-[#1C1C1E] border border-[#2C2C2E] focus:border-lemon rounded-full px-5 text-base text-white placeholder-[#8E8E93] focus:outline-none transition-colors font-medium disabled:opacity-60"
           />
 
           {errorMessage && (
-            <p className="text-[12px] font-bold text-rose-600 leading-snug">{errorMessage}</p>
+            <p className="text-[12px] font-bold text-rose-400 leading-snug">{errorMessage}</p>
           )}
 
           <button
             type="button"
             onClick={() => void handleSendCode()}
             disabled={ocupado}
-            className="w-full min-h-[48px] rounded-2xl bg-black text-[#ccff00] text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 disabled:opacity-60 active:scale-98 transition-transform cursor-pointer"
+            className="w-full min-h-[56px] rounded-full bg-lemon text-black text-sm font-black uppercase tracking-wider flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-all cursor-pointer"
           >
             {ocupado ? (
               <>
@@ -270,7 +347,7 @@ export const LoginGate: React.FC = () => {
         </div>
       </div>
 
-      <p className="text-[11px] font-medium text-slate-400 text-center shrink-0">
+      <p className="text-[11px] font-medium text-[#555555] text-center shrink-0 pb-1">
         Te mandamos un código a ese correo. No hace falta crear la cuenta antes.
       </p>
     </div>

@@ -39,7 +39,6 @@ import {
   ShieldCheck,
   Wallet,
   Link2,
-  QrCode,
 } from 'lucide-react';
 
 const TRANSACTIONS_STORAGE_KEY = 'rewallet_transactions_data';
@@ -515,17 +514,8 @@ export default function App() {
                     setActiveActionModal(null);
                     setCurrentTab(tab);
                   }}
+                  onScanQr={() => setIsChargeModalOpen(true)}
                 />
-                {/* Botón QR flotante - fuera del navbar, mismo tamaño que los botones de acción */}
-                <button
-                  onClick={() => setIsChargeModalOpen(true)}
-                  type="button"
-                  aria-label="Escanear QR"
-                  title="Escanear QR"
-                  className="absolute bottom-20 right-4 z-50 w-14 h-14 rounded-full bg-black flex items-center justify-center shadow-[0_8px_25px_rgba(0,0,0,0.3)] active:scale-90 transition-transform cursor-pointer border border-slate-800"
-                >
-                  <QrCode className="w-6 h-6 text-[#ccff00] stroke-[2.2]" />
-                </button>
               </div>
             )}
           </>
@@ -590,7 +580,7 @@ export default function App() {
           />
         )}
 
-        {/* 3. Activos Digitales (3er nivel desde Inversiones -> Activos Digitales, sumatoria + 10 assets) */}
+        {/* 3. Criptoactivos (3er nivel desde Inversiones -> Criptoactivos, sumatoria + 10 assets) */}
         {isCryptoListOpen && (
           <CryptoAssetsListView
             onBack={() => setIsCryptoListOpen(false)}
@@ -691,7 +681,7 @@ export default function App() {
                   }}
                   className="p-2.5 rounded-xl hover:bg-slate-50 flex items-center justify-between cursor-pointer transition-colors"
                 >
-                  <span className="font-bold text-black">Activos Digitales</span>
+                  <span className="font-bold text-black">Criptoactivos</span>
                   <span className="text-[11px] text-[#00c076] font-bold">Ver cartera</span>
                 </div>
                 <div

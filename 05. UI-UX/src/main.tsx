@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { PrivyProvider } from '@privy-io/react-auth';
+import type { PrivyClientConfig } from '@privy-io/react-auth';
 
 import App from './App.tsx';
 import './index.css';
@@ -16,11 +17,27 @@ import { DEFAULT_EVM_CHAIN, SUPPORTED_EVM_CHAINS } from './config/chains';
  * campos —`defaultChain` y `supportedChains`— leídos de las definiciones de tipo
  * del paquete instalado, no de memoria.
  */
-const privyConfig = {
+const privyConfig: PrivyClientConfig = {
   defaultChain: DEFAULT_EVM_CHAIN,
   // A mutable array, no `as const`: `PrivyClientConfig.supportedChains` is
   // `Chain[]`, y un `readonly` no se le puede asignar.
   supportedChains: [...SUPPORTED_EVM_CHAINS],
+  /*
+   * Las billeteras embebidas **no se crean solas al iniciar sesión**.
+   *
+   * Esto antes era `embeddedWallets: false`, un booleano que el tipo de
+   * `@privy-io/react-auth@3.47` no tiene: `PrivyClientConfig.embeddedWallets`
+   * es un objeto, y esta app sí usa billeteras embebidas —las pide a mano con
+   * `useCreateWallet` en `useUserWallets`— así que tampoco corresponde
+   * apagarlas: sólo que no nazcan de forma automática.
+   *
+   * La forma que la librería espera para eso es `createOnLogin: 'off'`, en cada
+   * cadena por separado, y es además el valor por defecto de la librería.
+   */
+  embeddedWallets: {
+    ethereum: { createOnLogin: 'off' },
+    solana: { createOnLogin: 'off' },
+  },
 };
 
 /**

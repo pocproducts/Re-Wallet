@@ -44,8 +44,13 @@ import type { AssetTicker } from './assets';
  * que es el tipo de detalle que después se reporta como bug.
  *
  * Esto **no es un mock**: formatea un número que le pasó otro, y no inventa el
- * número. Sigue siendo el formateador que usan las pantallas que pintan un
- * equivalente en pesos.
+ * número.
+ *
+ * Es la convención de **todas** las pantallas que muestran una cifra, sin
+ * excepción ni bandera por mercado: separador de miles, coma decimal y la
+ * cantidad de decimales que le pide quien llama. No hay conversión adentro ni
+ * dehors —la equivalencia en pesos salió del producto— y no vuelve sin una
+ * cotización real: un cociente de dos constantes no es un tipo de cambio.
  */
 export function formatAmount(amount: number, decimals: number): string {
   return amount.toLocaleString('es-AR', {

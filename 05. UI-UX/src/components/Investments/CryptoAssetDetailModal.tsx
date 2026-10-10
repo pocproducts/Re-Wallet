@@ -1,11 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Heart,
   ArrowDown,
   ArrowUp,
   ChevronRight,
-  QrCode,
+  /*
+   * El ícono de la librería de íconos y el componente que dibuja un QR de
+   * verdad se llaman casi igual, y por eso el primero entra con otro nombre.
+   * Un ícono es un dibujo: ninguna cámara lo lee.
+   */
+  QrCode as QrCodeIcon,
   Copy,
   Check,
   CheckCircle2,
@@ -17,6 +22,7 @@ import {
   TrendingDown,
 } from 'lucide-react';
 import { AssetTradeCard } from '../common';
+import { QrCode } from '../common/QrCode';
 import { PriceChart } from './PriceChart';
 import { usePriceHistory } from '../../hooks/usePriceHistory';
 import {
@@ -25,6 +31,12 @@ import {
   useTradeCatalog,
 } from '../../hooks/useAssetTrade';
 import { assetOrDefault } from '../../config/markets';
+import {
+  readContacts as fetchContacts,
+  EMPTY_CONTACTS,
+  type ContactsView,
+  type RewalletContact,
+} from '../../services/contacts';
 import type { PortfolioHolding } from '../../services/portfolio';
 import type { DepositInfoView } from '../../hooks/useDepositInfo';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
@@ -151,12 +163,24 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
   const [isFavorite, setIsFavorite] = useState(false);
   const [keypadAmount, setKeypadAmount] = useState('0');
   const [lemontagSearch, setLemontagSearch] = useState('');
+  /*
+   * El destinatario son **datos del contacto real** que se acaba de elegir: su
+   * nombre de perfil si lo tiene, y su tag siempre. El nombre puede venir `null`
+   * desde la API, porque es un dato de perfil que no está garantizado.
+   */
   const [selectedRecipient, setSelectedRecipient] = useState<{
-    name: string;
+    name: string | null;
     tag: string;
-    avatarBg: string;
-    avatarImg: string;
   } | null>(null);
+  /*
+   * La agenda: quién recibió plata **desde esta billetera**. Antes eran cinco
+   * contactos escritos en el JSX, con nombres y tags de personas reales, y
+   * tocar una fila mandaba el envío a una de ellas: una lista que no sale de tus
+   * envíos es una lista de destinos, no una agenda. Ahora sale de la misma fuente
+   * que usa el modal de acción, y sus estados son honestos —cargando, error y
+   * lista vacía son tres hechos distintos y se muestran distinto.
+   */
+  const [contacts, setContacts] = useState<ContactsView>(EMPTY_CONTACTS);
   const [destinationAddress, setDestinationAddress] = useState('');
   const [copied, setCopied] = useState(false);
 
@@ -195,6 +219,45 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
    * filas que no se pudieron leer sin cifra en vez de un cero.
    */
   const tradeCatalog = useTradeCatalog({ depositInfo, holdings, balance });
+
+  /*
+   * La agenda se lee cuando se abre la pantalla de "Ingresá el $ReTag", no antes.
+   *
+   * Es una lectura de lo que **esta** billetera ya mandó, así que no tiene sentido
+   * pagarla al abrir el modal: se pide cuando alguien la va a mirar.
+   */
+  useEffect(() => {
+    if (currentView !== 'send_lemon' || contacts.status !== 'idle') return;
+
+    let alive = true;
+    setContacts({ status: 'loading', contacts: [] });
+    fetchContacts()
+      .then((view) => {
+        if (alive) setContacts(view);
+      })
+      .catch(() => {
+        if (alive) setContacts({ status: 'error', contacts: [] });
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [currentView, contacts.status]);
+
+  /*
+   * Los contactos que se ven: los reales, filtrados por lo que se escribió en el
+   * buscador. Se filtra por nombre **y** por tag, porque el campo dice "Buscá por
+   * $ReTag": lo que la persona tiene a mano es el handle.
+   */
+  const filteredContacts: readonly RewalletContact[] = useMemo(() => {
+    const needle = lemontagSearch.trim().toLowerCase();
+    if (needle.length === 0) return contacts.contacts;
+    return contacts.contacts.filter(
+      (contact) =>
+        contact.tag.toLowerCase().includes(needle) ||
+        (contact.name ?? '').toLowerCase().includes(needle),
+    );
+  }, [contacts.contacts, lemontagSearch]);
 
   /*
    * Comprar sale de los Dólares Digitales y llega al activo que se está viendo;
@@ -295,6 +358,17 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
       : (networksForAsset[Math.min(selectedNetworkIndex, networksForAsset.length - 1)] ?? null);
   const selectedNetwork = selectedNetworkEntry?.name ?? null;
   const depositAddress = selectedNetworkEntry?.address ?? null;
+
+  /**
+   * Lo que se codifica en el QR de $ReTag: el tag de esta persona, el mismo
+   * que está escrito debajo del código.
+   *
+   * Es el identificador que el flujo de envío acepta como destino, y viene por
+   * prop desde la agenda de la app. Sin tag no hay nada que codificar, y un QR
+   * de una cadena vacía no es un QR: es un rectángulo blanco que se presenta
+   * como si se pudiera escanear.
+   */
+  const retagValue = (userTag ?? '').trim();
 
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] text-black flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans w-full max-w-md mx-auto">
@@ -636,12 +710,28 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 </div>
               </div>
 
+              {/*
+                EL QR DE $ReTag.
+
+                Antes esto no era un QR: era el ícono de un QR de la librería de
+                íconos, que es un dibujo y ninguna cámara lo leía. Ahora los
+                módulos se calculan del tag real de esta persona —el mismo que
+                está escrito abajo y el mismo que copia "Compartir datos"— y si
+                no hay tag, en lugar del código aparece el aviso: un código en
+                blanco es peor que un aviso, porque se presenta como escaneable.
+              */}
               <div className="relative w-60 h-60 mx-auto bg-black p-3.5 rounded-[32px] flex items-center justify-center shadow-xs">
-                <div className="w-full h-full bg-white rounded-2xl flex items-center justify-center p-3 relative overflow-hidden">
-                  <QrCode className="w-full h-full text-black stroke-[1.15]" />
-                  <div className="w-13 h-13 rounded-full border-[3px] border-white bg-slate-900 shadow-md flex items-center justify-center text-base text-[#ccff00] absolute">
-                    👾
-                  </div>
+                <QrCode
+                  value={retagValue}
+                  label="Código QR de tu $ReTag para recibir en ReWALLET"
+                  size={186}
+                  className="w-full"
+                  fallback="No tenemos un $ReTag tuyo para dibujar el código."
+                />
+                {/* El avatar va por encima, como el diseño, pero no tapa los
+                    datos: los lectores del QR siguen leyendo los módulos. */}
+                <div className="w-13 h-13 rounded-full border-[3px] border-white bg-slate-900 shadow-md flex items-center justify-center text-base text-[#ccff00] absolute pointer-events-none">
+                  👾
                 </div>
               </div>
 
@@ -725,12 +815,28 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 </div>
               </div>
 
+              {/*
+                EL QR DE LA DIRECCIÓN DE DEPÓSITO.
+
+                Lo mismo que arriba y por lo mismo: el ícono era un dibujo, no un
+                código. La dirección sale de `networks[].address`, que es la de
+                esta persona en la red elegida, y el aviso aparece cuando esa
+                cadena no trajo dirección.
+              */}
               <div className="relative w-60 h-60 mx-auto bg-black p-3.5 rounded-[32px] flex items-center justify-center shadow-xs">
-                <div className="w-full h-full bg-white rounded-2xl flex items-center justify-center p-3 relative">
-                  <QrCode className="w-full h-full text-black stroke-[1.15]" />
-                  <div className={`w-10 h-10 rounded-xl ${asset.iconBg} text-white flex items-center justify-center font-bold text-xs absolute shadow-md`}>
-                    {asset.iconText}
-                  </div>
+                <QrCode
+                  value={depositAddress ?? ''}
+                  label={`Código QR de tu dirección de ${asset.ticker} en ${selectedNetwork ?? 'la red elegida'}`}
+                  size={186}
+                  className="w-full"
+                  fallback={
+                    depositAddress === null
+                      ? `No hay una dirección de depósito de ${asset.ticker} en ${selectedNetwork ?? 'esta red'}. Elegí otra red para recibir.`
+                      : 'No pudimos dibujar el código. La dirección de abajo sirve igual.'
+                  }
+                />
+                <div className={`w-10 h-10 rounded-xl ${asset.iconBg} text-white flex items-center justify-center font-bold text-xs absolute shadow-md pointer-events-none`}>
+                  {asset.iconText}
                 </div>
               </div>
 
@@ -1121,13 +1227,12 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 >
                   <Copy className="w-5 h-5 stroke-[2]" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setLemontagSearch('$lujyyctz')}
-                  className="p-1 hover:opacity-70 active:scale-90"
-                >
-                  <QrCode className="w-5 h-5 stroke-[2]" />
-                </button>
+                {/*
+                  El botón de "Escanear QR" escribía un tag inventado en el campo.
+                  Tampoco escaneaba: en esta pantalla no hay lector de QR, así que
+                  su única función era la demo y se saca en vez de dejarla
+                  escribiendo un destino falso.
+                */}
               </div>
             </div>
 
@@ -1143,42 +1248,69 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </button>
             </div>
 
-            <div className="bg-white rounded-[32px] p-2 shadow-sm border border-slate-200/80 divide-y divide-slate-100 overflow-hidden">
-              {[
-                { name: 'Luján Del Rosario Cortez', tag: '$lujyyctz', avatarBg: 'bg-emerald-500', avatarImg: '👾' },
-                { name: 'Nicolas Facundo Chaves', tag: '$faccha20', avatarBg: 'bg-yellow-400', avatarImg: '🤠' },
-                { name: 'Steven Antonio Galeano Bañol', tag: '$rapsesino', avatarBg: 'bg-orange-300', avatarImg: '🧑‍💻' },
-                { name: 'Santiago Fernando Diaz Arak...', tag: '$santiagodiazdj2', avatarBg: 'bg-indigo-500', avatarImg: '⚡' },
-                { name: 'Taiel Miranda', tag: '$taiel.miranda.okkk', avatarBg: 'bg-emerald-500', avatarImg: '🐼' },
-              ]
-                .filter((c) =>
-                  lemontagSearch.trim()
-                    ? c.name.toLowerCase().includes(lemontagSearch.toLowerCase()) ||
-                      c.tag.toLowerCase().includes(lemontagSearch.toLowerCase())
-                    : true
-                )
-                .map((contact) => (
-                  <div
-                    key={contact.tag}
-                    onClick={() => {
-                      setSelectedRecipient(contact);
-                      setKeypadAmount('0');
-                      setCurrentView('send_lemon_amount');
-                    }}
-                    className="p-3.5 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all rounded-2xl"
-                  >
-                    <div className="flex items-center gap-3.5">
-                      <div className={`w-11 h-11 rounded-full ${contact.avatarBg} p-0.5 flex items-center justify-center overflow-hidden shadow-xs shrink-0`}>
-                        <span className="text-xl">{contact.avatarImg}</span>
-                      </div>
-                      <div>
-                        <span className="text-sm font-bold text-black block leading-tight">{contact.name}</span>
-                        <span className="text-xs text-slate-400 font-medium block mt-0.5">{contact.tag}</span>
-                      </div>
+<div className="bg-white rounded-[32px] p-2 shadow-sm border border-slate-200/80 divide-y divide-slate-100 overflow-hidden">
+              {contacts.status === 'loading' && (
+                <p className="p-4 text-sm font-medium text-slate-400">Cargando a quién le enviaste…</p>
+              )}
+
+              {contacts.status === 'error' && (
+                /*
+                 * No se pudo leer la agenda. La alternativa —una lista vacía—
+                 * diría "nunca enviaste a nadie", que es un hecho distinto del que
+                 * sabemos, así que esto es una ausencia declarada.
+                 */
+                <div className="p-4 space-y-1">
+                  <p className="text-sm font-bold text-black">No pudimos leer tus contactos.</p>
+                  <p className="text-xs font-medium text-slate-500 leading-snug">
+                    Podés igual escribir el $ReTag de arriba y enviarle.
+                  </p>
+                </div>
+              )}
+
+              {contacts.status === 'ready' && filteredContacts.length === 0 && (
+                <div className="p-4 space-y-1">
+                  <p className="text-sm font-bold text-black">
+                    {lemontagSearch.trim().length > 0
+                      ? 'Nadie coincide con esa búsqueda.'
+                      : 'Todavía no le enviaste plata a nadie.'}
+                  </p>
+                  <p className="text-xs font-medium text-slate-500 leading-snug">
+                    {lemontagSearch.trim().length > 0
+                      ? 'Probá con otro tag.'
+                      : 'Cada $reWALLET a quien le envíes aparece acá, para no tener que escribir su tag.'}
+                  </p>
+                </div>
+              )}
+
+              {filteredContacts.map((contact) => (
+                <div
+                  key={contact.tag}
+                  onClick={() => {
+                    setSelectedRecipient({ name: contact.name, tag: contact.tag });
+                    setKeypadAmount('0');
+                    setCurrentView('send_lemon_amount');
+                  }}
+                  className="p-3.5 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all rounded-2xl"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {/* La inicial del tag: un dato derivado del handle, no un avatar inventado. */}
+                    <div className="w-11 h-11 rounded-full bg-slate-900 text-[#ccff00] font-display font-extrabold text-base flex items-center justify-center shrink-0">
+                      {contact.tag.replace(/^@/, '').slice(0, 1).toUpperCase()}
                     </div>
-                    <ChevronRight className="w-4 h-4 text-slate-300 stroke-[2.5]" />
+                    <div className="min-w-0">
+                      {/* Sin nombre de perfil, el lugar del nombre lo ocupa el tag. */}
+                      <span className="text-sm font-bold text-black block leading-tight truncate">
+                        {contact.name ?? `$${contact.tag}`}
+                      </span>
+                      <span className="text-xs text-slate-400 font-medium block mt-0.5 truncate">
+                        {contact.name === null ? '' : `$${contact.tag}`}
+                        {contact.sends > 1 ? ` · ${contact.sends} envíos` : ''}
+                      </span>
+                    </div>
                   </div>
-                ))}
+                  <ChevronRight className="w-4 h-4 text-slate-300 stroke-[2.5]" />
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -1208,13 +1340,19 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
           <div className="flex-1 flex flex-col px-5 pb-6 space-y-4 max-w-sm mx-auto w-full">
             {selectedRecipient && (
               <div className="bg-white rounded-2xl p-3 border border-slate-200/80 flex items-center gap-3 shadow-2xs">
-                <div className={`w-10 h-10 rounded-full ${selectedRecipient.avatarBg} flex items-center justify-center shrink-0`}>
-                  <span className="text-lg">{selectedRecipient.avatarImg}</span>
+                {/* La inicial del tag, como en la agenda: dato derivado del handle. */}
+                <div className="w-10 h-10 rounded-full bg-slate-900 text-[#ccff00] font-display font-extrabold flex items-center justify-center shrink-0">
+                  {selectedRecipient.tag.replace(/^@/, '').slice(0, 1).toUpperCase()}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <span className="text-xs text-slate-400 font-medium block">Destinatario</span>
-                  <span className="text-sm font-bold text-black block leading-tight">{selectedRecipient.name}</span>
-                  <span className="text-xs font-semibold text-emerald-600">{selectedRecipient.tag}</span>
+                  {/* Sin nombre de perfil, el lugar del nombre lo ocupa el tag. */}
+                  <span className="text-sm font-bold text-black block leading-tight truncate">
+                    {selectedRecipient.name ?? `$${selectedRecipient.tag}`}
+                  </span>
+                  <span className="text-xs font-semibold text-emerald-600 truncate">
+                    {selectedRecipient.name === null ? '' : `$${selectedRecipient.tag}`}
+                  </span>
                 </div>
               </div>
             )}
@@ -1308,7 +1446,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                   onClick={() => setDestinationAddress('0xCcBe254009A4e82B96cD3105B89B2EA68f267a6')}
                   className="p-1.5 rounded-lg text-slate-600 hover:text-black"
                 >
-                  <QrCode className="w-5 h-5" />
+                  <QrCodeIcon className="w-5 h-5" />
                 </button>
               </div>
             </div>

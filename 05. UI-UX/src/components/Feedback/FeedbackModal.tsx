@@ -11,6 +11,7 @@ import {
   Check,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { submitFeedback, collectDiagnostics } from '../../services/feedback';
 
 interface FeedbackModalProps {
   isOpen: boolean;
@@ -28,16 +29,31 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
   const [includeDiagnostics, setIncludeDiagnostics] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!comment.trim()) return;
+    if (!comment.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
+    setSubmitError(null);
+    try {
+      /*
+       * El servidor responde con el issue que creó —numero y url—, y acá no se
+       * usa: el botón de "ver el issue en GitHub" se sacó de la app porque es
+       * una pantalla interna de seguimiento y no le dice nada a quien reporta.
+       * Lo que importa es que el envío haya salido.
+       *
+       * Queda el resto del contrato (`ReportedIssue`) porque es la forma en que
+       * el backend declara lo que devolvió, no porque esta pantalla lo use.
+       */
+      await submitFeedback({
+        category,
+        comment: comment.trim(),
+        diagnostics: includeDiagnostics ? collectDiagnostics(userTag) : null,
+      });
       setIsSubmitted(true);
       try {
         confetti({
@@ -49,11 +65,17 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
       } catch (err) {
         console.warn('Confetti error:', err);
       }
-    }, 900);
+    } catch (err) {
+      console.error('Feedback submit failed:', err);
+      setSubmitError('No pudimos enviar tu reporte. Probá de nuevo en unos segundos.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleReset = () => {
     setIsSubmitted(false);
+    setSubmitError(null);
     setComment('');
     onClose();
   };
@@ -191,6 +213,12 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
               </div>
             </div>
 
+            {submitError && (
+              <p className="text-[11px] font-bold text-red-500" role="alert">
+                {submitError}
+              </p>
+            )}
+
             {/* Botón Enviar */}
             <button
               type="submit"
@@ -219,7 +247,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                 ¡Gracias por tu Feedback!
               </h3>
               <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
-                Hemos recibido tu reporte correctamente. Nuestro equipo lo revisará para seguir optimizando la aplicación.
+                Tu reporte ya está en nuestro canal de seguimiento. Nuestro equipo lo revisará para seguir optimizando la aplicación.
               </p>
             </div>
 

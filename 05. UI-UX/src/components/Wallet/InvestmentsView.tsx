@@ -256,7 +256,7 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
 
       {/* =========================================================================
           ACTIVAS EN INVERSIONES:
-          1. Activos Digitales (Abre layout 3er nivel CryptoAssetsListView)
+          1. Criptoactivos (Abre layout 3er nivel CryptoAssetsListView)
           2. Dólares digitales (Abre layout 3er nivel DigitalDollarsView)
 
           Las dos tarjetas, en dos columnas, con sus títulos y su drill-down de
@@ -265,7 +265,7 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
           el USDC libre de cada cadena junto con lo depositado en los pools.
          ========================================================================= */}
       <div className="grid grid-cols-2 gap-3">
-        {/* TARJETA 1: Activos Digitales -> Abre 3er nivel */}
+        {/* TARJETA 1: Criptoactivos -> Abre 3er nivel */}
         <div
           onClick={onOpenCryptoList}
           className="bg-white rounded-[28px] p-4.5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] border border-slate-200/80 flex flex-col justify-between space-y-4 hover:border-black/20 active:scale-98 transition-all cursor-pointer"
@@ -280,7 +280,7 @@ export const InvestmentsView: React.FC<InvestmentsViewProps> = ({
           </div>
 
           <div>
-            <span className="text-xs font-semibold text-slate-500 block">Activos Digitales</span>
+            <span className="text-xs font-semibold text-slate-500 block">Criptoactivos</span>
             <div className="flex items-baseline font-display mt-0.5">
               <span className="text-lg font-extrabold text-black">
                 {!showBalance || cryptoTotal === null ? '••' : cryptoTotal.whole}
