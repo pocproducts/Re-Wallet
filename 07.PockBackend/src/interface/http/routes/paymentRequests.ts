@@ -7,21 +7,39 @@
  *
  * ```json
  * POST /api/payment-requests
- * { "amount": "150.25", "note": "la vuelta", "expiresInMs": 86400000 }
+ * { "amount": "150.25", "chain": "monad", "asset": { "symbol": "USDC" },
+ *   "note": "la vuelta", "expiresInMs": 86400000 }
  *
  * 201 { "id": "kQ3v7pZ2mR8tY5wB1nF4hJ6sLdC9xGa", "amount": "150.25",
+ *       "chain": "monad", "asset": { "symbol": "USDC", "decimals": 6 },
  *       "note": "la vuelta", "status": "pending", "requesterTag": "ana.abcd",
  *       "createdAt": "…", "expiresAt": "…" }
  *
  * GET /api/payment-requests/:id          → the same shape
- * POST /api/payment-requests/:id/pay
- * { "chain": "monad", "asset": { "symbol": "USDC", "decimals": 6 } }
+ * POST /api/payment-requests/:id/pay     → no body: the charge says what to pay
  *
  * 200 { "requestId": "pr-kQ3v…", "chain": "monad", "address": "0x…payer's own…",
  *       "network": "eip155:143", "transactions": [ … ],
  *       "movement": { "id": "…", "status": "pending" },
  *       "paymentRequest": { "id": "kQ3v…", "status": "paid", "paidAt": "…" } }
  * ```
+ *
+ * ── The create body names the chain and the symbol, never the decimals ────────
+ *
+ * `asset` is `{ "symbol": "USDC" }` and nothing else. The decimals are a fact
+ * about the token and the server reads them from `DEPOSIT_NETWORKS`; a client
+ * that could send them could send `decimals: 0` and pick the size of the
+ * transfer. So there is no field for it, and the two refusals that matter for
+ * this — `CHAIN_UNKNOWN` and `ASSET_NOT_ON_CHAIN` — arrive **here**, where the
+ * person who can fix them is the one asking.
+ *
+ * ── The pay body is empty, and that is the design ────────────────────────────
+ *
+ * `POST /:id/pay` takes no chain and no asset: those are the charge's, and the
+ * charge says them. What is left of the request is the id and the session. It
+ * used to be `{ "chain": "monad", "asset": { "symbol": "USDC", "decimals": 6 } }`,
+ * and the payer was choosing; now the link describes the transfer and the payer
+ * either has it or is told they do not.
  *
  * ── There is no `recipient` field, and that is the design ─────────────────────
  *
@@ -55,6 +73,7 @@
  * | 201    | —                   | one charge, one id                                          |
  * | 200    | —                   | the charge as it stands, or the transfer that pays it      |
  * | 400    | `AMOUNT_INVALID` …  | refused, one bounded code per distinct wrong thing          |
+ * | 400    | `CHAIN_UNKNOWN`, `ASSET_NOT_ON_CHAIN` | the charge names something this app cannot move |
  * | 401    | `UNAUTHENTICATED`   | no cookie; nothing read and nothing written                 |
  * | 404    | `REQUEST_NOT_FOUND` | no such charge, or not an id — deliberately indistinguishable |
  * | 409    | `ALREADY_PAID`      | the link is over: one link is one payment                  |
@@ -198,13 +217,15 @@ export const createPaymentRequestsRoutes = (deps: PaymentRequestsDeps) => {
     if (claims === null) return c.json(UNAUTHENTICATED_BODY, 401);
 
     const id = c.req.param('id');
-    const body = await c.req.json().catch(() => null);
 
     try {
-      // The payer is the session. The payee comes from the row, and the
-      // destination address is resolved inside the use case — there is no field in
-      // this body that could carry one.
-      return c.json(await deps.payPaymentRequest(claims.userId, id, (body ?? {}) as Record<string, never>), 200);
+      // The payer is the session. The charge says what to pay in what chain, the
+      // payee comes from the row, and the destination address is resolved inside
+      // the use case — there is no field in this surface that could carry one.
+      //
+      // The request body is deliberately not read: nothing in it can redirect the
+      // payment, so there is nothing to read it for.
+      return c.json(await deps.payPaymentRequest(claims.userId, id), 200);
     } catch (error) {
       if (error instanceof PaymentRequestNotFound) {
         log.log('POST /payment-requests/:id/pay — no such charge');

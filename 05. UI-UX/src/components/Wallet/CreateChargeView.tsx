@@ -43,11 +43,17 @@ import confetti from 'canvas-confetti';
 import { NumericKeypad } from '../common';
 import {
   CHARGE_FAILURE_TEXT,
+  chargeAssetOptions,
   chargeAmountToDecimal,
+  chargeChainLabel,
   createPaymentRequest,
+  type ChargeAssetOption,
   type PaymentRequest,
 } from '../../services/paymentRequests';
+import { useDepositInfo } from '../../hooks/useDepositInfo';
+import { identityOf } from '../../services/portfolioIdentity';
 import { paymentRequestShareUrl } from '../../config/paymentLinks';
+import { AssetIcon } from '../common/AssetIcon';
 import { QrCode } from '../common/QrCode';
 
 interface CreateChargeViewProps {
@@ -73,6 +79,22 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
   const [failureCode, setFailureCode] = useState<string | null>(null);
   const [creating, setCreating] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
+  /** La clave `${cadena}:${símbolo}` elegida, o `null` si todavía no eligió. */
+  const [assetKey, setAssetKey] = useState<string | null>(null);
+
+  /*
+   * LA LISTA SALE DEL CATÁLOGO, no de esta pantalla.
+   *
+   * `useDepositInfo` es el mismo `GET /api/deposit-info` que usan el depósito y
+   * el envío. Un cobro que dice "10" sin decir en qué se cobraría obliga a quien
+   * paga a interpretarlo, así que acá se elige la cadena y el activo antes de
+   * teclear, y el backend recibe los dos. No hay tickers escritos a mano: si el
+   * catálogo no llegó, no hay selector, y se dice.
+   */
+  const depositInfo = useDepositInfo(true);
+  const assetOptions = chargeAssetOptions(depositInfo.networks);
+  const chosen: ChargeAssetOption | null =
+    assetOptions.find((option) => option.key === assetKey) ?? null;
 
   const shareUrl = useMemo(
     () => (charge === null ? null : paymentRequestShareUrl(charge.id, origin)),
@@ -103,6 +125,9 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
 
   const create = useCallback(async () => {
     if (creating) return;
+    // Sin cadena y activo no se crea: el botón queda deshabilitado y esta es la
+    // segunda línea.
+    if (chosen === null) return;
 
     let decimal: string;
     try {
@@ -117,6 +142,8 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
     try {
       const created = await createPaymentRequest({
         amount: decimal,
+        chain: chosen.chain,
+        asset: { symbol: chosen.symbol },
         note: note.trim().length === 0 ? null : note.trim(),
       });
       setCharge(created);
@@ -132,7 +159,7 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
     } finally {
       setCreating(false);
     }
-  }, [amount, creating, note]);
+  }, [amount, chosen, creating, note]);
 
   const copyLink = useCallback(() => {
     if (shareUrl === null) return;
@@ -141,13 +168,22 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
     window.setTimeout(() => setCopied(false), 2000);
   }, [shareUrl]);
 
+  /**
+   * Lo que comparte: el importe con su activo y su cadena, que es lo que le va
+   * a pedir a quien lo abre.
+   */
+  const shareText = (): string =>
+    charge === null
+      ? 'Te estoy cobrando'
+      : `Te estoy cobrando ${charge.amount} ${charge.asset.symbol}, en ${chargeChainLabel(charge.chain)}`;
+
   const share = useCallback(() => {
     if (shareUrl === null) return;
     if (typeof navigator.share === 'function') {
       void navigator
         .share({
           title: 'Cobro de ReWALLET',
-          text: `Te estoy cobrando U$ ${charge?.amount ?? amount}`,
+          text: shareText(),
           url: shareUrl,
         })
         .catch(() => {
@@ -158,7 +194,7 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
     // Sin `navigator.share` —un escritorio viejo, un navegador sin soporte— el
     // compartir es copiar, y se dice lo mismo en vez de no hacer nada.
     copyLink();
-  }, [amount, charge, copyLink, shareUrl]);
+  }, [charge, copyLink, shareUrl]);
 
   const close = useCallback(() => {
     setStep('amount');
@@ -167,6 +203,7 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
     setCharge(null);
     setFailureCode(null);
     setCopied(false);
+    setAssetKey(null);
     onClose();
   }, [onClose]);
 
@@ -195,13 +232,101 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
         </div>
 
         <div className="flex-1 flex flex-col items-center justify-center py-2 space-y-3">
+          {/*
+            EL SELECTOR DE EN QUÉ SE COBRA, del catálogo de depósito.
+
+            Reemplaza al "U$" fijo: un cobro tiene que decir en qué se cobra, y la
+            lista sale del mismo catálogo que usan el depósito y el envío. El logo
+            lo pone `AssetIcon`, que cae al glifo si no hay archivo.
+          */}
+          <div className="w-full max-w-sm px-5 space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-widest text-black/50 font-display block text-center">
+              En qué cobrás
+            </span>
+
+            {/* Cargando: se dice que se está leyendo, y no se habilita nada. */}
+            {depositInfo.status !== 'ready' && (
+              <div className="rounded-2xl bg-black/5 border border-black/10 px-3 py-2.5 text-center">
+                <p className="text-[11px] font-bold text-black/70 leading-snug">
+                  {depositInfo.status === 'error'
+                    ? 'No pudimos ver en qué monedas podés cobrar.'
+                    : 'Estamos viendo en qué monedas podés cobrar…'}
+                </p>
+                {depositInfo.status === 'error' && (
+                  <button
+                    type="button"
+                    onClick={depositInfo.reload}
+                    className="mt-1.5 text-[11px] font-black uppercase tracking-wider text-black underline active:opacity-60 cursor-pointer"
+                  >
+                    Probar de nuevo
+                  </button>
+                )}
+              </div>
+            )}
+
+            {depositInfo.status === 'ready' && assetOptions.length === 0 && (
+              <p className="rounded-2xl bg-black/5 border border-black/10 px-3 py-2.5 text-[11px] font-bold text-black/70 text-center leading-snug">
+                Todavía no hay ninguna moneda para cobrar.
+              </p>
+            )}
+
+            {assetOptions.length > 0 && (
+              <div className="max-h-[96px] overflow-y-auto space-y-1.5 pr-0.5">
+                {assetOptions.map((option) => {
+                  const identity = identityOf(option.symbol);
+                  const active = option.key === chosen?.key;
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setAssetKey(option.key)}
+                      aria-pressed={active}
+                      className={`w-full flex items-center gap-3 rounded-2xl px-3 py-2 text-left transition-all active:scale-[0.98] cursor-pointer border ${
+                        active
+                          ? 'bg-black text-[#ccff00] border-black'
+                          : 'bg-white text-black border-black/10'
+                      }`}
+                    >
+                      <AssetIcon
+                        ticker={option.symbol}
+                        glyph={identity?.glyph ?? option.symbol.slice(0, 1)}
+                        iconBg={identity?.iconBg ?? 'bg-slate-300'}
+                        sizeClass="w-8 h-8"
+                        glyphClass={active ? 'text-[#ccff00]' : 'text-sm'}
+                      />
+                      <span className="flex-1 min-w-0">
+                        <span className="text-sm font-black font-display block leading-tight">
+                          {option.symbol}
+                        </span>
+                        <span
+                          className={`text-[11px] font-semibold block leading-tight ${
+                            active ? 'text-[#ccff00]/80' : 'text-black/55'
+                          }`}
+                        >
+                          en {option.chainLabel}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <span className="text-xs font-black uppercase tracking-widest text-black/60 font-display">
             Importe a cobrar
           </span>
           <div className="flex items-baseline justify-center font-display px-3">
-            <span className="text-3xl font-black text-black/40 mr-2">U$</span>
+            <span className="text-3xl font-black text-black/40 mr-2">
+              {chosen === null ? '?' : chosen.symbol}
+            </span>
             <span className="text-6xl sm:text-7xl font-black text-black tracking-tight">{amount}</span>
           </div>
+          <span className="text-[11px] font-bold text-black/55 font-display text-center px-6">
+            {chosen === null
+              ? 'Elegí arriba en qué querés cobrar'
+              : `Te lo van a cobrar en ${chosen.symbol}, en ${chosen.chainLabel}`}
+          </span>
         </div>
 
         <div className="px-5 pb-5 space-y-4 max-w-sm mx-auto w-full shrink-0">
@@ -229,7 +354,7 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
           <button
             type="button"
             onClick={() => void create()}
-            disabled={amount === '0' || creating}
+            disabled={amount === '0' || chosen === null || creating}
             className="w-full py-4 rounded-2xl bg-black text-[#ccff00] font-extrabold text-sm shadow-xl active:scale-98 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
           >
             {creating ? 'Creando el link…' : 'Generar link de cobro'}
@@ -262,7 +387,12 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
 
       <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6 max-w-sm mx-auto w-full text-center">
         <span className="text-5xl font-black font-display tracking-tight">
-          U$ {charge?.amount ?? amount}
+          {charge?.amount ?? amount} {charge?.asset.symbol ?? chosen?.symbol ?? ''}
+        </span>
+        <span className="text-[11px] font-black uppercase tracking-widest text-black/55 font-display">
+          {charge === null
+            ? 'Elegí arriba en qué cobrás'
+            : `en ${chargeChainLabel(charge.chain)}`}
         </span>
         {charge?.note ? (
           <span className="text-xs font-semibold text-black/60 leading-snug">{charge.note}</span>

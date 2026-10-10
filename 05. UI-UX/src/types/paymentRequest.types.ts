@@ -31,6 +31,19 @@
  * el `README` del backend.
  */
 import type { SendPreparationResponse } from './send.types';
+import type { SendChainId } from '../config/send';
+
+/** El activo que pide el cobro: el símbolo, y la escala sólo si se pudo leer. */
+export interface PaymentRequestAsset {
+  readonly symbol: string;
+  /**
+   * La escala del activo en esa cadena, o `null` si no se pudo leer.
+   *
+   * No se usa para calcular nada: resolver la escala es del servidor, y por eso
+   * cuando no viaja no se inventa una.
+   */
+  readonly decimals: number | null;
+}
 
 /** Los cuatro estados que `payment_requests_status_valid` permite. */
 export type PaymentRequestStatus = 'pending' | 'paid' | 'expired' | 'cancelled';
@@ -53,6 +66,16 @@ export interface PaymentRequest {
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly requesterTag: string | null;
+  /**
+   * La cadena en la que se cobra, como clave del catálogo.
+   *
+   * Sin esta campo el cobro no se muestra: una pantalla que pide plata sin
+   * decir en qué no es un cobro. Es la clave, no el nombre: el nombre lo pone
+   * `chargeChainLabel`, que ya usa el que muestra el resto de la app.
+   */
+  readonly chain: SendChainId;
+  /** El activo que se pide en esa cadena. */
+  readonly asset: PaymentRequestAsset;
 }
 
 /**

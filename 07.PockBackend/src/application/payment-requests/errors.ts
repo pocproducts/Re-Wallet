@@ -38,6 +38,18 @@ export class ChargeAmountInvalid extends Error {
 /** This amount has no integer at the chosen asset's scale, and is not rounded. */
 export const AMOUNT_NOT_REPRESENTABLE = 'AMOUNT_NOT_REPRESENTABLE';
 
+/**
+ * The charge names a chain this app does not have.
+ *
+ * Un cobro en una cadena que no existe no es un cobro: es un cobro en algo que
+ * no existe. Y se rechaza **al crear**, no al pagar, porque el que tiene que
+ * enterarse es el que pide el cobro — el que paga no puede arreglarlo.
+ */
+export const CHAIN_UNKNOWN = 'CHAIN_UNKNOWN';
+
+/** The chain exists, and the symbol it was asked for is not one of its assets. */
+export const ASSET_NOT_ON_CHAIN = 'ASSET_NOT_ON_CHAIN';
+
 export class ChargeAmountNotRepresentable extends Error {
   readonly code = AMOUNT_NOT_REPRESENTABLE;
 
@@ -52,7 +64,16 @@ export type CreatePaymentRequestCode =
   | 'AMOUNT_INVALID'
   | 'NOTE_INVALID'
   | 'EXPIRY_OUT_OF_RANGE'
-  | 'ID_UNUSABLE';
+  | 'ID_UNUSABLE'
+  /**
+   * `CHAIN_UNKNOWN`, `ASSET_NOT_ON_CHAIN` and `AMOUNT_NOT_REPRESENTABLE` are
+   * here for the same reason the send's codes are on its list: they are codes
+   * this path can carry, and a list that only holds the ones that happen to be
+   * reachable is a list that is wrong the day one of them is not.
+   */
+  | typeof CHAIN_UNKNOWN
+  | typeof ASSET_NOT_ON_CHAIN
+  | typeof AMOUNT_NOT_REPRESENTABLE;
 
 /** A create that the server refuses to write. 400. */
 export class PaymentRequestRejected extends Error {
@@ -61,6 +82,9 @@ export class PaymentRequestRejected extends Error {
     'NOTE_INVALID',
     'EXPIRY_OUT_OF_RANGE',
     'ID_UNUSABLE',
+    CHAIN_UNKNOWN,
+    ASSET_NOT_ON_CHAIN,
+    AMOUNT_NOT_REPRESENTABLE,
   ];
 
   readonly code: CreatePaymentRequestCode;

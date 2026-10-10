@@ -52,8 +52,19 @@ const PAYER_COOKIE = `${SESSION_COOKIE_NAME}=rw1.payer`;
 const THIRD_COOKIE = `${SESSION_COOKIE_NAME}=rw1.third`;
 const NO_COOKIE = null;
 
-/** A chain+asset pair the catalog knows, so the payment can be prepared. */
-const PAYABLE = { chain: 'monad', asset: { symbol: 'USDC', decimals: 6 } } as const;
+/**
+ * A body for `POST /:id/pay` that is **wrong on purpose**.
+ *
+ * It used to be the way to say what to pay. It is not any more: the charge says
+ * that, and the payer does not get to choose. So every pay in this file still
+ * posts it — it is the cheapest possible proof that a body cannot redirect a
+ * payment, because every one of them now posts a different chain and a different
+ * asset than the charge names, and every one of them pays the charge.
+ */
+const IGNORED_BODY = { chain: 'base', asset: { symbol: 'USDT', decimals: 6 } } as const;
+
+/** A chain+asset pair the catalog knows, for creating a charge. */
+const CHARGE_BODY = { amount: '150.25', chain: 'monad', asset: { symbol: 'USDC' } } as const;
 
 const OWNER_ROW = {
   address: PAYEE_ADDRESS,
@@ -170,12 +181,17 @@ const get = (app: ReturnType<typeof createApp>, path: string, cookie: string | n
 interface CreatedCharge {
   readonly id: string;
   readonly amount: string;
+  readonly chain: string;
+  readonly asset: { readonly symbol: string; readonly decimals: number };
   readonly status: string;
   readonly note: string | null;
   readonly expiresAt: string;
 }
 
-const create = async (h: Harness, body: unknown = { amount: '150.25', note: 'la vuelta' }) => {
+const create = async (
+  h: Harness,
+  body: unknown = { ...CHARGE_BODY, note: 'la vuelta' },
+) => {
   const response = await post(h.app, '/api/payment-requests', body);
   expect(response.status).toBe(201);
   return (await response.json()) as CreatedCharge;
@@ -194,15 +210,20 @@ describe('POST /api/payment-requests — creating a charge', () => {
     expect(response.status).toBe(404);
   });
 
-  it('answers with the shareable id, the amount, the note and when it dies', async () => {
+  it('answers with the shareable id, the amount, what it asks for, and when it dies', async () => {
     const h = harness();
 
-    const response = await post(h.app, '/api/payment-requests', { amount: '150.25', note: 'la vuelta' });
+    const response = await post(h.app, '/api/payment-requests', {
+      ...CHARGE_BODY,
+      note: 'la vuelta',
+    });
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(201);
     expect(Object.keys(body).sort()).toEqual([
       'amount',
+      'asset',
+      'chain',
       'createdAt',
       'expiresAt',
       'id',
@@ -214,8 +235,69 @@ describe('POST /api/payment-requests — creating a charge', () => {
     expect(body.note).toBe('la vuelta');
     expect(body.status).toBe('pending');
     expect(body.requesterTag).toBeNull();
+    // What it is a charge for, and at which scale — resolved by the server, so
+    // the decimals here are the catalog's and not anything the body carried.
+    expect(body.chain).toBe('monad');
+    expect(body.asset).toEqual({ symbol: 'USDC', decimals: 6 });
     // 24 hours, the one deadline the contract fixes for both ways of charging.
     expect(body.expiresAt).toBe(new Date(NOW.getTime() + 24 * 60 * 60 * 1000).toISOString());
+  });
+
+  it('refuses a chain or an asset that does not exist, with a code that says which', async () => {
+    const h = harness();
+
+    // Two refusals, two codes, and both at **creation**: the person who can fix
+    // a wrong request is the one who made it. A payer cannot change the asset, so
+    // discovering this at the pay screen would be somebody else's dead end.
+    const cases: readonly [unknown, string][] = [
+      [{ amount: '10', chain: 'bitcoin', asset: { symbol: 'USDC' } }, 'CHAIN_UNKNOWN'],
+      [{ amount: '10', chain: 'Monad', asset: { symbol: 'USDC' } }, 'CHAIN_UNKNOWN'],
+      [{ amount: '10', asset: { symbol: 'USDC' } }, 'CHAIN_UNKNOWN'],
+      [{ amount: '10', chain: 'monad', asset: { symbol: 'DOGE' } }, 'ASSET_NOT_ON_CHAIN'],
+      // OUSD is real, but only on Ethereum: asking for it on Monad is asking for
+      // something this app cannot receive.
+      [{ amount: '10', chain: 'monad', asset: { symbol: 'OUSD' } }, 'ASSET_NOT_ON_CHAIN'],
+      [{ amount: '10', chain: 'monad' }, 'ASSET_NOT_ON_CHAIN'],
+      [{ amount: '10', chain: 'monad', asset: {} }, 'ASSET_NOT_ON_CHAIN'],
+      // Seven decimals in a six-decimal asset: no integer means it, and rounding
+      // it would move money nobody chose.
+      [
+        { amount: '1.1234567', chain: 'monad', asset: { symbol: 'USDC' } },
+        'AMOUNT_NOT_REPRESENTABLE',
+      ],
+    ];
+
+    for (const [body, code] of cases) {
+      const response = await post(h.app, '/api/payment-requests', body);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(await response.json(), JSON.stringify(body)).toEqual({ error: { code } });
+    }
+    expect(h.requests.rows()).toHaveLength(0);
+  });
+
+  it('accepts an eighteen-decimal charge and reads it back exactly', async () => {
+    const h = harness();
+
+    // ETH has eighteen decimals. With the old `numeric(20,6)` this stored as 0:
+    // a charge of nothing that still reads as a charge, and a payment of zero.
+    const created = await create(h, {
+      amount: '0.000000000000000001',
+      chain: 'ethereum',
+      asset: { symbol: 'ETH' },
+    });
+    const read = (await get(h.app, `/api/payment-requests/${created.id}`)) as Response;
+
+    expect(created.amount).toBe('0.000000000000000001');
+    expect(created.chain).toBe('ethereum');
+    expect(created.asset).toEqual({ symbol: 'ETH', decimals: 18 });
+    // The row on disk says the same, and `GET` says it again: no step of the
+    // trip rounds a digit.
+    expect(h.requests.rows()[0]?.amount).toBe('0.000000000000000001');
+    expect(await read.json()).toMatchObject({
+      amount: '0.000000000000000001',
+      chain: 'ethereum',
+      asset: { symbol: 'ETH', decimals: 18 },
+    });
   });
 
   it('reads the charge back by id, and it is the same row', async () => {
@@ -231,6 +313,19 @@ describe('POST /api/payment-requests — creating a charge', () => {
     expect(body.note).toBe('la vuelta');
     expect(body.status).toBe('pending');
     expect(body.expiresAt).toBe(created.expiresAt);
+  });
+
+  it('reads the charge back with its chain and its asset', async () => {
+    // This is what makes `/cobrar/{id}` say what it asks without the URL
+    // carrying the chain: the link is still just an id.
+    const h = harness();
+    const created = await create(h);
+
+    const response = await get(h.app, `/api/payment-requests/${created.id}`);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(body.chain).toBe('monad');
+    expect(body.asset).toEqual({ symbol: 'USDC', decimals: 6 });
   });
 
   it('lets somebody else read it: the payer is not the person who created it', async () => {
@@ -250,7 +345,7 @@ describe('POST /api/payment-requests — creating a charge', () => {
     for (const response of [
       await post(h.app, '/api/payment-requests', { amount: '1' }, NO_COOKIE),
       await get(h.app, `/api/payment-requests/${created.id}`, NO_COOKIE),
-      await post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, NO_COOKIE),
+      await post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, NO_COOKIE),
     ]) {
       expect(response.status).toBe(401);
       expect(await response.json()).toEqual({ error: { code: 'UNAUTHENTICATED' } });
@@ -275,7 +370,7 @@ describe('POST /api/payment-requests — creating a charge', () => {
     ];
 
     for (const [amount, canonical] of cases) {
-      const response = await post(h.app, '/api/payment-requests', { amount });
+      const response = await post(h.app, '/api/payment-requests', { ...CHARGE_BODY, amount });
       expect(response.status, amount).toBe(201);
       const body = (await response.json()) as { amount: string };
       // Canonical: no trailing zeroes in the fraction, no exponent, no float.
@@ -287,20 +382,19 @@ describe('POST /api/payment-requests — creating a charge', () => {
     const h = harness();
 
     const cases: readonly [unknown, string][] = [
-      [{ amount: undefined }, 'AMOUNT_INVALID'],
-      [{ amount: 0 }, 'AMOUNT_INVALID'],
-      [{ amount: '0.00' }, 'AMOUNT_INVALID'],
-      [{ amount: '-1' }, 'AMOUNT_INVALID'],
-      [{ amount: '1e6' }, 'AMOUNT_INVALID'],
-      [{ amount: '.5' }, 'AMOUNT_INVALID'],
-      [{ amount: '1.' }, 'AMOUNT_INVALID'],
-      [{ amount: '1.1234567' }, 'AMOUNT_INVALID'],
-      [{ amount: '1,25' }, 'AMOUNT_INVALID'],
-      [{ amount: '12345678901234567890' }, 'AMOUNT_INVALID'],
-      [{ amount: '1', note: 42 }, 'NOTE_INVALID'],
-      [{ amount: '1', note: 'x'.repeat(281) }, 'NOTE_INVALID'],
-      [{ amount: '1', expiresInMs: 1000 }, 'EXPIRY_OUT_OF_RANGE'],
-      [{ amount: '1', expiresInMs: 365 * 24 * 60 * 60 * 1000 }, 'EXPIRY_OUT_OF_RANGE'],
+      [{ ...CHARGE_BODY, amount: undefined }, 'AMOUNT_INVALID'],
+      [{ ...CHARGE_BODY, amount: 0 }, 'AMOUNT_INVALID'],
+      [{ ...CHARGE_BODY, amount: '0.00' }, 'AMOUNT_INVALID'],
+      [{ ...CHARGE_BODY, amount: '-1' }, 'AMOUNT_INVALID'],
+      [{ ...CHARGE_BODY, amount: '1e6' }, 'AMOUNT_INVALID'],
+      [{ ...CHARGE_BODY, amount: '.5' }, 'AMOUNT_INVALID'],
+      [{ ...CHARGE_BODY, amount: '1.' }, 'AMOUNT_INVALID'],
+      [{ ...CHARGE_BODY, amount: '1,25' }, 'AMOUNT_INVALID'],
+      [{ ...CHARGE_BODY, amount: '1234567890123456789012' }, 'AMOUNT_INVALID'],
+      [{ ...CHARGE_BODY, note: 42 }, 'NOTE_INVALID'],
+      [{ ...CHARGE_BODY, note: 'x'.repeat(281) }, 'NOTE_INVALID'],
+      [{ ...CHARGE_BODY, expiresInMs: 1000 }, 'EXPIRY_OUT_OF_RANGE'],
+      [{ ...CHARGE_BODY, expiresInMs: 365 * 24 * 60 * 60 * 1000 }, 'EXPIRY_OUT_OF_RANGE'],
     ];
 
     for (const [body, code] of cases) {
@@ -316,7 +410,7 @@ describe('POST /api/payment-requests — creating a charge', () => {
     const h = harness();
     h.requests.failing = true;
 
-    const response = await post(h.app, '/api/payment-requests', { amount: '1' });
+    const response = await post(h.app, '/api/payment-requests', CHARGE_BODY);
 
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: { code: 'PAYMENT_REQUESTS_UNAVAILABLE' } });
@@ -370,7 +464,7 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
     const h = harness();
     const created = await create(h);
 
-    const response = await post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, PAYER_COOKIE);
+    const response = await post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, PAYER_COOKIE);
     const body = (await response.json()) as {
       movement: { id: string; status: string };
       paymentRequest: { id: string; status: string; paidAt: string };
@@ -402,10 +496,10 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
     const h = harness();
     const created = await create(h);
 
-    const first = await post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, PAYER_COOKIE);
+    const first = await post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, PAYER_COOKIE);
     expect(first.status).toBe(200);
 
-    const second = await post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, PAYER_COOKIE);
+    const second = await post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, PAYER_COOKIE);
 
     expect(second.status).toBe(409);
     expect(await second.json()).toEqual({ error: { code: 'ALREADY_PAID' } });
@@ -417,7 +511,7 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
   it('reads as paid afterwards, to the payer as well', async () => {
     const h = harness();
     const created = await create(h);
-    await post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, PAYER_COOKIE);
+    await post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, PAYER_COOKIE);
 
     const response = await get(h.app, `/api/payment-requests/${created.id}`, PAYER_COOKIE);
 
@@ -426,11 +520,11 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
 
   it('refuses to pay a charge whose deadline passed, and moves nothing', async () => {
     const h = harness();
-    const created = await create(h, { amount: '10' });
+    const created = await create(h, { ...CHARGE_BODY, amount: '10' });
 
     // A second application over the same rows, one second after the deadline.
     const late = harnessAt(new Date(created.expiresAt).getTime() + 1000, h);
-    const response = await post(late.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, PAYER_COOKIE);
+    const response = await post(late.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, PAYER_COOKIE);
 
     expect(response.status).toBe(410);
     expect(await response.json()).toEqual({ error: { code: 'REQUEST_EXPIRED' } });
@@ -442,7 +536,7 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
 
   it('reads as expired after its deadline, on the row that still says pending', async () => {
     const h = harness();
-    const created = await create(h, { amount: '10' });
+    const created = await create(h, { ...CHARGE_BODY, amount: '10' });
 
     const late = harnessAt(new Date(created.expiresAt).getTime() + 1000, h);
     const response = await get(late.app, `/api/payment-requests/${created.id}`, PAYER_COOKIE);
@@ -458,7 +552,7 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
 
   it('still reads as live one second before the deadline', async () => {
     const h = harness();
-    const created = await create(h, { amount: '10' });
+    const created = await create(h, { ...CHARGE_BODY, amount: '10' });
 
     const almost = harnessAt(new Date(created.expiresAt).getTime() - 1000, h);
     const response = await get(almost.app, `/api/payment-requests/${created.id}`, PAYER_COOKIE);
@@ -470,29 +564,53 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
     const h = harness();
     const created = await create(h);
 
-    const response = await post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, OWNER_COOKIE);
+    const response = await post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, OWNER_COOKIE);
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: { code: 'SELF_PAYMENT_REFUSED' } });
     expect(h.movements).toHaveLength(0);
   });
 
-  it('refuses a chain or an asset the catalog does not have, with the send codes', async () => {
+  it('pays what the charge asks for, whatever the body says', async () => {
     const h = harness();
     const created = await create(h);
 
-    const cases: readonly [unknown, string][] = [
-      [{ chain: 'bitcoin', asset: { symbol: 'USDC', decimals: 6 } }, 'CHAIN_UNKNOWN'],
-      [{ chain: 'monad', asset: { symbol: 'DOGE', decimals: 8 } }, 'ASSET_NOT_ON_CHAIN'],
-      [{ chain: 'monad', asset: { symbol: 'USDC', decimals: 18 } }, 'INVALID_AMOUNT'],
-    ];
+    // The body names Base and USDT — a real chain and a real asset on it, just
+    // not this charge's. The charge says Monad and USDC. The charge wins, and
+    // the only way to tell is the transaction that came back.
+    const response = await post(
+      h.app,
+      `/api/payment-requests/${created.id}/pay`,
+      IGNORED_BODY,
+      PAYER_COOKIE,
+    );
+    const body = (await response.json()) as { chain: string; transactions: { to: string }[] };
 
-    for (const [body, code] of cases) {
-      const response = await post(h.app, `/api/payment-requests/${created.id}/pay`, body, PAYER_COOKIE);
-      expect(response.status, JSON.stringify(body)).toBe(400);
-      expect(await response.json(), JSON.stringify(body)).toEqual({ error: { code } });
-    }
-    expect(h.movements).toHaveLength(0);
+    expect(response.status).toBe(200);
+    expect(body.chain).toBe('monad');
+    // The USDC contract **on Monad**, not the one on Base. Those are two different
+    // addresses, and paying the other one moves 150.25 of a token nobody asked for.
+    expect(body.transactions[0]?.to).toBe('0x754704Bc059F8C67012fEd69BC8A327a5aafb603');
+  });
+
+  it('does not scale the amount with a decimals the body made up', async () => {
+    const h = harness();
+    const created = await create(h);
+
+    // `decimals: 0` in the body used to be a refusal; now there is no field to
+    // contradict at all. If it still reached the transfer, `150.25` at the wrong
+    // scale would be `150` — money moved at a size the payer never agreed to.
+    const response = await post(
+      h.app,
+      `/api/payment-requests/${created.id}/pay`,
+      { chain: 'monad', asset: { symbol: 'USDC', decimals: 0 }, amountRaw: '150' },
+      PAYER_COOKIE,
+    );
+
+    expect(response.status).toBe(200);
+    // 150.25 USDC is 150_250_000 at six decimals, and the movement carries the
+    // exact integer that was about to be signed.
+    expect(h.movements[0]?.meta.amountRaw).toBe('150250000');
   });
 
   it('answers 404 for a charge that does not exist, before any chain work', async () => {
@@ -501,7 +619,7 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
     const response = await post(
       h.app,
       '/api/payment-requests/DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD/pay',
-      PAYABLE,
+      IGNORED_BODY,
       PAYER_COOKIE,
     );
 
@@ -513,7 +631,7 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
   it('answers 404 for an id that is not shaped like one, without reading anything', async () => {
     const h = harness();
 
-    const response = await post(h.app, '/api/payment-requests/corto/pay', PAYABLE, PAYER_COOKIE);
+    const response = await post(h.app, '/api/payment-requests/corto/pay', IGNORED_BODY, PAYER_COOKIE);
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: { code: 'REQUEST_NOT_FOUND' } });
@@ -529,8 +647,8 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
     const created = await create(h);
 
     const [first, second] = await Promise.all([
-      post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, PAYER_COOKIE),
-      post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, PAYER_COOKIE),
+      post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, PAYER_COOKIE),
+      post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, PAYER_COOKIE),
     ]);
 
     const statuses = [first.status, second.status].sort();
@@ -547,14 +665,14 @@ describe('POST /api/payment-requests/:id/pay — one link, one payment', () => {
   it('refuses to pay a charge for a second person once it is paid', async () => {
     const h = harness();
     const created = await create(h);
-    await post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, PAYER_COOKIE);
+    await post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, PAYER_COOKIE);
 
     // Another person, same link: a link is one payment whoever holds it, and the
     // refusal arrives before any transfer is prepared.
     const response = await post(
       h.app,
       `/api/payment-requests/${created.id}/pay`,
-      PAYABLE,
+      IGNORED_BODY,
       THIRD_COOKIE,
     );
 
@@ -570,13 +688,16 @@ describe('the payee address does not exist outside the server', () => {
   it('appears in no answer this surface can produce', async () => {
     const h = harness();
 
-    const createdResponse = await post(h.app, '/api/payment-requests', { amount: '150.25', note: 'la vuelta' });
+    const createdResponse = await post(h.app, '/api/payment-requests', {
+      ...CHARGE_BODY,
+      note: 'la vuelta',
+    });
     const createdText = await createdResponse.text();
     const createdBody = JSON.parse(createdText) as CreatedCharge;
 
     const readText = await (await get(h.app, `/api/payment-requests/${createdBody.id}`, PAYER_COOKIE)).text();
     const payText = await (
-      await post(h.app, `/api/payment-requests/${createdBody.id}/pay`, PAYABLE, PAYER_COOKIE)
+      await post(h.app, `/api/payment-requests/${createdBody.id}/pay`, IGNORED_BODY, PAYER_COOKIE)
     ).text();
 
     for (const [label, text] of [
@@ -598,11 +719,11 @@ describe('the payee address does not exist outside the server', () => {
 
   it('never leaks a balance or the internal reason of a refusal', async () => {
     const h = harness();
-    // 15 025 dollars against a 1000 balance: refused before anything is signed.
-    const created = await create(h, { amount: '15025' });
+    // 15 025 USDC against a 1000 balance: refused before anything is signed.
+    const created = await create(h, { ...CHARGE_BODY, amount: '15025' });
 
     const refused = await (
-      await post(h.app, `/api/payment-requests/${created.id}/pay`, PAYABLE, PAYER_COOKIE)
+      await post(h.app, `/api/payment-requests/${created.id}/pay`, IGNORED_BODY, PAYER_COOKIE)
     ).text();
 
     expect(refused).toContain('AMOUNT_EXCEEDS_BALANCE');

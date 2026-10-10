@@ -270,9 +270,12 @@ COMMENT ON COLUMN rewallet.idempotency_keys.key IS 'Valor del header Idempotency
 CREATE TABLE IF NOT EXISTS rewallet.payment_requests (
   id                    TEXT PRIMARY KEY,
   user_id               UUID NOT NULL REFERENCES rewallet.users(id) ON DELETE CASCADE,
-  amount                NUMERIC(20,6) NOT NULL,
+  amount                NUMERIC(38,18) NOT NULL,
   note                  TEXT,
   status                TEXT NOT NULL DEFAULT 'pending',
+  chain                 TEXT NOT NULL,
+  asset_symbol          TEXT NOT NULL,
+  asset_decimals        INTEGER NOT NULL,
   paid_by_user_id       UUID REFERENCES rewallet.users(id),
   paid_movement_id      UUID REFERENCES rewallet.movements(id),
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -283,11 +286,41 @@ CREATE TABLE IF NOT EXISTS rewallet.payment_requests (
   CONSTRAINT payment_requests_status_valid CHECK (status IN (
     'pending', 'paid', 'expired', 'cancelled'
   )),
-  CONSTRAINT payment_requests_id_format CHECK (id ~ '^[a-zA-Z0-9_-]{10,16}$')
+  -- 32 caracteres, y no 16: el id viaja en claro en el link y es lo único que
+  -- separa a un intruso del cobro ajeno. A 16 son 96 bits — atacables de a poco;
+  -- a 32 son 192, que es el máximo que permite el formato. Este CHECK y el
+  -- generador (`src/application/payment-requests/id.ts`) tienen que decir lo
+  -- mismo: cuando el `.sql` decía `{10,16}` y la base `{10,32}`, la deriva costó
+  -- una investigación entera. `sql/0005` la alineó.
+  CONSTRAINT payment_requests_id_format CHECK (id ~ '^[a-zA-Z0-9_-]{10,32}$'),
+  CONSTRAINT payment_requests_chain_format CHECK (chain ~ '^[a-z0-9_]{2,32}$'),
+  CONSTRAINT payment_requests_asset_symbol_format CHECK (asset_symbol ~ '^[A-Z0-9]{1,16}$'),
+  CONSTRAINT payment_requests_asset_decimals_range CHECK (asset_decimals BETWEEN 0 AND 18)
 );
 
 COMMENT ON TABLE rewallet.payment_requests IS 'Links de cobro. rewallet.app/pay/{id}';
-COMMENT ON COLUMN rewallet.payment_requests.id IS 'nanoid de 10-16 chars. Es el ID público del link.';
+COMMENT ON COLUMN rewallet.payment_requests.id IS '32 chars base64url = 192 bits. Es el ID público del link y su única protección.';
+
+-- Por qué existe cada columna nueva (por qué, no qué): sin `chain` y
+-- `asset_symbol` el link no dice en qué se cobra y quien paga tiene que
+-- interpretar; el mismo símbolo es un activo distinto en cada red, así que la
+-- pareja es lo único que identifica de qué se trata. `asset_decimals` lo
+-- resuelve el servidor desde el catálogo (`src/domain/deposit/catalog.ts`) y
+-- nunca el cliente: es un dato del activo, no de la petición, y darle autoridad
+-- sobre el número que se cobra por plata es darle autoridad sobre el importe.
+-- Se guarda para que el cobro se pueda pagar aunque el catálogo cambie después.
+--
+-- `amount` es numeric(38,18) y no numeric(20,6) por lo mismo que el resto: el
+-- catálogo tiene activos de 18 decimales, y truncar a 6 guarda un cobro que dice
+-- una cosa y se paga otra.
+COMMENT ON COLUMN rewallet.payment_requests.chain IS
+ 'Cadena en la que se cobra, en el vocabulario del catálogo de depósito (monad, ethereum, base, arbitrum, optimism, polygon, solana). Existe para que el link diga en qué se cobra, en vez de que quien paga tenga que interpretarlo.';
+COMMENT ON COLUMN rewallet.payment_requests.asset_symbol IS
+ 'Símbolo del activo que se cobra, tal como lo declara el catálogo de esa cadena (USDC, ETH, SOL). Va junto a la cadena y no en vez de ella porque el mismo símbolo es un activo distinto en cada red.';
+COMMENT ON COLUMN rewallet.payment_requests.asset_decimals IS
+ 'Cuántos decimales tiene el activo en esa cadena, resueltos por el servidor desde el catálogo y nunca enviados por el cliente. Es la escala con la que el importe se convierte al entero que se mueve.';
+COMMENT ON COLUMN rewallet.payment_requests.amount IS
+ 'Importe del cobro en unidades enteras del activo que nombra la fila, como texto. numeric(38,18) y no numeric(20,6) porque el catálogo tiene activos de 18 decimales: con 6 el cobro se trunca en silencio y se manda plata que no se escribió.';
 
 --------------------------------------------------------------------------------
 -- 3.8 yield_positions

@@ -13,6 +13,18 @@
  * ningún campo en el tipo de la respuesta donde una pudiera entrar, así que la
  * prohibición es una propiedad del código y no una promesa.
  *
+ * ── Por qué esta pantalla NO ofrece elegir el activo ─────────────────────────
+ *
+ * Porque el cobro lo dice. Desde que una carga guarda su cadena y su símbolo,
+ * un link que abre con "10 USDC, en Monad" no necesita que quien pague decida
+ * nada: o tiene eso y paga, o no lo tiene y la pantalla se lo dice. Un selector
+ * acá devolvería al pagador la decisión que el cobro ya tomó, y el botón pagaría
+ * algo que nadie pidió.
+ *
+ * La red y la escala que la firma necesita salen del **catálogo** —el mismo que
+ * usan depósito y envío—, y no del cuerpo de la respuesta: la escala del activo
+ * la resuelve el servidor, y el navegador la busca donde ya está.
+ *
  * ── Por qué se ve el `@tag` de quien cobra y no su dirección ────────────────
  *
  * Porque el `@tag` es la identidad que el contrato ya usa para **encontrar** a una
@@ -32,12 +44,16 @@
  * haber llegado. El hash es lo que se puede verificar sin creerse, y sin él esta
  * pantalla no afirma que la plata se movió.
  */
-import React from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Copy, Loader2 } from 'lucide-react';
 
 import { BackButton } from '../common';
-import { usePayCharge, chargeFailureText, type PayableOption } from '../../hooks/usePayCharge';
+import { AssetIcon } from '../common/AssetIcon';
+import { usePayCharge, chargeFailureText } from '../../hooks/usePayCharge';
 import { useDepositInfo } from '../../hooks/useDepositInfo';
+import { usePortfolio } from '../../hooks/usePortfolio';
+import { identityOf } from '../../services/portfolioIdentity';
+import { chargeChainLabel } from '../../services/paymentRequests';
 import type { PaymentRequest } from '../../types/paymentRequest.types';
 
 interface PayChargeViewProps {
@@ -56,26 +72,58 @@ const expiryLabel = (expiresAt: string): string | null => {
   return when.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-const ChargeBody: React.FC<{ charge: PaymentRequest }> = ({ charge }) => (
-  <>
-    {charge.requesterTag !== null && (
-      <p className="text-xs font-bold text-slate-500 text-center">
-        Te pide <span className="text-black">@{charge.requesterTag}</span>
-      </p>
-    )}
-    <div className="text-center py-2">
-      <span className="text-4xl font-black font-display text-black tracking-tight">
-        U$ {asDisplay(charge.amount)}
-      </span>
-    </div>
-    {charge.note !== null && (
-      <div className="rounded-3xl bg-white border border-slate-200/80 p-4 shadow-xs">
-        <span className="text-[11px] font-bold uppercase text-slate-400 font-display block">Nota</span>
-        <p className="text-sm font-semibold text-black leading-relaxed mt-1">{charge.note}</p>
+/**
+ * Lo que pide el cobro, en castellano y sin jerga.
+ *
+ * "10 USDC, en Monad" y no "cobrar asset USDC on chain monad": quien paga no tiene
+ * que saber qué es una cadena, y un link que obliga a interpretarse es un link
+ * que se paga a ciegas.
+ */
+const askLabel = (charge: PaymentRequest): string =>
+  `${asDisplay(charge.amount)} ${charge.asset.symbol}, en ${chargeChainLabel(charge.chain)}`;
+
+const ChargeBody: React.FC<{ charge: PaymentRequest }> = ({ charge }) => {
+  const identity = identityOf(charge.asset.symbol);
+
+  return (
+    <>
+      {charge.requesterTag !== null && (
+        <p className="text-xs font-bold text-slate-500 text-center">
+          Te pide <span className="text-black">@{charge.requesterTag}</span>
+        </p>
+      )}
+      {/*
+        El activo con su logo. `AssetIcon` cae al glifo si no hay archivo: un cobro
+        con el ícono de imagen rota es un cobro que parece roto.
+      */}
+      <div className="flex items-center justify-center gap-2.5 pt-1">
+        <AssetIcon
+          ticker={charge.asset.symbol}
+          glyph={identity?.glyph ?? charge.asset.symbol.slice(0, 1)}
+          iconBg={identity?.iconBg ?? 'bg-slate-200'}
+          sizeClass="w-9 h-9"
+        />
+        <span className="text-xs font-black uppercase tracking-widest text-slate-400 font-display">
+          {charge.asset.symbol}
+        </span>
       </div>
-    )}
-  </>
-);
+      <div className="text-center py-1">
+        <span className="text-4xl font-black font-display text-black tracking-tight">
+          {asDisplay(charge.amount)}
+        </span>
+        <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 font-display block mt-1">
+          en {chargeChainLabel(charge.chain)}
+        </span>
+      </div>
+      {charge.note !== null && (
+        <div className="rounded-3xl bg-white border border-slate-200/80 p-4 shadow-xs">
+          <span className="text-[11px] font-bold uppercase text-slate-400 font-display block">Nota</span>
+          <p className="text-sm font-semibold text-black leading-relaxed mt-1">{charge.note}</p>
+        </div>
+      )}
+    </>
+  );
+};
 
 export const PayChargeView: React.FC<PayChargeViewProps> = ({ id, onClose }) => {
   /*
@@ -88,10 +136,90 @@ export const PayChargeView: React.FC<PayChargeViewProps> = ({ id, onClose }) => 
    * puede pagar.
    */
   const depositInfo = useDepositInfo(id !== null);
-  const { status, charge, failureCode, reload, options, chosen, choose, chain, flow, pay } = usePayCharge(
-    id,
-    depositInfo.networks,
+  const {
+    status,
+    charge,
+    failureCode,
+    reload,
+    options,
+    chosen,
+    choose,
+    chain,
+    flow,
+    pay,
+  } = usePayCharge(id, depositInfo.networks);
+
+  /*
+   * Los saldos, para poder decir "no tenés esto" sin mentir.
+   *
+   * El mismo `GET /api/portfolio` que ya lee el `App`. Se vuelve a pedir por la
+   * misma razón que el catálogo: esta pantalla vive detrás de una puerta y
+   * puede abrirse mucho después. Sólo se usa para una pregunta de sí o no —¿tenés
+   * saldo de este activo en esta cadena?—, y un saldo que no se pudo leer **no**
+   * se traduce en "no tenés": el botón se deja disponible y que responda el
+   * backend.
+   */
+  const portfolio = usePortfolio(id !== null);
+
+  /** La clave del par que pide el cobro, o `null` si todavía no se leyó. */
+  const askKey = charge === null ? null : `${charge.chain}:${charge.asset.symbol}`;
+
+  /*
+   * La opción pagable del cobro, buscada en el catálogo.
+   *
+   * `options` sale de las redes del catálogo de depósito, y una entrada es un par
+   * concreto con la escala de esa red. Si el par del cobro no está, es que el
+   * catálogo no lo sirve: no se puede pagar, y la pantalla lo dice en vez de
+   * ofrecer un botón que el backend va a rechazar.
+   */
+  const askedOption = useMemo(
+    () => (askKey === null ? null : (options.find((option) => option.key === askKey) ?? null)),
+    [askKey, options],
   );
+
+  /*
+   * La elección del hook es la del cobro, no la de la persona.
+   *
+   * El hook necesita el par para cambiar la red de la wallet y construir la
+   * transacción, así que se lo alineamos una vez que se leyó el cobro. Nadie lo
+   * elige: la única fuente es `charge.chain` y `charge.asset.symbol`.
+   */
+  useEffect(() => {
+    if (askKey === null || chosen?.key === askKey) return;
+    choose(askKey);
+  }, [askKey, chosen?.key, choose]);
+
+  /**
+   * ¿Hay saldo de ese activo en esa cadena?
+   *
+   * `amount` es el importe textual del backend: si tiene un dígito distinto de
+   * cero, hay saldo. Sin `number` y sin escala, porque acá no se cuenta plata,
+   * se responde una pregunta de sí o no.
+   */
+  const holding = useMemo(() => {
+    if (charge === null) return null;
+    return (
+      portfolio.holdings.find(
+        (entry) => entry.symbol === charge.asset.symbol && entry.chain === charge.chain,
+      ) ?? null
+    );
+  }, [charge, portfolio.holdings]);
+
+  /** `true` sólo cuando sabemos que no hay: un saldo ilegible no es un cero. */
+  const knownToBeEmpty =
+    charge !== null &&
+    portfolio.status === 'ready' &&
+    holding !== null &&
+    !/[1-9]/.test(holding.amount);
+
+  /**
+   * El catálogo no dice nada todavía, o el par que pide el cobro no está.
+   *
+   * Son dos hechos y se muestran distintos: uno se reintenta, el otro se termina
+   * porque no hay con qué pagar. Mientras el catálogo no llegó no se puede decir
+   * ninguna de las dos cosas, y por eso el botón no se habilita.
+   */
+  const catalogMissing = depositInfo.status !== 'ready' || askedOption === null;
 
   const showSteps = flow.phase !== 'idle';
 
@@ -341,57 +469,79 @@ export const PayChargeView: React.FC<PayChargeViewProps> = ({ id, onClose }) => 
         {!alreadySettled && (
           <>
             {/*
-              En qué se paga. Las opciones salen del mismo catálogo de depósito que
-              usa la pantalla de depósito, así que no hay una lista de activos acá
-              que pueda quedar vieja: el backend la valida igual.
+              LO QUE PIDE EL COBRO, y no una elección.
+
+              El selector que estaba acá offercía elegir activo y cadena al pagar.
+              Ya no: el cobro los nombra, y ofrecerlos sería devolverle al pagador
+              una decisión que el cobro ya tomó. Lo que hay abajo son los tres
+              hechos que pueden impedir el pago, y cada uno con su frase.
             */}
-            <div className="space-y-2">
-              <span className="text-[11px] font-bold uppercase text-slate-400 font-display block px-1">
-                Cómo lo pagás
-              </span>
-              {options.length === 0 ? (
-                <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl px-3 py-2 leading-snug">
-                  Todavía no pudimos leer en qué activos podés pagar. Probá de nuevo
-                  en un momento.
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {options.map((option: PayableOption) => {
-                    const active = option.key === chosen?.key;
-                    return (
-                      <button
-                        key={option.key}
-                        type="button"
-                        onClick={() => choose(option.key)}
-                        aria-pressed={active}
-                        className={`px-3.5 py-2 rounded-full text-xs font-bold active:scale-95 transition-all cursor-pointer border ${
-                          active
-                            ? 'bg-black text-[#ccff00] border-black'
-                            : 'bg-white text-black border-slate-200'
-                        }`}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            {depositInfo.status !== 'ready' && (
+              <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl px-3 py-2 leading-snug">
+                {depositInfo.status === 'error'
+                  ? 'No pudimos ver si podés pagar esto. Probá de nuevo en un momento.'
+                  : 'Estamos viendo si podés pagar esto…'}
+              </p>
+            )}
+
+            {/*
+              El par que pide el cobro no está en el catálogo: no hay con qué
+              firmar. Se lo dice con el nombre del activo y el de la cadena, que es
+              lo que hay que pedirle a quien lo pasó.
+            */}
+            {depositInfo.status === 'ready' && askedOption === null && (
+              <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl px-3 py-2 leading-snug">
+                Este cobro pide {charge.asset.symbol} en {chargeChainLabel(charge.chain)} y
+                no lo tenemos disponible. Pedile a quien te lo pasó que lo cobre en
+                otra parte.
+              </p>
+            )}
+
+            {depositInfo.status === 'ready' && askedOption !== null && (
+              <div className="rounded-3xl bg-white border border-slate-200/80 px-4 py-3 shadow-xs">
+                <span className="text-[11px] font-bold uppercase text-slate-400 font-display block">
+                  Tenés que pagar
+                </span>
+                <span className="text-sm font-extrabold text-black block mt-0.5">
+                  {askLabel(charge)}
+                </span>
+              </div>
+            )}
+
+            {knownToBeEmpty && (
+              <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl px-3 py-2 leading-snug">
+                No tenés {charge.asset.symbol} en {chargeChainLabel(charge.chain)}. Pedile a
+                quien te lo pasó que te lo cobre en otra parte.
+              </p>
+            )}
 
             <div className="flex-1" />
 
             <button
               type="button"
               onClick={pay}
-              disabled={chain === null || chosen === null}
+              disabled={
+                chain === null ||
+                chosen === null ||
+                askKey === null ||
+                // El botón solo vive cuando la wallet está APUNTADA a lo que pide
+                // el cobro. `chosen` arranca en el default del hook —el primer
+                // USDC del catálogo— y lo alineamos a `askKey` en un efecto, que
+                // corre después del primer render. Sin esta comparación, había
+                // una ventana con el botón habilitado cobrando USDC en una cadena
+                // que el cobro no pidió. Es plata, no una condición de estilo.
+                chosen.key !== askKey ||
+                catalogMissing ||
+                knownToBeEmpty
+              }
               className="w-full py-4 rounded-2xl bg-[#ccff00] text-black font-extrabold text-sm shadow-md active:scale-95 transition-transform disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
-              Pagar U$ {asDisplay(charge.amount)}
+              Pagar {charge.asset.symbol}
             </button>
 
             <p className="text-[11px] font-semibold text-slate-400 text-center leading-snug">
               {chain === null
-                ? 'Ese activo todavía no se puede pagar desde la app.'
+                ? 'Esto todavía no se puede pagar desde la app.'
                 : 'Vas a firmar en tu wallet. El pago es de un solo uso.'}
             </p>
           </>
