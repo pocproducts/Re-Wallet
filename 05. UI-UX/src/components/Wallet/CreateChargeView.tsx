@@ -71,6 +71,19 @@ interface CreateChargeViewProps {
 /** El estado de la pantalla: el importe primero, el link después. */
 type Step = 'amount' | 'created';
 
+/**
+ * Una familia de la fila: un símbolo y las redes del catálogo donde vive.
+ *
+ * `MON` y `SOL` traen una sola opción cada una; `USDC` trae todas las suyas, y
+ * esa diferencia es la que la pantalla trata distinto —la única que después
+ * pregunta en qué red se cobra.
+ */
+interface ChargeFamily {
+  readonly id: string;
+  readonly symbol: string;
+  readonly options: readonly ChargeAssetOption[];
+}
+
 export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, origin }) => {
   const [step, setStep] = useState<Step>('amount');
   const [amount, setAmount] = useState('0');
@@ -79,8 +92,16 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
   const [failureCode, setFailureCode] = useState<string | null>(null);
   const [creating, setCreating] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
-  /** La clave `${cadena}:${símbolo}` elegida, o `null` si todavía no eligió. */
-  const [assetKey, setAssetKey] = useState<string | null>(null);
+  /** La familia elegida —`MON`, `USDC` o `SOL`— o `null` si todavía no eligió. */
+  const [familyId, setFamilyId] = useState<string | null>(null);
+  /**
+   * La red elegida cuando la familia es USDC, que vive en varias.
+   *
+   * `null` significa "todavía no toqué ninguna", y no "no hay": la red efectiva se
+   * deriva (`activeUsdcChain`), así que un USDC recién elegido ya tiene una red y
+   * el botón de generar no queda colgado esperando un toque que nadie pediría.
+   */
+  const [usdcChain, setUsdcChain] = useState<string | null>(null);
 
   /*
    * LA LISTA SALE DEL CATÁLOGO, no de esta pantalla.
@@ -93,8 +114,53 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
    */
   const depositInfo = useDepositInfo(true);
   const assetOptions = chargeAssetOptions(depositInfo.networks);
+  /*
+   * LAS TRES FAMILIAS DE LA FILA, del catálogo y en el orden que el producto
+   * quiere: Monad, USDC, Solana.
+   *
+   * No es una lista escrita a mano: cada chip sale de `chargeAssetOptions`, que
+   * sale de `/api/deposit-info`. "Monad" es MON en Monad, "Solana" es SOL en
+   * Solana, y USDC es el único símbolo que vive en varias redes —las siete del
+   * catálogo—, y por eso es el único que después pregunta en cuál.
+   *
+   * Si el catálogo alguna vez deja de traer uno de los tres, el chip no aparece:
+   * no se ofrece lo que no se puede cobrar.
+   */
+  const families = useMemo<readonly ChargeFamily[]>(() => {
+    const mon = assetOptions.find((option) => option.symbol === 'MON' && option.chain === 'monad');
+    const sol = assetOptions.find((option) => option.symbol === 'SOL' && option.chain === 'solana');
+    const usdc = assetOptions.filter((option) => option.symbol === 'USDC');
+
+    const entries: readonly (ChargeFamily | null)[] = [
+      mon === undefined ? null : { id: 'MON', symbol: 'MON', options: [mon] },
+      usdc.length === 0 ? null : { id: 'USDC', symbol: 'USDC', options: usdc },
+      sol === undefined ? null : { id: 'SOL', symbol: 'SOL', options: [sol] },
+    ];
+
+    return entries.filter((family): family is ChargeFamily => family !== null);
+  }, [assetOptions]);
+
+  /** Las redes donde el catálogo tiene USDC, en su orden. */
+  const usdcNetworks = useMemo(
+    () => assetOptions.filter((option) => option.symbol === 'USDC'),
+    [assetOptions],
+  );
+
+  const family = families.find((candidate) => candidate.id === familyId) ?? null;
+
+  /*
+   * La red de USDC: la que se tocó, o la primera del catálogo mientras no se
+   * toque ninguna. Derivarla en vez de guardarla es lo que evita el estado
+   * desincronizado —un chip activo con una red que no se eligió—.
+   */
+  const activeUsdcChain = usdcChain ?? usdcNetworks[0]?.chain ?? null;
+
   const chosen: ChargeAssetOption | null =
-    assetOptions.find((option) => option.key === assetKey) ?? null;
+    family === null
+      ? null
+      : family.id === 'USDC'
+        ? usdcNetworks.find((option) => option.chain === activeUsdcChain) ?? null
+        : family.options[0] ?? null;
 
   const shareUrl = useMemo(
     () => (charge === null ? null : paymentRequestShareUrl(charge.id, origin)),
@@ -203,7 +269,8 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
     setCharge(null);
     setFailureCode(null);
     setCopied(false);
-    setAssetKey(null);
+    setFamilyId(null);
+    setUsdcChain(null);
     onClose();
   }, [onClose]);
 
@@ -270,45 +337,94 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
               </p>
             )}
 
-            {assetOptions.length > 0 && (
-              <div className="max-h-[96px] overflow-y-auto space-y-1.5 pr-0.5">
-                {assetOptions.map((option) => {
-                  const identity = identityOf(option.symbol);
-                  const active = option.key === chosen?.key;
+            {/*
+              LA FILA: Monad, USDC, Solana. Tres chips, no una lista.
+
+              Reemplaza a la lista vertical de pares (cadena, símbolo): la
+              pantalla antes ofrecía siete pares y obligaba a scrollear para
+              encontrar el de siempre. Los tres chips son las tres familias que
+              el producto muestra, en el orden que se piden, y el que está en el
+              medio es el único que vive en varias redes.
+
+              El logo lo pone `AssetIcon`, que cae al glifo si no hay archivo.
+            */}
+            {families.length > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                {families.map((candidate) => {
+                  const identity = identityOf(candidate.symbol);
+                  const active = candidate.id === familyId;
                   return (
                     <button
-                      key={option.key}
+                      key={candidate.id}
                       type="button"
-                      onClick={() => setAssetKey(option.key)}
+                      onClick={() => setFamilyId(candidate.id)}
                       aria-pressed={active}
-                      className={`w-full flex items-center gap-3 rounded-2xl px-3 py-2 text-left transition-all active:scale-[0.98] cursor-pointer border ${
+                      className={`flex flex-col items-center gap-1 rounded-2xl px-2 py-2.5 transition-all active:scale-[0.98] cursor-pointer border ${
                         active
                           ? 'bg-black text-[#ccff00] border-black'
                           : 'bg-white text-black border-black/10'
                       }`}
                     >
                       <AssetIcon
-                        ticker={option.symbol}
-                        glyph={identity?.glyph ?? option.symbol.slice(0, 1)}
+                        ticker={candidate.symbol}
+                        glyph={identity?.glyph ?? candidate.symbol.slice(0, 1)}
                         iconBg={identity?.iconBg ?? 'bg-slate-300'}
                         sizeClass="w-8 h-8"
                         glyphClass={active ? 'text-[#ccff00]' : 'text-sm'}
                       />
-                      <span className="flex-1 min-w-0">
-                        <span className="text-sm font-black font-display block leading-tight">
-                          {option.symbol}
-                        </span>
-                        <span
-                          className={`text-[11px] font-semibold block leading-tight ${
-                            active ? 'text-[#ccff00]/80' : 'text-black/55'
-                          }`}
-                        >
-                          en {option.chainLabel}
-                        </span>
+                      <span className="text-sm font-black font-display leading-none">
+                        {candidate.symbol}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold leading-none text-center ${
+                          active ? 'text-[#ccff00]/75' : 'text-black/50'
+                        }`}
+                      >
+                        {candidate.id === 'USDC'
+                          ? `${usdcNetworks.length} redes`
+                          : `en ${candidate.options[0]?.chainLabel ?? ''}`}
                       </span>
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {/*
+              USDC Y SUS REDES: la familia del medio es la única que no tiene una
+              red sola. Se dice en cuáles está —todas las del catálogo, que son
+              "las que tenemos"— y se elige en cuál se cobra, porque el cobro
+              viaja con UNA cadena: quien lo abre paga en esa y en ninguna otra.
+
+              Con una sola red no se pregunta: no hay nada que elegir.
+            */}
+            {familyId === 'USDC' && usdcNetworks.length > 1 && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-black uppercase tracking-widest text-black/50 font-display block text-center">
+                  Red del cobro
+                </span>
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                  {usdcNetworks.map((option) => {
+                    const active = option.chain === activeUsdcChain;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setUsdcChain(option.chain)}
+                        aria-pressed={active}
+                        className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold border transition-all active:scale-95 cursor-pointer ${
+                          active ? 'bg-black text-[#ccff00] border-black' : 'bg-white text-black border-black/10'
+                        }`}
+                      >
+                        {option.chainLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] font-bold text-black/55 leading-snug text-center">
+                  Te van a pagar en USDC, disponible en las redes:{' '}
+                  {usdcNetworks.map((option) => option.chainLabel).join(', ')}.
+                </p>
               </div>
             )}
           </div>
@@ -325,7 +441,7 @@ export const CreateChargeView: React.FC<CreateChargeViewProps> = ({ onClose, ori
           <span className="text-[11px] font-bold text-black/55 font-display text-center px-6">
             {chosen === null
               ? 'Elegí arriba en qué querés cobrar'
-              : `Te lo van a cobrar en ${chosen.symbol}, en ${chosen.chainLabel}`}
+              : `Te van a pagar en ${chosen.symbol}, en ${chosen.chainLabel}`}
           </span>
         </div>
 
