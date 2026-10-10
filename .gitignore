@@ -52,3 +52,18 @@ coverage/
 # Editores
 .vscode/
 .idea/
+
+# Respaldos manuales y andamiaje de pruebas de deploy.
+#
+# Los `.bak` aparecen cuando alguien edita un archivo y quiere guardar la
+# version anterior antes de cambiarle algo. Nadie los borra y terminan
+# commitados: son ruido que se lee como si fuera codigo vigente. El
+# historial de git ya cumple esa funcion, sin dejar archivos que nadie
+# recuerda haber creado.
+*.bak
+
+# `wrangler test-worker/`, `wrangler.toml` y `hello-worker.js` en la raiz
+# son pruebas manuales de despliegue, no parte del proyecto.
+test-worker/
+hello-worker.js
+/wrangler.toml
