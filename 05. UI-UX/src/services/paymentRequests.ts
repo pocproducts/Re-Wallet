@@ -65,11 +65,27 @@ export const chargeAmountToDecimal = (text: string): string => {
   // Recorte, no redondeo: ver el comentario de arriba.
   const fraction = dot === -1 ? '' : normalized.slice(dot + 1).slice(0, 6);
 
-  if (whole.length > 14 || !DECIMAL.test(`${whole}.${fraction}`)) {
+  /*
+   * El importe se arma PRIMERO y se valida la cadena armada.
+   *
+   * Antes se validaba `${whole}.${fraction}`, que siempre lleva un punto. Cuando
+   * el importe no tiene decimales `fraction` viene vacío y la cadena evaluada
+   * terminaba en punto —`"1."`—, que `DECIMAL` rechaza porque exige de uno a
+   * seis dígitos después del punto. El efecto era que **todo importe entero
+   * quedaba sin poder cobrarse**: `1`, `10` y `100` se rechazaban con "el
+   * importe no es un número válido", mientras que `1,5` pasaba. El bug no era
+   * del monto chico sino de la ausencia de decimales: la mitad de los importes
+   * posibles, y justo los más naturales de teclear.
+   *
+   * Validar lo que se devuelve, y no una reconstrucción aparte, es además lo
+   * que hace que las dos cosas no puedan separarse nunca más.
+   */
+  const canonical = `${whole.replace(/^0+(?=\d)/, '')}${fraction === '' ? '' : `.${fraction}`}`;
+
+  if (whole.length > 14 || !DECIMAL.test(canonical)) {
     throw new RangeError(`un importe no puede ser "${text}"`);
   }
 
-  const canonical = `${whole.replace(/^0+(?=\d)/, '')}${fraction === '' ? '' : `.${fraction}`}`;
   if (!/[1-9]/.test(canonical)) throw new RangeError('el importe tiene que ser mayor que cero');
   return canonical;
 };
