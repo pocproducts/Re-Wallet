@@ -163,9 +163,12 @@ Beta privada, en `app.rewallet.win`. El producto está detrás de sesión.
 
 Cosas que el repo **no** debe aparentar lo contrario:
 
-- **La conversión cotiza pero no ejecuta.** Hacen falta dos firmas —Permit2 y la
-  transacción— y un botón que dijera "comprar" sin ellas sería un botón que
-  miente.
+- **La conversión cotiza contra Uniswap, pero no ejecuta.** Hacen falta dos
+  firmas —Permit2 y la transacción—. Y sólo ofrece los pares que están
+  configurados en `dexRegistry`: un par que no está configurado se dice que no
+  se soporta. Antes recitaba una lista escrita a mano, con `USDT` donde el
+  registro declara `USDT0` y un `routerAddress` que era `'0x...'`, o sea un
+  botón que miente con forma de lista.
 - **La política de gasto evalúa y corta**, pero el historial de decisiones es
   consultable por endpoint y todavía no tiene pantalla.
 - **El envío interno entre cuentas ReWALLET no existe.** La opción "A otra cuenta
