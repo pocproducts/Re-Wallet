@@ -53,7 +53,7 @@ import { usePayCharge, chargeFailureText } from '../../hooks/usePayCharge';
 import { useDepositInfo } from '../../hooks/useDepositInfo';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { identityOf } from '../../services/portfolioIdentity';
-import { chargeChainLabel } from '../../services/paymentRequests';
+import { chargeChainLabel, formatChargeAmount } from '../../services/paymentRequests';
 import type { PaymentRequest } from '../../types/paymentRequest.types';
 
 interface PayChargeViewProps {
@@ -62,8 +62,13 @@ interface PayChargeViewProps {
   onClose: () => void;
 }
 
-/** `150.25` → `150,25`, el formato con el que esta app muestra plata. */
-const asDisplay = (amount: string): string => amount.replace('.', ',');
+/*
+ * El importe no se muestra crudo: el backend lo devuelve con la escala completa de
+ * su `numeric(38,18)` —`0.010000000000000000` por un `0,01` tecleado— y aquí se
+ * formatea con la misma función que la pantalla del cobro generado. Si las dos
+ * pantallas pusieran el número de manera distinta, el cobro se contradiría a
+ * simple vista y nadie sabría cuál es el correcto.
+ */
 
 /** La hora de vencimiento, en el formato que ya usa el resto de la app. */
 const expiryLabel = (expiresAt: string): string | null => {
@@ -80,7 +85,7 @@ const expiryLabel = (expiresAt: string): string | null => {
  * que se paga a ciegas.
  */
 const askLabel = (charge: PaymentRequest): string =>
-  `${asDisplay(charge.amount)} ${charge.asset.symbol}, en ${chargeChainLabel(charge.chain)}`;
+  `${formatChargeAmount(charge.amount)} ${charge.asset.symbol}, en ${chargeChainLabel(charge.chain)}`;
 
 const ChargeBody: React.FC<{ charge: PaymentRequest }> = ({ charge }) => {
   const identity = identityOf(charge.asset.symbol);
@@ -109,7 +114,7 @@ const ChargeBody: React.FC<{ charge: PaymentRequest }> = ({ charge }) => {
       </div>
       <div className="text-center py-1">
         <span className="text-4xl font-black font-display text-black tracking-tight">
-          {asDisplay(charge.amount)}
+          {formatChargeAmount(charge.amount)}
         </span>
         <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 font-display block mt-1">
           en {chargeChainLabel(charge.chain)}

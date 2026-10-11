@@ -76,6 +76,50 @@ const isChargeChain = (value: unknown): value is SendChainId =>
 export const chargeChainLabel = (chain: SendChainId): string => sendChainByKey(chain)?.label ?? chain;
 
 /**
+ * EL IMPORTE COMO LO ESCRIBIÓ QUIEN COBRA, y no como lo guarda el servidor.
+ *
+ * ── Por qué hace falta ──────────────────────────────────────────────────────
+ *
+ * El backend guarda el importe en `numeric(38,18)` y Postgres devuelve esa escala
+ * completa: lo que alguien teclea como `0,01` vuelve como
+ * `"0.010000000000000000"`. Las pantallas lo mostraban crudo, así que **el número
+ * que la persona escribía no volvía a aparecer**: tecleaba `0,01` y le mostraban
+ * `0.'010000000`.
+ *
+ * En un cobro eso no es cosmético. El importe es la parte del contrato que la
+ * otra persona puede verificar de un vistazo, y hay CUATRO pantallas que lo
+ * muestran —la del cobro generado, el texto que se comparte, el movimiento de
+ * Actividad y la de quien paga—. Si el recorte vive en una sola, las otras tres
+ * vuelven a contradecirla.
+ *
+ * ── Las tres reglas ─────────────────────────────────────────────────────────
+ *
+ * 1. **Se quitan los ceros de relleno**, no los decimales escritos: `0.50` es
+ *    `0,5`, y `0.000000000000000001` sigue teniendo sus dieciocho decimales.
+ * 2. **No se redondea nunca.** Un wei de más que alguien escribió es plata que
+ *    existe; recortarla hacia arriba sería mandar más de lo escrito.
+ * 3. **La coma es el decimal y el punto, las miles**, igual que en el teclado y
+ *    en `chargeAmountToDecimal`.
+ *
+ * Lo que no se puede leer como número se devuelve **tal cual**: un texto
+ * inesperado tiene que verse para poder diagnosticarlo, no convertirse en un `0`
+ * que parece un cobro válido.
+ */
+export const formatChargeAmount = (amount: string): string => {
+  const match = /^(\d+)(?:\.(\d*))?$/.exec(amount.trim());
+  // Sin coincidencia no se inventa nada: se muestra lo que llegó.
+  if (match === null) return amount;
+
+  const whole = match[1] ?? '0';
+  const fraction = (match[2] ?? '').replace(/0+$/, '');
+
+  // Los miles van en el entero, que por construcción no tiene punto ni coma.
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+  return fraction === '' ? grouped : `${grouped},${fraction}`;
+};
+
+/**
  * Un importe: hasta 20 enteros y hasta 18 decimales.
  *
  * El techo de 18 no es arbitrario: es el del catálogo. ETH y MON tienen 18
@@ -309,19 +353,33 @@ export interface PayChargeChoice {
  * usan los del cobro, y `choice` es el par que el hook ya tenía resuelto para
  * firmar: no se manda. Quien paga paga lo que el cobro pide.
  *
+ * El único campo que se manda es el **gesto** de la política, y sólo cuando
+ * hubo uno: la política de gasto se aplica adentro del servidor —contra el
+ * importe del cobro y la dirección de quien cobra— y cuando responde `confirm`
+ * el pago no sigue sin que alguien haya dicho que sí. Un cuerpo vacío es un pago
+ * sin gesto, que es exactamente lo que es cuando nadie tuvo que confirmar nada.
+ *
  * Lo que vuelve es una preparación de envío (más el estado del cobro), y lo que
  * **no** vuelve es la dirección de quien cobra: no se pide y no se devuelve. La
  * firma la pone la wallet de quien paga, contra `address`, que es la suya.
  *
  * @param choice Ignorado a propósito: ver `PayChargeChoice`.
+ * @param policyConfirmed `true` cuando la persona vio el aviso de la política y
+ *        siguió. Cualquier otro valor no se manda: el servidor sólo acepta
+ *        exactamente `true`, y mandarle otra cosa sería inventar un gesto.
  */
 export const payPaymentRequest = async (
   id: string,
   _choice?: PayChargeChoice,
+  policyConfirmed?: unknown,
 ): Promise<PayChargeResponse> => {
   const response = await postJson<PayChargeResponse>(
     `/payment-requests/${encodeURIComponent(id)}/pay`,
-    {},
+    {
+      // Un cuerpo vacío cuando no hay gesto: es la misma petición de siempre, y
+      // una clave con `undefined` dentro viajaría como un campo que no existe.
+      ...(policyConfirmed === true ? { policyConfirmed: true } : {}),
+    },
   );
   return response;
 };
@@ -355,6 +413,15 @@ export const CHARGE_FAILURE_TEXT: Readonly<Record<string, string>> = {
   ASSET_NOT_ON_CHAIN: 'Ese activo no está en esa cadena. Elegí otro para cobrar.',
   IDEMPOTENT_REPLAY: 'Este pago ya se había preparado. No lo volvemos a mandar.',
   IDEMPOTENT_IN_FLIGHT: 'Este pago ya se está preparando. Esperá un momento.',
+  /*
+   * La política de gasto, que se aplica también acá: pagar un cobro mueve plata
+   * igual que un envío, y las tres reglas valen para los dos caminos.
+   *
+   * El texto no dice qué regla habló —eso viene en los motivos y se muestra
+   * aparte— porque el motivo lo escribió la regla, no este mapa.
+   */
+  POLICY_DENIED: 'La política de seguridad no permite este pago.',
+  POLICY_CONFIRM_REQUIRED: 'La política de seguridad pide una confirmación para este pago.',
   PAYMENT_REQUESTS_UNAVAILABLE: 'No pudimos leer el cobro. Probá de nuevo en un momento.',
   PAYMENT_REQUEST_CREATE_FAILED: 'No pudimos crear el cobro. Probá de nuevo en un momento.',
   UNAUTHENTICATED: 'Tu sesión terminó. Volvé a entrar para cobrar.',
