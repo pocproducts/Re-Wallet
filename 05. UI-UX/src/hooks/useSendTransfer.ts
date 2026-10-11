@@ -56,7 +56,7 @@ import { useWallets } from '@privy-io/react-auth';
 import { useWallets as useSolanaWallets } from '@privy-io/react-auth/solana';
 
 import { newSendRequestId, prepareSend, solanaMessageBytes } from '../services/send';
-import { evaluatePolicy, type PolicyVerdict } from '../services/policy';
+import { evaluatePolicy, POLICY_CONFIRMED_BODY, type PolicyVerdict } from '../services/policy';
 import { isSolanaSendTransaction, type SendPreparationResponse } from '../types/send.types';
 import { ApiError } from '../services/api';
 import {
@@ -91,6 +91,14 @@ export const SEND_FAILURE_TEXT: Readonly<Record<string, string>> = {
    * frase de política que nadie revisó.
    */
   POLICY_DENIED: 'La política de seguridad no permite este envío.',
+  /**
+   * La política pidió una confirmación y no llegó el gesto.
+   *
+   * El servidor no puede saber si una persona leyó el aviso: lo que puede hacer
+   * es no seguir sin el gesto. El motivo concreto viene en `policyReasons`, que
+   * está escrito por la regla.
+   */
+  POLICY_CONFIRM_REQUIRED: 'La política de seguridad pide que confirmes este envío.',
   AMOUNT_EXCEEDS_BALANCE: 'No tenés tanto disponible para enviar.',
   NO_GAS: 'No te queda saldo nativo para pagar el envío.',
   BALANCE_UNREADABLE: 'No pudimos leer tu saldo. Probá de nuevo en un momento.',
@@ -173,6 +181,15 @@ export type SendPreparationSource = (input: {
   readonly chain: SendChainId;
   readonly symbol: string;
   readonly decimals: number;
+  /**
+   * El gesto explícito, cuando el veredicto lo pidió y la persona siguió.
+   *
+   * Viaja como `unknown` a propósito: el servidor sólo acepta exactamente `true`,
+   * y decidir acá qué más cuenta sería tener dos opiniones sobre lo que es un
+   * gesto. El hook lo manda cuando corresponde; lo que responde el servidor es lo
+   * que vale.
+   */
+  readonly policyConfirmed?: unknown;
 }) => Promise<SendPreparationResponse | null>;
 
 export interface SendTransferOptions {
@@ -436,12 +453,35 @@ export const useSendTransfer = (
          * no hay nada que preguntarle a la política: mandar un destinatario
          * inventado para "tener algo" sería preguntarle por un envío que no es
          * el que la persona hizo.
+         *
+         * ── Y el gesto ────────────────────────────────────────────────────────
+         *
+         * La consulta de acá es la **cortesía**: muestra el motivo antes de que la
+         * persona decida. La que decide es el servidor, adentro de `prepareSend`,
+         * y cuando responde `confirm` no sigue sin que alguien haya dicho que sí.
+         * Ese "alguien dijo que sí" es `policyConfirmed: true`, y se manda cuando
+         * el veredicto fue `confirm` y la persona sigue en la pantalla: no canceló
+         * el envío. No es una bandera que levante nada —un `deny` se rechaza
+         * igual, con gesto y sin él— y el servidor sólo acepta exactamente `true`.
+         *
+         * ── Y por qué se consulta también cuando el destino es un @tag ─────────
+         *
+         * Antes esta pantalla no preguntaba por un envío a un handle, porque no
+         * tenía dirección que pasarle. Con la política exigida adentro, esa
+         * omisión se volvió un callejón sin salida: el servidor pide confirmación
+         * para el mismo envío, el hook no tiene veredicto del suyo y no manda
+         * ningún gesto, y cada reintento recibe la misma respuesta. Preguntar
+         * con el destino **como lo escribió la persona** —que es lo que la regla
+         * de destino nuevo compara— es lo que hace que el motivo se vea antes y
+         * que el gesto exista.
          */
-        if (request.amountRaw !== null && request.recipientTag === undefined && request.recipient !== null) {
+        const destination = request.recipientTag ?? request.recipient;
+        let policyConfirmed = false;
+        if (request.amountRaw !== null && destination !== null) {
           patch('policy', 'running');
           const policy = await evaluatePolicy({
             amountRaw: request.amountRaw,
-            recipient: request.recipient,
+            recipient: destination,
           });
 
           if (policy.available) {
@@ -453,6 +493,8 @@ export const useSendTransfer = (
               fail('POLICY_DENIED', 'policy');
               return;
             }
+
+            policyConfirmed = policy.evaluation.verdict === 'confirm';
           }
           // Si la consulta no pudo hacerse, el envio sigue: la politica es un
           // control de riesgo, no una condicion de existencia. Frenar un envio
@@ -492,12 +534,20 @@ export const useSendTransfer = (
                     ? { recipient: request.recipient as string }
                     : { recipientTag: request.recipientTag }),
                   amountRaw: request.amountRaw as string,
+                  // El gesto, sólo cuando la política pidió confirmación. Un
+                  // cuerpo sin el campo es un cuerpo sin gesto, que es lo que
+                  // corresponde cuando nadie tuvo que confirmar nada.
+                  ...(policyConfirmed ? POLICY_CONFIRMED_BODY : {}),
                 })
               : await prepareSource({
                   requestId,
                   chain: request.chain,
                   symbol: request.symbol,
                   decimals: request.decimals,
+                  // El pago de un cobro no consulta la política desde acá —no
+                  // tiene destinatario que preguntar—, así que el gesto lo
+                  // decide quien sí sabe que la persona vio el motivo.
+                  ...(policyConfirmed ? POLICY_CONFIRMED_BODY : {}),
                 });
         } catch (error) {
           // La preparación no ocurrió: la intención no se consumió y el id se suelta.

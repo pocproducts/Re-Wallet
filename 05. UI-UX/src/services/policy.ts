@@ -169,3 +169,18 @@ export const policyCallToAction = (verdict: PolicyVerdict): string => {
       return 'Enviar';
   }
 };
+
+/**
+ * El cuerpo que lleva el gesto explícito.
+ *
+ * La política se exige adentro del servidor: cuando responde `confirm`, el envío
+ * o el pago no sigue sin que alguien haya dicho que sí, y eso se dice con este
+ * campo. **Un solo lugar decide cómo se dice**, y el valor es `true` y no otra
+ * cosa: el servidor sólo acepta exactamente `true`, así que un `"true"` o un `1`
+ * que alguna pantalla invente sería un gesto que no existe.
+ *
+ * No lleva ninguna otra clave. No hay campo que levante un `deny`, y agregarlo
+ * desde el cliente sería exactamente el agujero que la política existe para
+ * cerrar.
+ */
+export const POLICY_CONFIRMED_BODY = { policyConfirmed: true } as const;

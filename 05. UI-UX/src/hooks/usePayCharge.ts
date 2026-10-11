@@ -34,7 +34,7 @@
  * caso del 502 mandaría a una persona a decirle a quien le pagó que su link estaba
  * roto.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiError } from '../services/api';
 import {
@@ -129,6 +129,17 @@ export const usePayCharge = (id: string | null, networks: readonly DepositNetwor
 
   const reload = useCallback(() => setReloadToken((token) => token + 1), []);
 
+  /*
+   * Un link nuevo es un pago nuevo: el gesto no viaja de un cobro a otro.
+   *
+   * La referencia vive en el hook y no en el estado precisamente por esto —tiene
+   * que poder apagarse sin que la pantalla se entere—, y se apaga cuando cambia
+   * el id, que es el momento en que la persona dejó de estar en el cobro anterior.
+   */
+  useEffect(() => {
+    askedRef.current = false;
+  }, [id]);
+
   useEffect(() => {
     if (id === null) {
       setStatus('idle');
@@ -194,17 +205,44 @@ export const usePayCharge = (id: string | null, networks: readonly DepositNetwor
    * El backend ya sabe qué cobro es, qué importe tiene y a quién se le paga, así
    * que el cuerpo manda **sólo** la red y el activo. No hay destinatario: no hay
    * forma de mandar uno, y esa ausencia es el contrato.
+   *
+   * ── El gesto, y por qué se decide acá ─────────────────────────────────────
+   *
+   * La política de gasto se aplica también a este camino: el pago mueve plata
+   * igual que un envío, y las reglas corren adentro del servidor contra el
+   * importe del cobro y la dirección de quien cobra. Cuando responden `confirm`,
+   * el pago no sigue sin el gesto —y esta pantalla **no puede** consultar la
+   * política antes, porque no tiene ni el monto ni el destinatario para
+   * preguntar: los dos son del cobro.
+   *
+   * Lo que sí hay es el motivo, que la persona leyó en pantalla cuando el pago se
+   * frenó con `POLICY_CONFIRM_REQUIRED`. El toque que viene después de leerlo es
+   * el gesto, y es lo único que se manda: ni un campo inventado, ni una bandera
+   * que sobreviva a otra pantalla. La referencia se prende cuando el servidor
+   * pregunta y se apaga con el cobro, así que un link nuevo arranca sin gesto.
    */
   const prepare = useCallback(
     async (input: { chain: SendChainId; symbol: string; decimals: number }): Promise<PayChargeResponse | null> => {
       if (id === null) return null;
-      const response = await payPaymentRequest(id, input);
+      const response = await payPaymentRequest(id, input, askedRef.current ? true : undefined);
       return response;
     },
     [id],
   );
 
   const flow = useSendTransfer(undefined, { prepare });
+
+  /*
+   * El servidor preguntó, y la persona está viendo el motivo.
+   *
+   * Se prende con el código del corte y no con un estado aparte: es el hook el
+   * que tiene que acordarse, porque la pantalla hace `reset()` para volver a
+   * intentarlo y eso borraría justo la única evidencia de que el aviso se mostró.
+   */
+  const askedRef = useRef(false);
+  useEffect(() => {
+    if (flow.failureCode === 'POLICY_CONFIRM_REQUIRED') askedRef.current = true;
+  }, [flow.failureCode]);
 
   const pay = useCallback(() => {
     if (id === null || chosen === null || charge === null) return;
