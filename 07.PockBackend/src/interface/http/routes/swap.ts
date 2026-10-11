@@ -21,7 +21,7 @@
 
 import { Hono } from 'hono';
 
-import type { SwapUseCase } from '../../application/swap/swapUseCase';
+import type { SwapUseCase } from '../../../application/swap/swapUseCase';
 import type { Logger } from '../../../domain/ports/logger';
 import { noopLogger } from '../../../domain/ports/logger';
 import { readSessionCookie, SESSION_COOKIE_NAME } from '../cookie';
@@ -29,7 +29,7 @@ import { UNAUTHENTICATED_BODY } from './auth';
 
 export interface SwapRoutesDeps {
   readonly sessions: { read: (token: string, now: Date) => Promise<{ userId: string } | null> };
-  readonly swapUseCase: ReturnType<typeof import('../../application/swap/swapUseCase').createSwapUseCase>;
+  readonly swapUseCase: ReturnType<typeof import('../../../application/swap/swapUseCase').createSwapUseCase>;
   readonly cookieName?: string;
   readonly now?: () => Date;
   readonly log?: Logger;

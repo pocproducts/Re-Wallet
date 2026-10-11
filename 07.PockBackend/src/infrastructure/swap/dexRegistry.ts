@@ -22,8 +22,15 @@ export interface DexConfig {
   readonly chain: DepositChain;
   /** Dirección del Router V3 (para swaps). */
   readonly routerAddress: string;
-  /** Dirección del Quoter V2 (para cotizaciones). */
-  readonly quoterAddress: string;
+  /**
+   * Dirección del Quoter V2 (para cotizaciones), **si la cadena tiene uno**.
+   *
+   * Opcional a propósito: Monad no tiene un Quoter que responda —el canónico
+   * devuelve `0x` en `quoteExactInputSingle`— y por eso acá no se declara
+   * ninguna dirección. Poner la de otra cadena sería afirmar que se puede
+   * cotizar contra algo que devuelve cero.
+   */
+  readonly quoterAddress?: string;
   /** Dirección de la Factory V3 (para derivar pools). */
   readonly factoryAddress: string;
   /** Pares soportados en esta cadena. */
@@ -36,14 +43,14 @@ export interface DexConfig {
   readonly blockExplorerUrl?: string;
 }
 
-/** Pares soportados por DEX + cadena. */
-export interface SwapPairInfo {
-  readonly sourceSymbol: string;
-  readonly destinationSymbol: string;
-  readonly chain: DepositChain;
-  readonly routerAddress: string;
-  readonly feeTier: number;
-}
+/**
+ * Pares soportados por DEX + cadena.
+ *
+ * `SwapPairInfo` no se redeclara acá: es el tipo del puerto
+ * (`domain/ports/swap-provider`), que ya dice exactamente lo mismo y es el que
+ * consumen el factory y la ruta HTTP. Dos declaraciones de la misma forma
+ * harían que el registry y el puerto dejen de ser el mismo tipo.
+ */
 
 /** Registry global de DEXs configurados. */
 export const DEX_REGISTRY: readonly DexConfig[] = [
@@ -54,22 +61,23 @@ export const DEX_REGISTRY: readonly DexConfig[] = [
     dexId: 'uniswap-v3',
     name: 'Uniswap V3',
     chain: 'monad',
-    routerAddress: UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3,
-    quoterAddress: UNISWAP_V3_MONAD_ADDRESSES.QUOTER_V2,
+    routerAddress: UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3_DEPLOYMENTS,
+    // Sin `quoterAddress`: Monad no tiene un Quoter que responda, asi que acá
+    // no se declara ninguna direccion.
     factoryAddress: UNISWAP_V3_MONAD_ADDRESSES.FACTORY_V3,
     supportedPairs: [
       {
         sourceSymbol: 'USDC',
         destinationSymbol: 'USDT0',
         chain: 'monad',
-        routerAddress: UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3,
+        routerAddress: UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3_DEPLOYMENTS,
         feeTier: DEFAULT_FEE_TIER,
       },
       {
         sourceSymbol: 'USDT0',
         destinationSymbol: 'USDC',
         chain: 'monad',
-        routerAddress: UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3,
+        routerAddress: UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3_DEPLOYMENTS,
         feeTier: DEFAULT_FEE_TIER,
       },
     ],

@@ -103,6 +103,7 @@ export const createSwapProviderFactory = (options: {
 
     if (dexConfig.dexId === 'uniswap-v3') {
       const config = {
+        chain: dexConfig.chain,
         routerAddress: dexConfig.routerAddress,
         quoterAddress: dexConfig.quoterAddress,
         factoryAddress: dexConfig.factoryAddress,

@@ -165,7 +165,12 @@ export const createUniswapV3MonadSwapProvider = (
       throw new BalanceReadError('RPC_UNAVAILABLE', `RPC HTTP ${response.status}`);
     }
 
-    const json = await response.json();
+    // Un JSON-RPC responde `error` o `result`, nunca los dos: se estrecha a la
+    // forma que el codigo usa abajo y no a `any`.
+    const json = (await response.json()) as {
+      readonly error?: { readonly code?: number; readonly message?: string };
+      readonly result: string;
+    };
     if (json.error) {
       throw new BalanceReadError('RPC_REJECTED', `RPC error: ${JSON.stringify(json.error)}`);
     }

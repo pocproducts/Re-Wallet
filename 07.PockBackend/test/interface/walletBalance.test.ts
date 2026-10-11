@@ -1045,12 +1045,12 @@ describe('an unreadable price makes its bucket incomplete, and is visible', () =
     const { app } = harness({
       evm: evmReader(
         {
-          [`monad:${MONAD_USDC}:${EVM_ADDRESS}`]: '0',
-          [`ethereum:${ETHEREUM_USDC}:${EVM_ADDRESS}`]: '0',
           // The rest of the chains answer zero too, and this test is about a zero
           // being a truth — not about a chain that could not be read. This fake
           // reader *throws* for any erc20 it was not given, so leaving a chain
           // out would make `unreadable` here and test something else entirely.
+          // These two keys are also in `holdings` with non-zero balances, so the
+          // zero has to be written *after* the spread to win — and only once.
           ...holdings,
           [`monad:${MONAD_USDC}:${EVM_ADDRESS}`]: '0',
           [`ethereum:${ETHEREUM_USDC}:${EVM_ADDRESS}`]: '0',

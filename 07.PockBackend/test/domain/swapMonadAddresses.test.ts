@@ -58,7 +58,7 @@ const monadUniswap = DEX_REGISTRY.find(
 describe('las direcciones de Uniswap V3 en Monad', () => {
   it('no es la direccion canonica de Ethereum', () => {
     expect(UNISWAP_V3_MONAD_ADDRESSES.FACTORY_V3).not.toBe(UNISWAP_V3_ETHEREUM.FACTORY_V3);
-    expect(UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3).not.toBe(UNISWAP_V3_ETHEREUM.ROUTER_V3);
+    expect(UNISWAP_V3_MONAD_ADDRESSES.ROUTER_V3_DEPLOYMENTS).not.toBe(UNISWAP_V3_ETHEREUM.ROUTER_V3);
   });
 
   it('la factory es la que resuelve el ENS de Uniswap en Monad', () => {

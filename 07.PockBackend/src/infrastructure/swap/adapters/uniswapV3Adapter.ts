@@ -24,20 +24,58 @@ import {
   QUOTE_EXACT_INPUT_SINGLE_SELECTOR,
 } from '../../../domain/swap/uniswapV3';
 
-// El archivo que define este tipo es este mismo: se importa a sí mismo por
-// nombre cuando otro módulo lo necesita, no desde una ruta interna del dominio.
-export type { UniswapV3ChainConfig } from './uniswapV3Adapter';
+/**
+ * La forma de un par ya resuelto a direcciones, como la que arma el factory.
+ *
+ * `tokenIn`/`tokenOut` viajan resueltos porque el símbolo no es una dirección:
+ * un ticker que la cadena no reconoce tiene que fallar en el factory, no acá.
+ */
+export interface UniswapV3ChainPair {
+  readonly sourceSymbol: string;
+  readonly destinationSymbol: string;
+  readonly feeTier: number;
+  readonly tokenIn: string;
+  readonly tokenOut: string;
+}
+
+/**
+ * Configuración por cadena de Uniswap V3.
+ *
+ * Vive acá y no en `domain/swap/` porque no es matemática: son direcciones y
+ * pares concretos de una cadena, que es exactamente lo que el dominio declara
+ * no tener. Este archivo es el que la define, así que el que la necesita la
+ * importa desde acá — nunca desde un alias a sí mismo.
+ *
+ * `quoterAddress` es opcional porque no toda cadena tiene un Quoter desplegado
+ * y usable: en Monad el canónico es un stub (ver `domain/swap/uniswapV3Monad.ts`).
+ */
+export interface UniswapV3ChainConfig {
+  /** La cadena para la que vale esta configuración. */
+  readonly chain: DepositChain;
+  readonly routerAddress: string;
+  /** Ausente cuando la cadena no tiene un Quoter que responda. */
+  readonly quoterAddress?: string;
+  readonly factoryAddress: string;
+  readonly rpcUrl: string;
+  readonly feeTiers: readonly number[];
+  readonly supportedPairs: readonly UniswapV3ChainPair[];
+}
 
 export interface UniswapV3AdapterOptions {
   readonly config: UniswapV3ChainConfig;
+  /**
+   * Endpoint del RPC. Pisar el de `config` es lo que hace el factory cuando hay
+   * un override por cadena; sin override gana el de la config.
+   */
+  readonly rpcUrl?: string;
   readonly fetchImpl?: typeof fetch;
   readonly deadline?: DeadlinePolicy;
 }
 
 export const createUniswapV3Adapter = (
-  options: UniswapV3AdapterOptions = {},
+  options: UniswapV3AdapterOptions,
 ): SwapProvider => {
-  const { config, fetchImpl = fetch, deadline } = options;
+  const { config, rpcUrl = config.rpcUrl, fetchImpl = fetch, deadline } = options;
 
   const send = withDeadline(fetchImpl, {
     timeoutMs: 5_000,
@@ -56,7 +94,12 @@ export const createUniswapV3Adapter = (
       throw new BalanceReadError('RPC_UNAVAILABLE', `RPC HTTP ${response.status}`);
     }
 
-    const json = await response.json();
+    // Un JSON-RPC responde `error` o `result`, nunca los dos: se estrecha a la
+    // forma que el código usa abajo y no a `any`.
+    const json = (await response.json()) as {
+      readonly error?: { readonly code?: number; readonly message?: string };
+      readonly result: string;
+    };
     if (json.error) {
       throw new BalanceReadError('RPC_REJECTED', `RPC error: ${JSON.stringify(json.error)}`);
     }
@@ -77,8 +120,14 @@ export const createUniswapV3Adapter = (
     return null;
   };
 
+  // BUG CONOCIDO, NO TOCAR HASTA DECIDIR: `POOL_MAP` no existe en ningun
+  // modulo alcanzable desde aca. El unico mapa con ese nombre es privado de
+  // `uniswapV3MonadSwap.ts` y esta indexado por direccion, no por simbolo,
+  // asi que ni siquiera podria servir para esta llamada. Ademas el codigo de
+  // abajo llama `findPool` con simbolos ('USDC', 'USDT0'). El error TS2304 se
+  // deja a proposito: inventar el mapa seria hacer pasar por implementado un
+  // camino de cotizacion que no lo esta.
   const findPool = (tokenIn: string, tokenOut: string): { feeTier: number; tokenIn: string; tokenOut: string } | null => {
-    const key = `${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}:3000`;
     const pool = POOL_MAP.get(`${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}:3000`);
     if (pool) return { ...pool, tokenIn: pool.tokenA, tokenOut: pool.tokenB };
 
