@@ -423,7 +423,7 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
                   value={selectedTx.qrPayload ?? ''}
                   label="Código QR del cobro por ReWALLET QR Pay"
                   size={144}
-                  className="mx-auto w-fit"
+                  className="max-w-fit mx-auto"
                   fallback="Este movimiento no tiene un link de cobro, así que no hay código que mostrar."
                 />
                 <span className="text-[11px] text-slate-600 font-medium block">
@@ -432,13 +432,19 @@ export const ActivityView: React.FC<ActivityViewProps> = ({
               </div>
             )}
 
-            <button
-              onClick={() => setSelectedTx(null)}
-              type="button"
-              className="w-full min-h-[46px] rounded-2xl bg-black text-[#ccff00] font-extrabold text-xs shadow-md active:scale-98 transition-transform cursor-pointer"
-            >
-              Cerrar Comprobante
-            </button>
+            {/*
+              NO HAY BOTÓN DE CERRAR.
+
+              El comprobante se cierra como se cierra la pantalla: tocá afuera, o
+              el gesto de atrás del teléfono. Un botón que dice "Cerrar
+              Comprobante" dentro de un comprobante dice lo mismo dos veces, y en
+              una pantalla que ya tiene título, importe, estado y código, es el
+              elemento que más llama la atención sin aportar nada.
+
+              Cerrar sigue funcionando: `setSelectedTx(null)` lo dispara el toque
+              afuera y el gesto de atrás. Lo que se fue es el botón, no la
+              capacidad de salir.
+            */}
           </div>
         </div>
       )}

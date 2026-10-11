@@ -236,8 +236,8 @@ export const LoginGate: React.FC = () => {
             UNA BILLETERA INTELIGENTE
           </h1>
           <p className="text-[15px] leading-relaxed text-[#8E8E93] mb-10">
-            Gastá, enviá y ahorrá desde una sola cuenta. Transferencias
-            instantáneas a cualquiera en ReWALLET.
+            Gastá, enviá y ahorrá desde una sola cuenta. Enviá a cualquiera con su
+            $ReTag o su código QR.
           </p>
         </div>
 

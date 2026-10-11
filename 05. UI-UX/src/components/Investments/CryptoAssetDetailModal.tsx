@@ -624,7 +624,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                     $ReTag
                   </span>
                   <span className="text-xs text-slate-400 font-medium block mt-0.5 leading-snug">
-                    Recibí criptomonedas de tus amigos que utilizan ReWALLET. ¡Es instantáneo y gratuito!
+                    Recibí de tus amigos que utilizan ReWALLET sin que ReWALLET te cobre nada.
                   </span>
                 </div>
               </div>
@@ -762,11 +762,11 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               <h3 className="text-base font-extrabold text-black">Información Importante</h3>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">Comisión</span>
-                <p className="text-base font-black text-black">Sin comisiones</p>
+                <p className="text-base font-black text-black">ReWALLET no te cobra nada</p>
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">En tu cuenta</span>
-                <p className="text-base font-black text-black">Instantánea</p>
+                <p className="text-base font-black text-black">1 a 3 minutos</p>
               </div>
             </div>
           </div>
@@ -864,20 +864,20 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 </div>
               </div>
 
-              <button
-                type="button"
-                disabled={depositAddress === null}
-                onClick={() => depositAddress !== null && handleCopy(depositAddress)}
-                className="w-full py-4 rounded-2xl bg-black text-white font-bold text-sm cursor-pointer active:scale-98 transition-transform disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Compartir datos
-              </button>
-            </div>
+              {/*
+                SE FUERON DOS COSAS DE ESTA PANTALLA, y son las mismas que se
+                sacaron del depósito de la billetera.
 
-            {/* Advertencia */}
-            <p className="text-xs text-slate-500 text-center leading-relaxed px-2 font-medium">
-              Asegurate de depositar {asset.ticker} desde la red {selectedNetwork ?? 'elegida'}. De lo contrario, podrías perder tus fondos.
-            </p>
+                El botón "Compartir datos" y el aviso "Asegurate de depositar…".
+                El botón repetía el ícono de copiar que está al lado de la
+                dirección, y el aviso competía con la red y el código, que ya
+                están arriba.
+
+                Como todo lo de acá sale de variables —el activo, la red, la
+                dirección—, este cambio es **uno solo** para todo el catálogo de
+                criptoactivos. No hay una pantalla por activo.
+              */}
+            </div>
 
             {/* Card Verde Lima: Información Importante */}
             <div className="bg-[#ccff00] rounded-[28px] p-5 space-y-3 shadow-sm text-black">
@@ -894,7 +894,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">Comisión</span>
-                <p className="text-base font-black text-black">Sin comisiones</p>
+                <p className="text-base font-black text-black">ReWALLET no te cobra nada</p>
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">En tu cuenta</span>
@@ -1153,7 +1153,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                       $ReTag
                     </span>
                     <span className="text-xs text-slate-400 font-medium block mt-1 leading-snug">
-                      Enviá criptomonedas a tus amigos que utilizan ReWALLET. Gratis e instantánea.
+                      Enviá criptomonedas a tus amigos que utilizan ReWALLET. Se mueve en la red: paga la comisión y llega según la cadena.
                     </span>
                   </div>
                 </div>
@@ -1368,7 +1368,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 <span className="text-lg font-bold text-slate-400 ml-1.5">{asset.ticker}</span>
               </div>
               <span className="text-[11px] text-slate-400 block pt-1 font-medium">
-                Sin comisión · Transferencia instantánea por ReWALLET
+                Comisión y tiempo según la red.
               </span>
             </div>
 

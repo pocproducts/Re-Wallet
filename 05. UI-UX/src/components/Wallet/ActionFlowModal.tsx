@@ -855,7 +855,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                       Desde otra cuenta ReWALLET
                     </span>
                     <span className="text-xs text-slate-400 font-medium">
-                      Gratis e instantáneo.
+                      Se mueve en la red. La comisión y el tiempo los define la cadena.
                     </span>
                   </div>
                 </div>
@@ -997,7 +997,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   Comisión
                 </span>
                 <p className="text-base font-black font-display text-black leading-tight">
-                  Sin comisiones
+                  ReWALLET no te cobra nada
                 </p>
               </div>
 
@@ -1006,7 +1006,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   Acreditación
                 </span>
                 <p className="text-base font-black font-display text-black leading-tight">
-                  Instantánea
+                  1 a 3 minutos
                 </p>
               </div>
             </div>
@@ -1328,7 +1328,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     El marco, el margen quieto y el aviso de "no se pudo dibujar"
                     son los de `QrCode`: acá no se mide nada.
                   */}
-                  <div className="mx-auto w-fit">
+                  <div className="max-w-fit mx-auto">
                     <QrCodeImage
                       value={depositAddress}
                       label={`Código QR de tu dirección de ${depositAsset?.name ?? selectedCoin} en ${depositNetwork.label}`}
@@ -1375,43 +1375,36 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     )}
                   </div>
 
-                  {/* Botón negro: Compartir datos */}
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(depositAddress)}
-                    className="w-full py-3.5 rounded-2xl bg-black hover:bg-slate-900 active:scale-98 text-white font-bold text-sm shadow-md transition-all cursor-pointer"
-                  >
-                    Copiar dirección completa
-                  </button>
-                </div>
+                  {/*
+                    SE FUERON TRES COSAS DE ESTA PANTALLA.
 
-                {/* Advertencia */}
-                <p className="text-xs text-slate-600 text-center leading-relaxed px-2 font-semibold">
-                  Asegurate de mandar {selectedCoin} por la red {depositNetwork.label}. Si lo mandás
-                  por otra red, perdés los fondos.
-                </p>
+                    El botón "Copiar dirección completa", el aviso "Asegurate de
+                    mandar… por la red…" y el bloque "Tu saldo de…".
 
-                {/*
-                  EL SALDO, O LA AUSENCIA DE SALDO.
+                    No porque sean falsas —las tres lo eran, y la del aviso incluso
+                    previene perder plata— sino porque en una pantalla de depósito
+                    compiten con lo único que importa. Para mandar plata hacen falta
+                    tres cosas: **la red, el código y la dirección**. Eso ya está
+                    arriba, con la red elegida y el QR de esa misma red. Debajo
+                    estaba, en este orden: un botón que repetía una acción que ya
+                    hadía el ícono de copiar al lado de la dirección, un párrafo de
+                    advertencia, y un saldo.
 
-                  Un activo sin lector, o una cadena que no se pudo leer, dicen que
-                  no se pudo leer. Nunca muestran `0`: un cero afirma una
-                  recepción que nadie verificó, y en un producto de pagos eso no
-                  es un detalle de formato.
-                */}
-                <div className="bg-white rounded-3xl border border-slate-200/80 p-4 text-left">
-                  <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">
-                    Tu saldo de {selectedCoin}
-                  </span>
-                  {depositAsset !== null && depositAsset.balanceReadable && assetBalanceLabel(selectedCoin) !== null ? (
-                    <span className="text-base font-black font-display text-black">
-                      {assetBalanceLabel(selectedCoin)} {selectedCoin}
-                    </span>
-                  ) : (
-                    <span className="text-sm font-semibold text-slate-500">
-                      No pudimos leer tu saldo de {selectedCoin} en {depositNetwork.label}.
-                    </span>
-                  )}
+                    El saldo es el más raro de los tres: es un dato de la *billetera*
+                    en una pantalla que habla del *depósito*, y a alguien depositing
+                    no le resuelve ninguna de sus dos preguntas.
+
+                    Este bloque es UNO para todos los activos: la red, el código y
+                    la dirección salen de variables, así que sacar esto acá saca
+                    esto para cada criptactivo del catálogo, sin tocar pantalla por
+                    pantalla.
+
+                    Lo que queda: red elegida, QR de esa red, dirección recortada
+                    con su ícono de copiar, y la explicación de las direcciones EVM
+                    compartidas.
+                  */}
+
+                  {/* Fin de la card principal: red, código y dirección. */}
                 </div>
 
                 {/*
@@ -1630,7 +1623,9 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   </div>
                   <div>
                     <span className="text-sm font-bold text-black block">A otra cuenta ReWALLET</span>
-                    <span className="text-xs text-slate-400 font-medium">Gratis e instantáneo.</span>
+                    <span className="text-xs text-slate-400 font-medium">
+                      Transacción on-chain: paga la red y llega según la cadena.
+                    </span>
                   </div>
                 </div>
                 <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
@@ -1868,7 +1863,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                 </span>
               </div>
               <span className="text-[11px] text-slate-400 block pt-1 font-medium">
-                Sin comisión · Transferencia instantánea por ReWALLET
+                Comisión y tiempo según la red.
               </span>
             </div>
 
@@ -2379,14 +2374,15 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               lo va a leer. Esta pantalla solo lo muestra.
 
               Se muestran tambien cuando el veredicto fue `confirm` y el envio
-              siguio: en ese caso la persona confirmo, y el aviso queda como
-              registro de lo que la politica dijo antes de dejarla pasar.
+              siguio: en ese caso la persona confirmo, el envio lleva el gesto
+              explícito, y el aviso queda como registro de lo que la politica dijo
+              antes de dejarla pasar.
             */}
             {sendFlow.policyReasons.length > 0 && (
               <div className="bg-white rounded-3xl border border-amber-200 p-4 space-y-2 shadow-xs">
                 <span className="text-xs font-bold uppercase text-amber-600 font-display block">
                   {sendFlow.policyVerdict === 'confirm'
-                    ? 'La política reviso este envio'
+                    ? 'La política reviso este envio y lo confirmaste'
                     : 'Por que no se pudo'}
                 </span>
                 {sendFlow.policyReasons.map((reason) => (
