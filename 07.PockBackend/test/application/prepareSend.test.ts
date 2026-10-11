@@ -23,6 +23,10 @@ import { toFunctionSelector } from 'viem';
 
 import { prepareSend, SendRejected, SendReplay, SendInFlight } from '../../src/application/send/prepareSend';
 import { SEND_PREPARE_ENDPOINT } from '../../src/application/send/prepareSend';
+import type {
+  EvaluateSendPolicy,
+  EvaluateSendPolicyInput,
+} from '../../src/application/policy/evaluateSendPolicyUseCase';
 import type { EvmBalanceReader } from '../../src/domain/ports/evm-balance-reader';
 import type { SolanaBalanceReader } from '../../src/domain/ports/solana-balance-reader';
 import {
@@ -180,7 +184,37 @@ const idempotencyStore = () => {
   return { store, rows };
 };
 
-const harness = (options: Reads & { readonly now?: () => Date; readonly prepareFails?: boolean } = {}) => {
+/**
+ * The spending rules, standing in for the real use case.
+ *
+ * The engine has its own file (`sendPolicy.test.ts`) and its own use case is
+ * wired in `policyEnforcement.test.ts` against the real rules. What this suite
+ * needs is a policy whose **verdict is a knob**, so the same send can be run
+ * under `allow`, `confirm` and `deny` and the three answers compared — and a
+ * record of what it was asked, because the policy is enforced with the resolved
+ * destination and the amount of the send, and that is worth pinning.
+ *
+ * The real `EvaluateSendPolicy` writes the decision it returns; this fake
+ * records the questions instead, which is the half these tests can see.
+ */
+const policyOf = (verdict: 'allow' | 'confirm' | 'deny' = 'allow') => {
+  const asked: EvaluateSendPolicyInput[] = [];
+  const policy: EvaluateSendPolicy = async (input) => {
+    asked.push(input);
+    const decisive =
+      verdict === 'deny' ? 'velocity_per_hour' : verdict === 'confirm' ? 'max_single_send' : null;
+    return {
+      verdict,
+      decisive,
+      triggered: [],
+      perRule: [],
+      reasons: verdict === 'allow' ? [] : ['el motivo que escribio la regla'],
+    };
+  };
+  return { policy, asked };
+};
+
+const harness = (options: Reads & { readonly now?: () => Date; readonly prepareFails?: boolean; readonly policy?: 'allow' | 'confirm' | 'deny' } = {}) => {
   const readers_ = readers(options);
   const movements = movementStore();
   const idempotency = idempotencyStore();
@@ -203,6 +237,8 @@ const harness = (options: Reads & { readonly now?: () => Date; readonly prepareF
     },
   };
 
+  const rules = policyOf(options.policy);
+
   const prepare = prepareSend({
     wallets,
     evm: readers_.evm,
@@ -210,6 +246,7 @@ const harness = (options: Reads & { readonly now?: () => Date; readonly prepareF
     solanaTransfers,
     movements: movements.store,
     idempotency: idempotency.store,
+    policy: rules.policy,
     log,
     now: options.now ?? ((): Date => new Date('2026-10-04T05:00:00.000Z')),
   });
@@ -223,6 +260,7 @@ const harness = (options: Reads & { readonly now?: () => Date; readonly prepareF
     rows: idempotency.rows,
     log,
     prepared,
+    policyAsked: rules.asked,
   };
 };
 
@@ -486,6 +524,7 @@ describe('a valid Solana send', () => {
         complete: async () => {},
         release: async () => {},
       },
+      policy: policyOf().policy,
     });
 
     const code = await codeOf(
@@ -806,7 +845,37 @@ describe('the codes', () => {
       'AMOUNT_EXCEEDS_BALANCE',
       'BALANCE_UNREADABLE',
       'NO_GAS',
+      'POLICY_DENIED',
+      'POLICY_CONFIRM_REQUIRED',
       'PREPARATION_FAILED',
     ]);
+  });
+});
+
+describe('the gesture a `confirm` verdict demands', () => {
+  // The whole point of the gesture is that it is not a flag a client can set by
+  // accident: a body that improvises one has to be told the same thing as a body
+  // that sent nothing at all.
+  it('is only the boolean true', async () => {
+    for (const gesture of ['true', 1, 'yes', {}, [], null, false]) {
+      const { prepare } = harness({ policy: 'confirm' });
+      expect(
+        await codeOf(prepare(USER_ID, send({ policyConfirmed: gesture }))),
+        JSON.stringify(gesture),
+      ).toBe('POLICY_CONFIRM_REQUIRED');
+    }
+  });
+
+  it('lets the send through when it is exactly true', async () => {
+    const { prepare, policyAsked } = harness({ policy: 'confirm' });
+
+    expect(await prepare(USER_ID, send({ policyConfirmed: true }))).toBeTruthy();
+    expect(policyAsked).toHaveLength(1);
+  });
+
+  it('is not needed when the rules say allow', async () => {
+    const { prepare } = harness({ policy: 'allow' });
+
+    expect(await prepare(USER_ID, send())).toBeTruthy();
   });
 });

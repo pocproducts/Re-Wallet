@@ -46,6 +46,19 @@
  * of a charge and an ordinary send the **same** operation with the same refusals,
  * so a screen learns one vocabulary (`SEND_FAILURE_TEXT` on the front) for both.
  *
+ * ── Why the policy applies here too, and through the same door ──────────────
+ *
+ * A payment of a charge **is** a send: it moves money out of the payer's wallet
+ * into somebody else's, and step 8 is `prepareSend`. So the three spending rules
+ * are enforced by that same call, with the charge's own amount and the payee's
+ * address — the payer never gets to name a destination, and a policy that only
+ * guarded the hand-typed send would be a policy that a link could walk around.
+ *
+ * The one thing this path adds is the **gesture**: a `confirm` verdict needs
+ * `policyConfirmed` in the pay body, and it is forwarded to `prepareSend`
+ * unchanged. What counts as a gesture is that use case's decision and only its
+ * decision; a second opinion here would be a second place to be wrong.
+ *
  * ── The order of the checks ──────────────────────────────────────────────────
  *
  * ```
@@ -56,7 +69,8 @@
  *  5. CHAIN_UNKNOWN / ASSET_NOT_ON_CHAIN   the catalog, against the row
  *  6. AMOUNT_NOT_REPRESENTABLE    no integer means this amount in this asset
  *  7. PAYEE_WALLET_UNAVAILABLE     no wallet row of theirs on this chain
- *  8. prepareSend        every refusal of a send, plus the movement it writes
+ *  8. prepareSend        every refusal of a send —the spending policy included—
+ *                        plus the movement it writes
  *  9. markPaid           paid_by_user_id, paid_movement_id, paid_at
  * ```
  *
@@ -139,7 +153,27 @@ export const PAYMENT_REQUEST_ENDPOINT = '/api/payment-requests/pay';
  */
 export const paymentSendRequestId = (paymentRequestId: string): string => `pr-${paymentRequestId}`;
 
-/** The body, read field by field and never cast. No recipient field exists. */
+/**
+ * The body of a payment, read field by field and never cast.
+ *
+ * One field, and it is not about the money: it says that a person looked at what
+ * the spending rules asked and said yes. The charge's amount, chain, asset and
+ * payee all come from the row, so there is nothing here that could redirect the
+ * payment — which is why adding a field to this body is a decision and not a
+ * convenience.
+ */
+export interface PayPaymentRequestBody {
+  /**
+   * The explicit gesture, forwarded to `prepareSend` exactly as it arrived.
+   *
+   * `unknown` and not `boolean` on purpose: the body is read, never cast, and
+   * what counts as a gesture is `prepareSend`'s call to make. A `"true"` string
+   * that some client improvises arrives, travels, and is answered with
+   * `POLICY_CONFIRM_REQUIRED` — which is the correct answer, because it is not a
+   * gesture.
+   */
+  readonly policyConfirmed?: unknown;
+}
 
 /** What the charge is now. Small on purpose: an id, a state and a moment. */
 export interface PaidPaymentRequest {
@@ -213,7 +247,19 @@ export type PayPaymentRequestCode =
    * `PaymentRefused(error.code)` above is a compile-time check that it stays true.
    */
   | 'RECIPIENT_NOT_FOUND'
-  | 'RECIPIENT_NO_WALLET_ON_CHAIN';
+  | 'RECIPIENT_NO_WALLET_ON_CHAIN'
+  /**
+   * The spending rules refused this payment. A wall: no field of the body and no
+   * retry lifts it.
+   */
+  | 'POLICY_DENIED'
+  /**
+   * A rule asked a question and the pay body carried no explicit gesture.
+   *
+   * Same code as the send's, for the same reason: a payment of a charge goes
+   * through `prepareSend`, and the screen that already knows one knows both.
+   */
+  | 'POLICY_CONFIRM_REQUIRED';
 
 export class PaymentRefused extends Error {
   readonly code: PayPaymentRequestCode;
@@ -243,6 +289,12 @@ export interface PayPaymentRequestDeps {
 export type PayPaymentRequest = (
   payerUserId: string,
   id: unknown,
+  /**
+   * The pay body, read field by field and never cast. Optional because the only
+   * field this path ever looked at is the policy gesture, and a payment without
+   * one is still a payment.
+   */
+  body?: PayPaymentRequestBody,
 ) => Promise<PayPaymentRequestResult>;
 
 /**
@@ -290,7 +342,11 @@ const selectChargeAsset = (
 export const payPaymentRequest = (deps: PayPaymentRequestDeps): PayPaymentRequest => {
   const log = deps.log ?? noopLogger;
 
-  return async (payerUserId: string, id: unknown): Promise<PayPaymentRequestResult> => {
+  return async (
+    payerUserId: string,
+    id: unknown,
+    body?: PayPaymentRequestBody,
+  ): Promise<PayPaymentRequestResult> => {
     const now = deps.now?.() ?? new Date();
 
     /* 1. The id, before anything else. Same answer for a malformed one. */
@@ -392,9 +448,10 @@ export const payPaymentRequest = (deps: PayPaymentRequestDeps): PayPaymentReques
     }
 
     /*
-     * 8. The transfer. Every send rule applies, with the payee's address and the
-     *    charge's amount, and with an id that is the same on every attempt by the
-     *    same payer.
+     * 8. The transfer. Every send rule applies — the spending policy included,
+     *    enforced inside `prepareSend` against the charge's amount and the payee's
+     *    address — with an id that is the same on every attempt by the same
+     *    payer.
      */
     const requestId = paymentSendRequestId(id);
     let preparation: SendPreparation;
@@ -405,6 +462,9 @@ export const payPaymentRequest = (deps: PayPaymentRequestDeps): PayPaymentReques
         asset: { symbol: asset.symbol, decimals: asset.decimals },
         recipient,
         amountRaw: amountRaw.toString(),
+        // The gesture, untouched: whether a value is a gesture is decided once,
+        // in the use case that enforces the rule.
+        policyConfirmed: body?.policyConfirmed,
       });
     } catch (error) {
       if (error instanceof SendRejected) {

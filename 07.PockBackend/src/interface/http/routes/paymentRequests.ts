@@ -16,7 +16,8 @@
  *       "createdAt": "…", "expiresAt": "…" }
  *
  * GET /api/payment-requests/:id          → the same shape
- * POST /api/payment-requests/:id/pay     → no body: the charge says what to pay
+ * POST /api/payment-requests/:id/pay     → the charge says what to pay; the body
+ *                                           carries only the policy gesture
  *
  * 200 { "requestId": "pr-kQ3v…", "chain": "monad", "address": "0x…payer's own…",
  *       "network": "eip155:143", "transactions": [ … ],
@@ -40,6 +41,20 @@
  * used to be `{ "chain": "monad", "asset": { "symbol": "USDC", "decimals": 6 } }`,
  * and the payer was choosing; now the link describes the transfer and the payer
  * either has it or is told they do not.
+ *
+ * ── The pay body carries one field, and it is not about the money ────────────
+ *
+ * `POST /:id/pay` takes no chain, no asset and no recipient: those are the
+ * charge's and the payee's, and the row already says them. The only field left
+ * is `policyConfirmed`, the explicit gesture the spending rules can demand when
+ * they answer `confirm`. It is forwarded to `prepareSend` untouched, so what
+ * counts as a gesture is decided in one place —the use case that enforces the
+ * rule— and not once per route.
+ *
+ * The policy itself is applied inside that call, with the charge's amount and the
+ * payee's address, which is why a payment of a charge is refused by the same door
+ * as a hand-typed send: `POLICY_DENIED` and `POLICY_CONFIRM_REQUIRED` are 400s
+ * here too, with the same vocabulary the send screen already has.
  *
  * ── There is no `recipient` field, and that is the design ─────────────────────
  *
@@ -74,6 +89,7 @@
  * | 200    | —                   | the charge as it stands, or the transfer that pays it      |
  * | 400    | `AMOUNT_INVALID` …  | refused, one bounded code per distinct wrong thing          |
  * | 400    | `CHAIN_UNKNOWN`, `ASSET_NOT_ON_CHAIN` | the charge names something this app cannot move |
+ * | 400    | `POLICY_DENIED`, `POLICY_CONFIRM_REQUIRED` | the spending rules, the same door as `/api/send/prepare` |
  * | 401    | `UNAUTHENTICATED`   | no cookie; nothing read and nothing written                 |
  * | 404    | `REQUEST_NOT_FOUND` | no such charge, or not an id — deliberately indistinguishable |
  * | 409    | `ALREADY_PAID`      | the link is over: one link is one payment                  |
@@ -217,15 +233,19 @@ export const createPaymentRequestsRoutes = (deps: PaymentRequestsDeps) => {
     if (claims === null) return c.json(UNAUTHENTICATED_BODY, 401);
 
     const id = c.req.param('id');
+    /*
+     * The body, read for one field: the gesture. Nothing else in it can redirect
+     * the payment, so there is nothing else to read — and a body that is not
+     * JSON is an absent gesture, not a refusal, because the payment itself does
+     * not need it unless a rule asked a question.
+     */
+    const body = await c.req.json().catch(() => null);
 
     try {
       // The payer is the session. The charge says what to pay in what chain, the
       // payee comes from the row, and the destination address is resolved inside
       // the use case — there is no field in this surface that could carry one.
-      //
-      // The request body is deliberately not read: nothing in it can redirect the
-      // payment, so there is nothing to read it for.
-      return c.json(await deps.payPaymentRequest(claims.userId, id), 200);
+      return c.json(await deps.payPaymentRequest(claims.userId, id, (body ?? {}) as Record<string, never>), 200);
     } catch (error) {
       if (error instanceof PaymentRequestNotFound) {
         log.log('POST /payment-requests/:id/pay — no such charge');

@@ -24,6 +24,7 @@ import type { MovementStore } from '../../src/domain/ports/movement-store';
 import { idempotencyKeyFor, type IdempotencyStore } from '../../src/domain/ports/idempotency-store';
 import { SESSION_COOKIE_NAME } from '../../src/interface/http/cookie';
 import { createApp } from '../../src/interface/http/app';
+import type { EvaluateSendPolicy } from '../../src/application/policy/evaluateSendPolicyUseCase';
 import { recordingLogger, USER_ID } from '../support/fixtures';
 
 const EXPIRY = new Date('2030-01-01T00:00:00Z');
@@ -36,6 +37,22 @@ const SOLANA_RECIPIENT = SOLANA_SENDER;
 
 /** The handle the payee fixture is filed under. */
 const TAG = 'cortezjoaquin205.2d14';
+
+/**
+ * The spending rules, allowing everything.
+ *
+ * The enforcement is not this suite's subject —it has its own file, and the
+ * application suite runs the real rules— but the route cannot be built without
+ * the dependency, because the policy is applied inside the use case now. An
+ * `allow` here keeps every answer this suite asserts about the HTTP shape.
+ */
+const allowPolicy: EvaluateSendPolicy = async () => ({
+  verdict: 'allow',
+  decisive: null,
+  triggered: [],
+  perRule: [],
+  reasons: [],
+});
 
 const wallets: ReachableWalletStore = {
   /*
@@ -131,6 +148,7 @@ const harness = () => {
       solanaTransfers,
       movements: movementStore,
       idempotency,
+      policy: allowPolicy,
       log: recordingLogger(),
     }),
     log: recordingLogger(),
@@ -327,6 +345,7 @@ describe('POST /api/send/prepare', () => {
             complete: async () => {},
             release: async () => {},
           },
+          policy: allowPolicy,
           log: recordingLogger(),
         }),
         log: recordingLogger(),
@@ -396,6 +415,7 @@ describe('POST /api/send/prepare', () => {
           complete: async () => {},
           release: async () => {},
         },
+        policy: allowPolicy,
         log: recordingLogger(),
       }),
       log: recordingLogger(),

@@ -10,6 +10,34 @@
  * own wallet signs it. This is the first route in the app whose response is a
  * transfer of real money, and the response is still unsigned.
  *
+ * ── Why the spending policy is enforced HERE, and not before the client ──────
+ *
+ * A policy a client can ignore is not a policy: it is advice. So the three rules
+ * of `../policy/evaluateSendPolicy` are not consulted by this use case, they are
+ * **applied** by it, at the one point where money is about to move. The front may
+ * ask first, to paint the reason while the person still has a choice
+ * (`POST /api/wallet/policy/evaluate`, which stays); that call is a courtesy to
+ * the screen. The decision that counts is the one made here, with no participation
+ * from the request.
+ *
+ * Three consequences, and all three are deliberate:
+ *
+ *   1. **A `deny` is final.** `velocity_per_hour` —the hourly cap— answers
+ *      `deny`, and nothing in the body, the query or a later call can lift it.
+ *      There is no flag that turns a hard cap off, because a flag that turned it
+ *      off would be the fastest way to turn it off.
+ *   2. **A `confirm` costs an explicit gesture.** "Tell the person" cannot be
+ *      enforced from here: the server cannot know whether a human read the
+ *      warning. What it can do is refuse to prepare anything without the gesture
+ *      — `policyConfirmed: true`, and nothing else counts as it— and leave the
+ *      decision written in `policy_decisions`. That is a record of somebody
+ *      claiming to have confirmed, and it is not sold as proof that they did.
+ *   3. **The check runs before the claim and before the chain.** It needs the
+ *      amount and the destination, both already settled, and nothing about the
+ *      balance, the gas or the transaction. So a refused send costs one read of
+ *      the history, no RPC, no movement row, and it does not burn the person's
+ *      `requestId` — exactly like a bad chain or a bad recipient never did.
+ *
  * ── The order of the checks, and why it is this order ────────────────────────
  *
  * ```
@@ -24,10 +52,16 @@
  *  6b. RECIPIENT_NOT_FOUND / RECIPIENT_NO_WALLET_ON_CHAIN
  *                          the destination named as a @tag, resolved here and
  *                          never returned (see below)
- *  7. WALLETS_UNAVAILABLE  the address comes from a row, never from the body
- *  8. balance              BALANCE_UNREADABLE, then AMOUNT_EXCEEDS_BALANCE
- *  9. gas                  BALANCE_UNREADABLE, then NO_GAS
- * 10. movement, answer     one pending row, then the stored answer
+ *  6c. POLICY_DENIED / POLICY_CONFIRM_REQUIRED
+ *                          the spending rules, enforced. Before the claim, the
+ *                          chain and the movement: a refused send writes nothing
+ *                          and keeps its key (see the section above)
+ *  7. claim                taken before any read and before any write
+ *  8. WALLETS_UNAVAILABLE  the address comes from a row, never from the body
+ *  9. balance              BALANCE_UNREADABLE, then AMOUNT_EXCEEDS_BALANCE
+ * 10. gas                  BALANCE_UNREADABLE, then NO_GAS
+ * 11. transaction          one, unsigned, and no approval anywhere in it
+ * 12. movement, answer     one pending row, then the stored answer
  * ```
  *
  * Two rules are: cheap before expensive, and **deterministic before
@@ -127,6 +161,7 @@ import {
 } from '../../domain/send/transfer';
 import { formatUnits } from '../../domain/portfolio/assets';
 import { WalletsUnavailable } from '../portfolio/readPortfolio';
+import type { EvaluateSendPolicy } from '../policy/evaluateSendPolicyUseCase';
 
 /** The endpoint, as the idempotency key spells it. One constant, one string. */
 export const SEND_PREPARE_ENDPOINT = '/api/send/prepare';
@@ -158,6 +193,15 @@ export interface SendPreparationBody {
    */
   readonly recipientTag?: unknown;
   readonly amountRaw?: unknown;
+  /**
+   * The explicit gesture a `confirm` verdict demands, and nothing else.
+   *
+   * Only the boolean `true` is a gesture: a `"true"` string, a `1`, a `false`
+   * and an absent field are all **not** one, so a client that improvises a flag
+   * gets the refusal it deserves. It cannot lift a `deny` in any case — there is
+   * no field in this body that can, and that is the point of a hard cap.
+   */
+  readonly policyConfirmed?: unknown;
 }
 
 export interface SendPreparation {
@@ -211,6 +255,17 @@ export type SendRejectionCode =
   | 'AMOUNT_EXCEEDS_BALANCE'
   | 'BALANCE_UNREADABLE'
   | 'NO_GAS'
+  /** A rule cut this send and no gesture can lift it. A wall, not a question. */
+  | 'POLICY_DENIED'
+  /**
+   * A rule asked a question and the body carried no explicit gesture.
+   *
+   * The screen is supposed to have asked the person first and to be sending
+   * `policyConfirmed: true` only because a human said yes. Nothing here can
+   * verify that a human did —see the module comment— but a request without the
+   * gesture does not get a transaction either.
+   */
+  | 'POLICY_CONFIRM_REQUIRED'
   | 'PREPARATION_FAILED';
 
 export class SendRejected extends Error {
@@ -225,6 +280,8 @@ export class SendRejected extends Error {
     'AMOUNT_EXCEEDS_BALANCE',
     'BALANCE_UNREADABLE',
     'NO_GAS',
+    'POLICY_DENIED',
+    'POLICY_CONFIRM_REQUIRED',
     'PREPARATION_FAILED',
   ];
 
@@ -273,6 +330,20 @@ export interface PrepareSendDeps {
   readonly solanaTransfers: SolanaTransferPreparer;
   readonly movements: MovementStore;
   readonly idempotency: IdempotencyStore;
+  /**
+   * The spending rules, applied to this send.
+   *
+   * The same use case the advisory endpoint runs (`POST /api/wallet/policy/
+   * evaluate`), injected rather than rebuilt: one engine, one history write, one
+   * place where what the rules decided is recorded. A policy consulted from here
+   * with a second implementation would be a policy two implementations disagree
+   * about, and the enforced one is the only one that matters.
+   *
+   * It also means the decision is **written**: every enforced verdict, the
+   * refusals included, lands in `policy_decisions` through this dependency,
+   * whether or not the screen asked first.
+   */
+  readonly policy: EvaluateSendPolicy;
   readonly now?: () => Date;
   readonly ttlMs?: number;
   readonly log?: Logger;
@@ -553,6 +624,70 @@ export const prepareSend = (deps: PrepareSendDeps): PrepareSend => {
 
     /* 6. The destination, named one way or the other, never both. */
     const recipient = await resolveRecipient({ body, chain, wallets: deps.wallets, log });
+
+    /*
+     * 6c. The spending policy, enforced at the last moment at which the money is
+     *     still ours to stop.
+     *
+     *     Everything above is settled — the chain, the asset and its scale, the
+     *     amount and the destination the transfer would be built to — so this is
+     *     the first moment the three rules have all the facts they need, and the
+     *     last one at which refusing costs nothing: no claim taken, no balance
+     *     read, no message compiled, no movement row. A refused send leaves the
+     *     database exactly as it found it and lets the person keep their key.
+     *
+     *     The destination handed to the rules is the **resolved address**, not
+     *     what the body wrote. A send named by `@tag` and a send named by address
+     *     to the same wallet are the same destination and have to answer the
+     *     same way, and the address is the string the next send will be compared
+     *     against. Nothing about it leaves this scope.
+     *
+     *     The gesture is read as literally `true`. `"true"`, `1`, `false` and an
+     *     absent field are not it, and a client that sends any of them is told
+     *     the same thing as one that sent nothing.
+     */
+    const confirmed = body?.policyConfirmed === true;
+    const policy = await deps.policy({ userId, amount, recipient: recipient.address });
+
+    if (policy.verdict === 'deny') {
+      // No field of the body, no number of retries and no second call lifts a
+      // `deny`. It is the hourly cap: the one answer that means "stop", not
+      // "are you sure", and the reason a policy is worth having at all.
+      log.log('send.policy_denied', {
+        userId,
+        requestId,
+        decisive: policy.decisive,
+        reasons: policy.reasons,
+        // `true` when the request carried the gesture anyway: proof that the
+        // flag was here and changed nothing, which is what it is for.
+        gesture: confirmed,
+      });
+      throw new SendRejected(
+        'POLICY_DENIED',
+        `the spending rules refused this send (${policy.decisive ?? 'deny'}): ${policy.reasons.join(' ')}`,
+      );
+    }
+
+    if (policy.verdict === 'confirm' && !confirmed) {
+      log.log('send.policy_confirm_required', {
+        userId,
+        requestId,
+        decisive: policy.decisive,
+        reasons: policy.reasons,
+      });
+      throw new SendRejected(
+        'POLICY_CONFIRM_REQUIRED',
+        `this send needs an explicit confirmation (${policy.decisive ?? 'confirm'}): ${policy.reasons.join(' ')}`,
+      );
+    }
+
+    if (policy.verdict === 'confirm') {
+      // The rules asked, a human said yes, and the decision is already written
+      // by the use case above. This line is for the operator reading the log,
+      // who otherwise cannot tell a `confirm` that proceeded from a plain
+      // `allow`.
+      log.log('send.policy_confirmed', { userId, requestId, decisive: policy.decisive });
+    }
 
     /*
      * 7. The claim, taken before any read and before any write. From here to the

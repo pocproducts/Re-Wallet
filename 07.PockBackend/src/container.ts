@@ -241,6 +241,23 @@ export const buildApp = (config: Config, log: Logger) => {
   });
 
   /*
+   * La politica de gasto.
+   *
+   * Tres reglas sobre un store propio. El caso de uso vive aparte del de `send`
+   * a proposito: **evaluar** no es lo mismo que **exigir**, y por eso hay una
+   * puerta HTTP aparte —la pantalla pregunta para pintar el motivo— y una
+   * aplicacion adentro del caso de uso que mueve plata. Las dos comparten este
+   * mismo objeto: un motor, una historia y un solo lugar donde la decision queda
+   * escrita.
+   *
+   * Se construye antes que el envio porque el envio **la usa**: `prepareSend`
+   * corta un `deny` y frenan un `confirm` sin gesto, y un pago de cobro queda
+   * cubierto por la misma puerta.
+   */
+  const policyStore = createPostgresPolicyStore(db);
+  const evaluateSendPolicy = createEvaluateSendPolicy({ policy: policyStore, log });
+
+  /*
    * One send flow, shared.
    *
    * It is built here, once, and handed to both `prepareSend` and the charge
@@ -248,6 +265,10 @@ export const buildApp = (config: Config, log: Logger) => {
    * this side instead of in the body. Two instances would mean two movement stores
    * and two idempotency stores over the same tables, and the second one would be a
    * place where the two could disagree about what was already prepared.
+   *
+   * The spending rules go in as a dependency, not as a call the route makes: the
+   * policy is enforced inside, where the money is about to move, so the door that
+   * skips it does not exist.
    */
   const movements = createPostgresMovementStore(db);
   const idempotency = createPostgresIdempotencyStore(db);
@@ -258,6 +279,7 @@ export const buildApp = (config: Config, log: Logger) => {
     solanaTransfers,
     movements,
     idempotency,
+    policy: evaluateSendPolicy,
     log,
   });
 
@@ -358,15 +380,10 @@ export const buildApp = (config: Config, log: Logger) => {
   const swapRoutes = createSwapRoutes({ sessions, swapUseCase, log });
 
   /*
-   * La politica de gasto.
-   *
-   * Tres reglas sobre un store propio. El caso de uso vive aparte del de `send`
-   * a proposito: evaluar no es enviar. Consultar la politica no quema una clave
-   * de idempotencia ni crea un movimiento, asi que la pantalla puede preguntar
-   * las veces que necesite antes de ofrecer el boton de firmar.
+   * Las rutas de politica: la consulta de la pantalla, sobre el **mismo** caso de
+   * uso que exige el envio. No se saca: es la cortesia que le permite al front
+   * mostrar el motivo antes de que la persona decida.
    */
-  const policyStore = createPostgresPolicyStore(db);
-  const evaluateSendPolicy = createEvaluateSendPolicy({ policy: policyStore, log });
   const policyRoutes = createPolicyRoutes({ sessions, evaluateSendPolicy, log });
 
   return createApp({

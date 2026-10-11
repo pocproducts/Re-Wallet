@@ -166,6 +166,13 @@ const harness = (directory: Directory = { [TAG]: { ethereum: PAYEE } }) => {
     solanaTransfers,
     movements: movementStore,
     idempotency,
+    policy: async () => ({
+      verdict: 'allow',
+      decisive: null,
+      triggered: [],
+      perRule: [],
+      reasons: [],
+    }),
   });
 
   return { prepare, asked, movements, releases, rows };

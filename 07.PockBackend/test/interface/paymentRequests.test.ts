@@ -32,6 +32,7 @@ import type { MovementStore, PendingSendMovement } from '../../src/domain/ports/
 import type { IdempotencyStore } from '../../src/domain/ports/idempotency-store';
 import { SESSION_COOKIE_NAME } from '../../src/interface/http/cookie';
 import { createApp } from '../../src/interface/http/app';
+import type { EvaluateSendPolicy } from '../../src/application/policy/evaluateSendPolicyUseCase';
 import { recordingLogger } from '../support/fixtures';
 import { inMemoryPaymentRequests } from '../support/paymentRequests';
 
@@ -51,6 +52,22 @@ const OWNER_COOKIE = `${SESSION_COOKIE_NAME}=rw1.owner`;
 const PAYER_COOKIE = `${SESSION_COOKIE_NAME}=rw1.payer`;
 const THIRD_COOKIE = `${SESSION_COOKIE_NAME}=rw1.third`;
 const NO_COOKIE = null;
+
+/**
+ * The spending rules, allowing everything.
+ *
+ * The policy is enforced inside `prepareSend` now, and a payment of a charge goes
+ * through it — so this suite cannot build the app without the dependency. What it
+ * asserts here is the shape of the charge surface, not the rules: an `allow`
+ * keeps every answer below the one it was before the policy was enforced.
+ */
+const allowPolicy: EvaluateSendPolicy = async () => ({
+  verdict: 'allow',
+  decisive: null,
+  triggered: [],
+  perRule: [],
+  reasons: [],
+});
 
 /**
  * A body for `POST /:id/pay` that is **wrong on purpose**.
@@ -154,6 +171,7 @@ const harness = (options: { expiresInMs?: number } = {}): Harness => {
         solanaTransfers,
         movements: movementStore,
         idempotency: noIdempotency,
+        policy: allowPolicy,
       }),
     }),
     log: recordingLogger(),
@@ -770,6 +788,7 @@ function harnessAt(when: number, shared: Harness): Harness {
           },
         },
         idempotency: noIdempotency,
+        policy: allowPolicy,
       }),
     }),
     log: recordingLogger(),
