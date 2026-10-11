@@ -120,41 +120,72 @@ export const createUniswapV3Adapter = (
     return null;
   };
 
-  // BUG CONOCIDO, NO TOCAR HASTA DECIDIR: `POOL_MAP` no existe en ningun
-  // modulo alcanzable desde aca. El unico mapa con ese nombre es privado de
-  // `uniswapV3MonadSwap.ts` y esta indexado por direccion, no por simbolo,
-  // asi que ni siquiera podria servir para esta llamada. Ademas el codigo de
-  // abajo llama `findPool` con simbolos ('USDC', 'USDT0'). El error TS2304 se
-  // deja a proposito: inventar el mapa seria hacer pasar por implementado un
-  // camino de cotizacion que no lo esta.
-  const findPool = (tokenIn: string, tokenOut: string): { feeTier: number; tokenIn: string; tokenOut: string } | null => {
-    const pool = POOL_MAP.get(`${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}:3000`);
-    if (pool) return { ...pool, tokenIn: pool.tokenA, tokenOut: pool.tokenB };
+  /*
+   * LOS POOLS SALEN DE LA CONFIGURACIÓN DEL ADAPTADOR, no de un mapa global.
+   *
+   * Antes esto llamaba a un `POOL_MAP` que no existe en ningún módulo alcanzable
+   * desde acá, así que en runtime era un `ReferenceError` apenas alguien pedía
+   * una cotización. No era un tipo roto: era el camino de cotización entero
+   * sin backing.
+   *
+   * La fuente de verdad ya estaba a la vista: `config.supportedPairs` es lo que
+   * el factory arma desde `dexRegistry`, y trae el par con su símbolo, su fee
+   * tier y **los tokens ya resueltos a dirección**. Un par configurado es
+   * entonces un pool, y un par que no está configurado no es un pool.
+   *
+   * Lo que hace el índice es simétrica a propósito: en Uniswap V3 el pool de
+   * A→B es el mismo que el de B→A, y el que cotiza en el otro sentido tiene que
+   * devolver las dos direcciones intercambiadas. Una clave y la que devuelve el
+   * sentido inverso.
+   *
+   * Y el caso de "no hay pool" NO es un error: es `PAIR_NOT_SUPPORTED`, que es
+   * una respuesta que el caso de uso ya sabe dar. Un par sin configurar tiene
+   * que decir que no se soporta, no romper.
+   */
+  const POOLS_BY_PAIR = new Map(
+    config.supportedPairs.map((pair) => [
+      `${pair.sourceSymbol.toLowerCase()}:${pair.destinationSymbol.toLowerCase()}`,
+      { tokenIn: pair.tokenIn, tokenOut: pair.tokenOut, feeTier: pair.feeTier },
+    ]),
+  );
 
-    const reversed = POOL_MAP.get(`${tokenOut.toLowerCase()}:${tokenIn.toLowerCase()}:3000`);
-    if (reversed) return { ...reversed, tokenIn: reversed.tokenA, tokenOut: reversed.tokenB };
+  const findPool = (
+    tokenIn: string,
+    tokenOut: string,
+  ): { feeTier: number; tokenIn: string; tokenOut: string } | null => {
+    const direct = POOLS_BY_PAIR.get(`${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`);
+    if (direct !== undefined) return direct;
+
+    const reversed = POOLS_BY_PAIR.get(`${tokenOut.toLowerCase()}:${tokenIn.toLowerCase()}`);
+    if (reversed !== undefined) {
+      return { tokenIn: reversed.tokenOut, tokenOut: reversed.tokenIn, feeTier: reversed.feeTier };
+    }
 
     return null;
   };
 
   return {
+    /*
+     * LOS PARES QUE SE OFRECEN SON LOS QUE HAY CONFIGURADOS.
+     *
+     * Antes esta lista venía escrita a mano y decía tres cosas distintas de lo
+     * que el backend podía hacer: nombraba `USDT` cuando el registro declara
+     * `USDT0`, ponía un `routerAddress` de `'0x...'` —un placeholder, no una
+     * dirección— y un `feeTier` de 3000 cuando el dominio declara 100 como el
+     * que tiene liquidez. Una persona veía un par offered y una cotización que
+     * no existía; es el botón que miente, con forma de lista.
+     *
+     * Ahora sale de `config.supportedPairs`, que es lo único que el factory arma
+     * desde `dexRegistry`: si un par no está en el registro, no se ofrece.
+     */
     async getSupportedPairs() {
-      return [
-        {
-          sourceSymbol: 'USDC',
-          destinationSymbol: 'USDT',
-          chain: 'monad',
-          routerAddress: '0x...',
-          feeTier: 3000,
-        },
-        {
-          sourceSymbol: 'USDT',
-          destinationSymbol: 'USDC',
-          chain: 'monad',
-          routerAddress: '0x...',
-          feeTier: 3000,
-        },
-      ];
+      return config.supportedPairs.map((pair) => ({
+        sourceSymbol: pair.sourceSymbol,
+        destinationSymbol: pair.destinationSymbol,
+        chain: config.chain,
+        routerAddress: config.routerAddress,
+        feeTier: pair.feeTier,
+      }));
     },
 
     async getQuote(sourceSymbol, destinationSymbol, chain, amountIn, slippageBips) {
