@@ -23,7 +23,7 @@
  * código—. Por eso el estado sin código es un `fallback` explícito, y lo que
  * decide el que lo usa es si hay algo que mostrar.
  */
-import { encodeQrText, qrSvgPath, type QrMatrix } from '../../services/qrEncode';
+import { encodeQrText, qrMirrorTransform, qrSvgPath, type QrMatrix } from '../../services/qrEncode';
 
 /**
  * El marco, en módulos: el margen quieto de la norma a cada lado.
@@ -38,7 +38,7 @@ export interface QrCodeProps {
   readonly value: string;
   /** Qué es, para quien no ve la imagen: "Código QR de tu dirección de USDC". */
   readonly label: string;
-  /** En píxeles. El SVG escala solo; esto es el ancho de referencia. */
+  /** En píxeles: el ancho MÁXIMO al que se dibuja; se adapta si hay menos. */
   readonly size?: number;
   readonly className?: string;
   /**
@@ -80,21 +80,57 @@ export const QrCode = ({ value, label, size = 224, className = '', fallback }: Q
   // pueden desincronizar.
   const edge = matrix.size + QUIET_ZONE * 2;
 
+  /*
+   * El tamaño se puede ENCOGER, y no se rompe cuando el padre se ajusta.
+   *
+   * El bug original: `style={{ width: size, height: size }}` dibujaba el SVG con
+   * medidas absolutas en píxeles, así que en una pantalla angosta no se adaptaba
+   * y en la del cobro generado quedaba fuera de la vista.
+   *
+   * El error que se corrigió después: poner `width: '100%'` lo rompió en el otro
+   * sentido. Varios usos miden el contenedor con `fit-content` —`w-fit`—, y ahí
+   * el ancho del padre depende del contenido y el contenido pide el ancho del
+   * padre: una dependencia circular que el navegador resuelve en **cero
+   * píxeles**. El QR se volvía invisible justo donde se lo esperaba ver.
+   *
+   * La forma que no tiene ninguno de los dos problemas:
+   *
+   *   `width: size` + `max-width: 100%` + `height: auto`
+   *
+   * El ancho es el pedido, la cota superior es el padre, y el alto sale del
+   * `viewBox` —que es cuadrado— así que nunca se deforma. Con `w-fit` el padre
+   * se acomoda al SVG; con un padre angosto el `max-width` lo encoge. La
+   * proporción la sostiene el `viewBox`, no el alto, así que no hace falta
+   * declarar `aspectRatio`.
+   */
   return (
     <div
       className={`bg-white rounded-[28px] p-4 shadow-xl border-2 border-black/10 ${className}`.trim()}
     >
       <svg
         viewBox={`0 0 ${edge} ${edge}`}
-        style={{ width: size, height: size }}
-        className="mx-auto block max-w-full rounded-2xl"
+        style={{ width: size, maxWidth: '100%', height: 'auto' }}
+        className="mx-auto block rounded-2xl"
         role="img"
         aria-label={label}
         shapeRendering="crispEdges"
       >
         {/* El blanco es parte del código: sin él los módulos colas se pierden. */}
         <rect width="100%" height="100%" fill="#ffffff" />
-        <path d={qrSvgPath(matrix)} fill="#000000" />
+        {/*
+          El reflejo va en `transform`, NO dentro del `d`.
+
+          `d` solo acepta comandos de dibujo —`M L H V C S Q T A Z`—. Si la
+          transformación se escribe en el `d`, la cadena es inválida desde el
+          primer carácter y el navegador **descarta el path entero sin avisar**:
+          se ve el rectángulo blanco de arriba y ningún módulo. Que es
+          exactamente lo que pasaba.
+        */}
+        <path
+          d={qrSvgPath(matrix)}
+          transform={qrMirrorTransform(matrix)}
+          fill="#000000"
+        />
       </svg>
     </div>
   );

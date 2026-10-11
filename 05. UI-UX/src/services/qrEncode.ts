@@ -63,12 +63,42 @@ export const encodeQrText = (text: string): QrMatrix => {
  * El margen de 4 módulos **no es decorativo**: es parte de la norma y sin él la
  * mitad de los lectores no encuentra el código. Va acá y no en el SVG del
  * componente, para que el que dibuja y el que mide el marco miren al mismo lugar.
+ *
+ * ── Por qué esta función NO devuelve una transformación ─────────────────────
+ *
+ * Antes devolvía `translate(${edge} 0) scale(-1 1)${path}`, y el componente la
+ * usaba como `<path d={…}>`.
+ *
+ * Eso no es un path: **`d` solo admite comandos de dibujo** —`M L H V C S Q T A
+ * Z`— y una transformación va en el atributo `transform` del elemento. Puesta en
+ * el `d`, la cadena es inválida desde el primer carácter y el navegador descarta
+ * el path entero **sin avisar**.
+ *
+ * El síntoma en el teléfono era un rectángulo blanco sobre verde y cero módulos:
+ * el `<rect>` de fondo —que es otro elemento— sí dibujaba, y el QR no. Un cobro
+ * sin código, presentado como si lo tuviera.
+ *
+ * La misma transformación sale ahora de `qrMirrorTransform`, que la aplica el
+ * componente como atributo, que es donde el SVG la espera.
  */
 export const qrSvgPath = (matrix: QrMatrix): string => {
-  const edge = matrix.size + QUIET_ZONE * 2;
   let path = '';
   for (let row = 0; row < matrix.size; row += 1) {
     for (let column = 0; column < matrix.size; column += 1) {
+      /*
+       * SOLO LOS MÓDULOS ENCENDIDOS.
+       *
+       * Antes el bucle dibujaba cada celda sin mirar su valor, así que la ruta
+       * era un cuadrado negro macizo de `size × size` módulos. Encima de eso
+       * venía el `d` inválido, que lo descartaba entero; pero arreglar el `d` sin
+       * arreglar esto cambiaba un rectángulo vacío por un bloque negro que
+       * tampoco escanea nadie.
+       *
+       * Un módulo apagado se deja en blanco a propósito: el fondo blanco del
+       * `<rect>` ya está, y agregar los apagados al negro es tapar el código.
+       */
+      if (matrix.data[row * matrix.size + column] === 0) continue;
+
       // El origen del módulo: una vuelta hacia abajo por cada fila y una hacia
       // la derecha por cada módulo, desde la esquina superior izquierda.
       const x = column + QUIET_ZONE;
@@ -76,5 +106,19 @@ export const qrSvgPath = (matrix: QrMatrix): string => {
       path += `${MODULE_PATH}${x} ${y}h1v1h-1z`;
     }
   }
-  return `translate(${edge} 0) scale(-1 1)${path}`;
+  return path;
 };
+
+/**
+ * El reflejo del código, como **atributo** de `<path>`.
+ *
+ * Va aparte del `d` por lo que explica `qrSvgPath`: `translate` y `scale` no son
+ * comandos de path. Acá viven porque acá es donde el SVG las lee.
+ *
+ * Se refleja en el eje vertical porque es como los dibuja `qrcode` y como los
+ * leen la mitad de los lectores de cámara; el estándar pide que un QR se pueda
+ * leer de las dos formas, así que dejarlo sin reflejar no rompe la lectura pero
+ * obliga al lector a hacerlo solo.
+ */
+export const qrMirrorTransform = (matrix: QrMatrix): string =>
+  `translate(${matrix.size + QUIET_ZONE * 2} 0) scale(-1 1)`;
