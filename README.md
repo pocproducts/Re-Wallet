@@ -27,10 +27,10 @@ Un `0` afirma que la persona no tiene esa plata. Casi siempre sería mentira.
 |---|---|
 | **Balance compuesto** | Crypto libre + dólares digitales + posiciones invertidas, con el estado de lectura de cada parte |
 | **Rendimiento** | Aave V3 en Monad, Kamino en Solana. APR ponderado por posición real, no promedio simple |
-| **Envío** | A un tag (`@nombre`) o a una dirección, con idempotencia para que un doble toque no mande dos veces |
+| **Envío** | A un tag (`@nombre`) o a una dirección. Es una **transacción on-chain**: la firma el navegador, paga comisión de red y tarda lo que tarde la cadena. Con idempotencia, para que un doble toque no mande dos veces |
 | **Política de gasto** | Tres reglas antes de firmar: magnitud, ritmo por hora, destino nuevo |
 | **Conversión** | Cotización real vía Uniswap Trading API en Monad |
-| **Links de cobro** | Pedir un monto, compartir el link, que lo paguen sin instalar nada |
+| **Cobrar** | Elegís en qué se cobra → el importe → QR y link. El link lleva la identidad de ReWALLET y vence en 24 horas |
 
 **Cadenas:** Monad · Ethereum · Base · Arbitrum · Optimism · Polygon · Solana
 
@@ -53,12 +53,15 @@ Un `0` afirma que la persona no tiene esa plata. Casi siempre sería mentira.
 
 04. Landing Page/   Landing page (marketing, ciclo de vida aparte)
 
+qr-probe/         Página de prueba de QR (worker de diagnóstico)
+
 docs/
 ├── contratos/   Las reglas de diseño que no se rompen
 ├── decisiones/   Hallazgos verificados, con cómo se comprobaron
 └── 03. Auditorias/   Revisiones técnicas
 
-tasks/          Roadmap operativo y tareas
+odd/tasks/        Documentos de trabajo en curso: qué se decidió y por qué
+tasks/            Roadmap operativo y tareas
 02. Contexto iniciar del proyecto/       Borradores del diseño
 
 ## Cómo correr
@@ -93,8 +96,8 @@ wrangler secret put UNISWAP_API_KEY
 ## Tests
 
 ```bash
-cd 07.PockBackend && npm test    # backend
-cd 05. UI-UX && npm test    # frontend
+cd 07.PockBackend && npm test    # backend — 921 tests
+cd 05. UI-UX && npm test          # frontend — 224 tests
 ```
 
 Toda la suite corre **sin red y sin base de datos**. No es una comodidad: es lo
@@ -102,19 +105,91 @@ que permite ejercitar el flujo completo de sesión, los lectores de cadena y los
 stores inyectando dobles. Un test que necesita que la RPC esté arriba es un test
 que solo corre el día que la RPC está arriba.
 
+Hay dos proyectos de test en el front, con reglas distintas y declaradas en
+`vitest.config.ts`:
+
+| Proyecto | Qué entra | Entorno |
+|---|---|---|
+| `servicios` | `test/**/*.test.ts` — lógica pura, normalizadores, aritmética | `node` |
+| `hooks` | `src/**/__tests__/**/*.test.ts` — lo que monta React | `jsdom` |
+
+Dos de ellos vigilan cosas que antes no existían y que ya se rompieron una vez
+cada una:
+
+- `qrSvgPath.test.ts` — que el atributo `d` del QR sea un path válido. Estuvo
+  roto dos veces: una con una transformación metida dentro del `d`, que el
+  navegador descarta entero, y otra dibujando los módulos apagados.
+- `transferPromises.test.ts` — que ningún texto visible prometa envío gratis o
+  instantáneo. Hoy el envío paga comisión de red y tarda lo que tarde la cadena,
+  y un copy que diga otra cosa es una promesa rota.
+
+## Despliegue
+
+Un solo Worker sirve la API y el front, en dos dominios:
+
+| Dominio | Worker |
+|---|---|
+| `app.rewallet.win` | `rewallet-poc-api` |
+| `beta.rewallet.win` | `rewallet-poc-api` |
+
+```bash
+cd "05. UI-UX" && npm run build     # el front viaja DENTRO del worker del backend
+cd 07.PockBackend && npm run build && npx wrangler deploy
+```
+
+**El deploy se hace desde `07.PockBackend`, nunca desde `05. UI-UX`.** El
+`wrangler.jsonc` del front declara un Worker propio que compite por el mismo
+dominio, y ya pasó una vez: le ganó la ruta al backend y `/api/auth/session`
+devolvió 404 en vez de 401, que es el login muerto.
+
+El síntoma es inconfundible: **`404` en `/api/auth/session` significa que otro
+Worker ganó la ruta.** `401` es lo correcto —API viva, sin sesión.
+
+`test.rewallet.win` es un Worker de diagnóstico con `qr-probe/`: una página con
+el QR real de la app, usada para separar "el QR está roto" de "el código no llega
+a tu pantalla". La página se genera —no se edita a mano— porque importa el encoder
+del proyecto:
+
+```bash
+cd "05. UI-UX" && npx tsx scripts/generar-qr-probe.mjs
+cd ../../qr-probe && npx wrangler deploy
+```
+
 ## Estado
 
-Beta privada. El producto está detrás de sesión y las operaciones que mueven
-dinero reales se firman contra wallets de prueba.
+Beta privada, en `app.rewallet.win`. El producto está detrás de sesión.
 
-Dos cosas que **no** existen todavía, y que conviene que el repo no aparente
-lo contrario:
+### Lo que no existe todavía
 
-- La conversión **cotiza** pero no ejecuta. Hacen falta dos firmas —Permit2 y
-  la transacción— y un botón que dijera "comprar" sin ellas sería un botón que
+Cosas que el repo **no** debe aparentar lo contrario:
+
+- **La conversión cotiza pero no ejecuta.** Hacen falta dos firmas —Permit2 y la
+  transacción— y un botón que dijera "comprar" sin ellas sería un botón que
   miente.
-- La política de gasto **evalúa y corta**; el historial de decisiones es
-  consultable por endpoint, todavía no tiene pantalla.
+- **La política de gasto evalúa y corta**, pero el historial de decisiones es
+  consultable por endpoint y todavía no tiene pantalla.
+- **El envío interno entre cuentas ReWALLET no existe.** La opción "A otra cuenta
+  ReWALLET" está deshabilitada y lo dice: *"Enviar a un $ReTag todavía no está
+  disponible"*. Es un stub honesto, y conviene que siga siéndolo.
+- **No hay liquidación interna.** El envío por `@tag` mueve una transacción
+  on-chain como cualquier otro: paga comisión de red y tarda lo que tarde la
+  cadena.
+
+### Lo que está decidido y documentado, pero sin implementar
+
+**Envío con liquidación interna.** El producto decidió que el envío por ReWALLET
+mueve plata por dentro y liquida contra la cadena agrupado, para que "sin
+comisión e instantáneo" sean hechos y no promesas. El diseño está completo y la
+decisión de riesgo está tomada —ante un fallo del batch, **se difiere**— en
+[`odd/tasks/modelo-de-saldo-liquidez-interna.md`](odd/tasks/modelo-de-saldo-liquidez-interna.md).
+
+El modelo tiene dos saldos, no uno: **total** (lo que la persona siente que tiene)
+y **disponible** (lo que puede mover a la cadena ahora), con un solo invariante
+—`disponible ≤ saldo real en la cadena`— que es el número que impide inventar
+plata.
+
+Hasta que eso exista, el copy de comisión e inmediatez se sacó de las pantallas, y
+un test lo verifica. Ver [`odd/tasks/copy-honesto.md`](odd/tasks/copy-honesto.md).
 
 ## Licencia
 
