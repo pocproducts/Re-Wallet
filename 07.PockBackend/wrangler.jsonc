@@ -31,7 +31,23 @@
 
   // Secrets are NOT in this file. They are set with `wrangler secret put`:
   // PRIVY_APP_ID, PRIVY_APP_SECRET, DATABASE_URL, SESSION_SECRET.
+  //
+  // DOS dominios, un solo Worker. `app` es el de marca y `beta` sigue existiendo
+  // como la misma app, no como una versión distinta: los dos apuntan acá, así que
+  // ninguno rompe el otro y probar en cualquiera de los dos es probar lo mismo.
+  //
+  // Lo que NO puede volver a pasar es que OTRO Worker tome `app.rewallet.win`.
+  // Pasó una vez: `rewallet-app-dev` —creado desde el `wrangler.jsonc` del front,
+  // que dice en mayúsculas que no se despliegue desde ahí— se adjudicó la ruta, y
+  // el síntoma fue `/api/auth/session` devolviendo 404 en vez de 401: el front
+  // servía y el login no podía funcionar nunca.
+  //
+  // La cookie de sesión es `httpOnly`, `SameSite=Lax` y con prefijo `__Host-`.
+  // Ese prefijo obliga a `Secure`, sin `Domain` y `Path=/`, y `SameSite=Lax`
+  // exige que el front y la API sean el mismo sitio. Con dos Workers
+  // compitiendo por el dominio, uno gana y el otro sirve sin API.
   "routes": [
+    { "pattern": "app.rewallet.win", "custom_domain": true },
     { "pattern": "beta.rewallet.win", "custom_domain": true }
   ],
 

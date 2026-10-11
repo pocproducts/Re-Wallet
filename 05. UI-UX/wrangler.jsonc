@@ -40,6 +40,14 @@
     "directory": "./dist",
     "not_found_handling": "single-page-application"
   },
+  // El dominio de marca NO va acá. `app.rewallet.win` lo tiene `rewallet-poc-api`
+  // desde `07.PockBackend/wrangler.jsonc`, y es el único que puede servirlo: el
+  // front sin API no tiene login, porque `/api/auth/session` devuelve 404.
+  //
+  // Declarar `app.rewallet.win` acá ya rompió el acceso una vez (oct 2026) y dejó
+  // el dominio sirviendo un front sin sesión. Si vas a desplegar el front para
+  // probarlo solo, usá `app-dev`, que no compite con nadie; si vas a desplegar la
+  // app entera, andá a `07.PockBackend`.
   "routes": [
     { "pattern": "app-dev.rewallet.win", "custom_domain": true }
   ],
