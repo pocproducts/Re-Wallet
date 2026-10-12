@@ -24,7 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 
 import { useAssetTrade } from '../useAssetTrade';
-import { quoteSwap } from '../../services/swap';
+import { isSwapMockEnabled, quoteSwap } from '../../services/swap';
 import type { TradeAssetRow } from '../../types/trade.types';
 
 /**
@@ -85,6 +85,14 @@ const COTIZACION_OK = {
   quote: {
     amountOut: '950000',
     price: '0.95',
+    /*
+     * Los tres campos del contrato del swap: el mínimo protegido, el fee del
+     * pool y la validez. Un fixture que los omita estaría afirmando una forma
+     * que el backend ya no tiene: el test deja de cubrir lo que cubría.
+     */
+    amountOutMin: '945250',
+    feeTier: 100,
+    validUntil: 1_900_000_000_000,
     quoteId: 'qt_123',
     blockNumber: '12345',
   },
@@ -117,6 +125,69 @@ describe('useAssetTrade hook', () => {
      * y confundirlas es la forma más chica de mentir.
      */
     expect(result.current.destinationAmountText).toBe('0');
+  });
+
+  it('está encendida en beta.rewallet.win y apagada en app.rewallet.win', () => {
+    /*
+     * El entorno de prueba es beta y el de marca es app: la misma pantalla no
+     * puede valer una cosa en un host y otra en el otro sin que nadie lo
+     * afirme, así que la bandera lo lee del hostname.
+     */
+    vi.stubEnv('DEV', false);
+
+    const spy = vi.spyOn(window, 'location', 'get');
+    try {
+      spy.mockReturnValue({ ...window.location, hostname: 'beta.rewallet.win' } as Location);
+      expect(isSwapMockEnabled()).toBe(true);
+
+      spy.mockReturnValue({ ...window.location, hostname: 'app.rewallet.win' } as Location);
+      expect(isSwapMockEnabled()).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('usa la cotización inyectada en vez del servicio real', async () => {
+    /*
+     * La costura existe para poder mover el hook sin motor y sin red. Lo que este
+     * test fija es la **precedencia**: la inyectada gana, la real queda de default.
+     *
+     * Sin esto, un `??` invertido dejaría a la pantalla simulando el precio y
+     * pidiéndole el número al backend al mismo tiempo. Con los dos caminos vivos,
+     * cuál de los dos se muestra pasa a ser una pregunta sin respuesta —y en una
+     * billetera, un precio que puede venir de dos lugares distintos es un precio
+     * que nadie puede auditar.
+     */
+    const inyectada = vi.fn<typeof quoteSwap>().mockResolvedValue(COTIZACION_OK);
+
+    const { result } = renderHook(() =>
+      useAssetTrade({
+        amountText: '1,00',
+        setAmountText: () => {},
+        catalog: mockCatalog,
+        quoteSwap: inyectada,
+      }),
+    );
+
+    act(() => {
+      result.current.selectAsset('destination', 'monad:USDT0');
+    });
+
+    /*
+     * Se espera el **resultado**, no la llamada.
+     *
+     * Esperar a que la inyectada haya sido llamada no dice nada: la llamada pasa
+     * antes de que la promesa se resuelva, así que la aserción de abajo correría
+     * contra un estado que todavía no cambió. El precio en pantalla es la
+     * propiedad que importa, así que es la que se espera.
+     */
+    await waitFor(() => {
+      expect(result.current.equivalentText).toBe('1 USDC ≈ 0.95 USDT0');
+    });
+
+    // El servicio real no se toca: si se tocara, habría dos cotizaciones para el
+    // mismo monto y la que se pinta sería la última en llegar.
+    expect(mockedQuoteSwap).not.toHaveBeenCalled();
   });
 
   it('cotiza cuando hay monto y las dos filas son de la misma red', async () => {
@@ -169,6 +240,15 @@ describe('useAssetTrade hook', () => {
        * "simplifica": es el contrato con el backend y con la cadena.
        */
       amountRaw: '1000000',
+      /*
+       * `50`, siempre, salvo que la pantalla diga otra cosa.
+       *
+       * El slippage es parte del contrato de la cotización: el motor la calcula
+       * con la tolerancia elegida, y un llamado sin tolerancia le diría al
+       * backend una protección distinta de la que la pantalla promete. El
+       * default 50 (0,5%) es el "Auto" del estándar de Uniswap.
+       */
+      slippageBips: 50,
     });
 
     expect(result.current.quoteFailure).toBeNull();

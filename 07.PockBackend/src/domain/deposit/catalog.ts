@@ -63,6 +63,7 @@
  */
 import type { EvmNetworkId } from '../wallet/evmNetwork';
 import type { PortfolioChain } from '../portfolio/networks';
+import { activeSolanaCluster } from '../solana/cluster';
 
 /**
  * Las redes en las que se puede recibir. Es el mismo conjunto de cadenas que el

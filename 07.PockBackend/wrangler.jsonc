@@ -24,9 +24,32 @@
   // and Wrangler does not fail on a missing directory here — it deploys a
   // Worker that answers `/api/*` and 404s everything else. A deployment that
   // looks green and serves nothing is worse than one that fails.
+  // El front end. The same Worker serves it, so there is only one origin.
+  //
+  // The path is relative to THIS file, which lives in `apps/api/`. That makes
+  // `apps/web` one level up, and nothing to do with the old folder names:
+  // `"../05. UI-UX/dist"` stopped resolving the day the repo was reorganised,
+  // and Wrangler does not fail on a missing directory here — it deploys a
+  // Worker that answers `/api/*` and 404s everything else. A deployment that
+  // looks green and serves nothing is worse than one that fails.
+  //
+  // `binding` + `run_worker_first` hacen que el Worker vea TODO antes que el
+  // CDN de assets, en este orden necesario:
+  //
+  // 1. `http` -> `https` se impone en `src/index.ts` y no en la zona: el caso
+  //    del teléfono era `http://beta.rewallet.win` respondiendo 200, y Privy
+  //    con razón se niega a crear una wallet embebida sobre un origen inseguro.
+  //    Las reglas de la zona no lo cubren porque el panel es manual y queda
+  //    fuera del repo.
+  // 2. Lo que no es `/api` delega a `env.ASSETS.fetch`, y eso es lo que aplica
+  //    el fallback SPA ya declarado: `not_found_handling` sólo entra en juego
+  //    cuando el binding sirve, y con el Worker al medio sin binding para
+  //    llamarlo, `/cobrar/<id>` respondía el 404 de texto plano de Hono.
   "assets": {
     "directory": "../05. UI-UX/dist",
-    "not_found_handling": "single-page-application"
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
   },
 
   // Secrets are NOT in this file. They are set with `wrangler secret put`:
@@ -68,6 +91,10 @@
   // MONAD_POOL_RPC_URL sigue siendo var porque no tiene credencial: es el
   // endpoint publico de Monad.
   "vars": {
-    "MONAD_POOL_RPC_URL": "https://rpc.monad.xyz"
+    "MONAD_POOL_RPC_URL": "https://rpc.monad.xyz",
+    // DEMO HACKATHON (2026-10-11): la app firma en Solana devnet. Devolverlo a
+    // mainnet se hace quitando esta var. Los valores verificados viven en
+    // `domain/solana/cluster.ts`.
+    "SOLANA_CLUSTER": "devnet"
   }
 }

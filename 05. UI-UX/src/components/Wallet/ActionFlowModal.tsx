@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { AssetTradeCard } from '../common';
+import { SwapScreen } from './SwapScreen';
 import { AssetIcon, ChainIcon } from '../common/AssetIcon';
 import { BalancePieceRow } from '../Investments/BalancePieceRow';
 import { byUsdValueDesc } from '../../services/walletBalance';
@@ -36,7 +37,6 @@ import { QrScannerModal } from './QrScannerModal';
  * sería cambiar código que no es de este arreglo.
  */
 import { QrCode as QrCodeImage } from '../common/QrCode';
-import { TRADE_UNAVAILABLE_TEXT, useAssetTrade, useTradeCatalog } from '../../hooks/useAssetTrade';
 import type { DepositInfoView } from '../../hooks/useDepositInfo';
 import { assetOn, isEvmNetwork, truncateAddress, type DepositNetworkView } from '../../services/depositInfo';
 import type { DepositChainId } from '../../types/deposit.types';
@@ -46,6 +46,7 @@ import {
   isValidRecipientForChain,
   classifyRecipient,
   looksLikeRewalletTag,
+  sendExplorerUrlFor,
   type RecipientKind,
   sendChainByKey,
   type SendChainId,
@@ -222,39 +223,14 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   const holdingOf = (chain: DepositChainId, symbol: string): PortfolioHolding | null =>
     holdings.find((holding) => holding.chain === chain && holding.symbol === symbol) ?? null;
 
-  /**
-   * La lista real de "Comprar" y "Vender".
-   *
-   * No se construye acá: la construye `useTradeCatalog`, que es el mismo
-   * constructor que usa el detalle de un cripto. Copiarlo en dos pantallas es
-   * como las dos dejaron de decir lo mismo —una lista de activos y otra— sin que
-   * ninguna se quejara. Esta pantalla le pasa las tres lecturas que ya tiene.
-   */
-  const tradeCatalog = useTradeCatalog({ depositInfo, holdings, balance });
-
   /*
-   * El par que se convierte en los dos sentidos.
+   * La lista de "Comprar" / "Vender" vive en su pantalla.
    *
-   * Los dos leen el mismo catálogo real, así que no pueden mostrar activos que
-   * el backend no conoce ni saldos inventados. El par inicial lo decide el
-   * catálogo —de los dólares a la primera cripto— y no dos constantes escritas a
-   * mano: el destino por defecto era Bitcoin, que esta billetera no puede
-   * mover. Esta pantalla no pasa identidades, y por eso el par lo elige el
-   * catálogo entero; el detalle de un cripto sí pasa el activo que se está
-   * viendo.
+   * El catálogo lo arma `SwapScreen` adentro de sí misma: antes existía acá,
+   * duplicado para las dos pantallas espejadas que el estándar de Uniswap
+   * reemplaza por una sola. Quedar doble era el estado que esta escritura
+   * terminaba.
    */
-  const buyTrade = useAssetTrade({
-    amountText: keypadAmount,
-    setAmountText: setKeypadAmount,
-    catalog: tradeCatalog,
-  });
-  const sellTrade = useAssetTrade({
-    amountText: keypadAmount,
-    setAmountText: setKeypadAmount,
-    catalog: tradeCatalog,
-  });
-  /** Qué desplegable está abierto, o ninguno. */
-  const [sheetSide, setSheetSide] = useState<'source' | 'destination' | null>(null);
 
 
   // Cada vez que se abre una acción, inicializar en la pantalla lima
@@ -294,22 +270,19 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       setSendAmountError(null);
       setSelectedNetwork(null);
       setDepoSource('crypto');
-      setSheetSide(null);
-      /*
-       * Abrir el flujo de enviar arranca una intención nueva: el `requestId` con
-       * el que se protege el doble toque pertenece a un intento, no a la app.
-       */
       setSendNetwork(null);
       sendFlow.reset();
     }
   }, [action, sendFlow.reset]);
 
   /*
-   * `openBuy` y `openSell` se fueron con el menú de "Usar": eran sus únicas
-   * llamadoras y sin menú no hay a dónde abrir. Las pantallas `use_buy` y
-   * `use_sell` de más abajo quedan estacionadas — con su `buyTrade`, su
-   * `sellTrade` y su `AssetTradeCard` — a la espera del motor de swap de la
-   * Fase 2. Volver a armar el menú es una línea; no una reconstrucción.
+   * "Usar" abre el menú de "Comprar" y "Vender". Ambas opciones abren la
+   * misma pantalla `SwapScreen` con dirección inicial distinta: comprar es
+   * salir de dólares, vender es volver a ellos. La pantalla sigue la
+   * disposición documentada por Uniswap, su cotización viene del backend real
+   * en `app.rewallet.win` y del mock en beta/local, y su ejecución es una
+   * simulación hasta que la firma real (Permit2 + `/api/wallet/swap/execute`)
+   * exista en el front.
    */
 
   /* =========================================================================
@@ -456,16 +429,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   /**
    * El enlace a la transacción en la exploradora de la red, o `null`.
    *
-   * La base sale de `config/chains.ts`, que ya fue verificada contra la cadena:
-   * un link a una exploradora equivocada en una billetera es una página que
-   * parece phishing. El hash es un identificador de transacción, no una
-   * dirección, y es lo que hace el envío comprobable.
+   * Lo resuelve `config/send.ts`: ahí está la regla y su prueba. El hash es
+   * un identificador de transacción, no una dirección, y es lo que hace el
+   * envío comprobable — y visible para cualquiera que quiera verificarlo sin
+   * creernos.
    */
-  const sendExplorerUrl: string | null = (() => {
-    if (sendFlow.transferHash === null || sendChainResolved === null) return null;
-    const base = evmChainById(sendChainResolved.chainId)?.blockExplorers?.default.url;
-    return base === undefined ? null : `${base}/tx/${sendFlow.transferHash}`;
-  })();
+  const sendExplorerUrl: string | null = sendExplorerUrlFor(sendChainResolved, sendFlow.transferHash);
 
   /**
    * Los activos que se pueden **enviar**, según el catálogo.
@@ -736,14 +705,13 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
           )}
 
           {/*
-            ACÁ ESTABA EL MENÚ DE "USAR": "Comprar crypto" y "Vender crypto".
+            EL MENÚ DE "USAR": "Comprar" y "Vender".
 
-            Sus dos opciones eran el mismo cambio de activo en dos direcciones, y
-            las dos Applican una conversión que hoy no tiene motor: no hay
-            backend que la cotice ni transacción que la ejecute. Un botón que no
-            puede hacer lo que promete no se ofrece. Las dos pantallas de compra y
-            venta NO se borraron — están más abajo, en `use_buy` y `use_sell`, y
-            son la base de la Fase 2 ya decidida. Lo que se cerró fue la puerta.
+            Las dos abren la MISMA pantalla de swap con dirección por defecto
+            distinta —es el patrón del estándar de Uniswap, en vez de dos
+            pantallas espejadas como antes. El motor de cotización existe: el
+            backend responde en `/api/wallet/swap/quote`, y hasta que la firma
+            real exista la ejecución se simula y la pantalla lo dice.
           */}
           {/* ACCIÓN: USAR (Comprar/Vender/Intercambiar) */}
           {action === 'usar' && (
@@ -776,18 +744,6 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             </div>
           )}
 
-          {/*
-            ACÁ ESTABA EL MENÚ DE "USAR": "Comprar crypto" y "Vender crypto".
-
-            Sus dos opciones eran el mismo cambio de activo en dos direcciones, y
-            las dos Applican una conversión que hoy no tiene motor: no hay
-            backend que la cotice ni transacción que la ejecute. Un botón que no
-            puede hacer lo que promete no se pone en pantalla.
-
-            Las dos pantallas de compra y venta NO se borraron — están más abajo,
-            en `use_buy` y `use_sell`, y son la base de la Fase 2 ya decidida.
-            Lo que se cerró fue la puerta.
-          */}
         </div>
 
         {/* BOTÓN CIRCULAR NEGRO FLOTANTE CON X EN COLOR LIMA */}
@@ -2535,145 +2491,23 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       )}
 
       {/* =====================================================================
-          FLUJO USAR: COMPRAR CRYPTO (ESTILO REUTILIZABLE A CAMBIAR SIN INVERTIR)
+          FLUJO USAR: COMPRAR / VENDER — LA PANTALLA DEL SWAP
          ===================================================================== */}
       {/*
-        FLUJO USAR: COMPRAR / VENDER — ESTACIONADO A PROPOSITO.
-
-        Esta pantalla y la de `use_sell` ya no tienen puerta de entrada: el botón
-        "Usar" de la billetera se sacó porque su menú era exactamente este
-        compraventa, y sin motor de swap una acción que no puede ejecutarse no se
-        ofrece.
-
-        No es código muerto por olvido: es la Fase 2 de
-        `odd/tasks/comprar-o-vender.md`, ya decidida —1inch para EVM, Jupiter
-        para Solana— y ya terminada del lado de la lista real (el mismo
-        `useTradeCatalog`, los mismos saldos, la misma `AssetTradeCard`). Lo que
-        falta es el motor. Cuando exista, la puerta vuelve y estas dos pantallas
-        son las que la reciben.
+        Una sola pantalla para las dos direcciones, con la disposición del
+        estándar de Uniswap. El componente es `SwapScreen`: acá sólo se decide
+        la dirección inicial, y el `key` monta una instancia nueva por
+        dirección, para que el par y el monto de "comprar" no viajen a "vender".
       */}
-      {currentStep === 'use_buy' && (
-        /*
-         * `justify-between` empujaba el bloque entero contra el borde inferior y dejaba
-         * un hueco muerto entre el header y la tarjeta. Ahora la tarjeta vive pegada al
-         * header y el grupo aviso + teclado va justo debajo: no queda espacio basura ni
-         * arriba ni en el medio.
-         *
-         * Lo que sobra de la pantalla lo absorbe el TECLADO (`flex-1 auto-rows-fr`),
-         * no un hueco: en un teléfono alto las teclas crecen hasta llenar la pantalla y
-         * quedan al alcance del pulgar; en uno bajo caen a su tamaño natural
-         * (`min-h-[212px]`, 4 filas de 48px más gaps) y la pantalla scrollea en vez de
-         * recortar. `pb-6` evita que la última fila quede pegada al borde o debajo de
-         * la barra del teléfono.
-         */
-        <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#f8f9fa] select-none">
-          {/* Header */}
-          <div className="p-4 pt-5 max-[360px]:p-3 max-[360px]:pt-3 max-[360px]:pb-2 [@media(max-height:620px)]:pt-2 [@media(max-height:620px)]:pb-1 flex items-center justify-between shrink-0">
-            <button
-              onClick={() => setCurrentStep('initial')}
-              type="button"
-              className="w-11 h-11 rounded-full bg-white flex items-center justify-center text-black shadow-2xs hover:bg-slate-50 cursor-pointer border border-slate-200/60"
-            >
-              <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
-            </button>
-            <h2 className="text-base font-extrabold font-display text-black">Comprar</h2>
-            <div className="w-9" />
-          </div>
-
-          <div className="px-5 pt-1 max-[360px]:px-3 max-w-sm mx-auto w-full">
-            <AssetTradeCard
-              trade={buyTrade}
-              sourceTitle="Quiero usar"
-              destinationTitle="Para comprar"
-              sourcePickerLabel="Elegir la moneda de la que querés salir"
-              destinationPickerLabel="Elegir la moneda que querés comprar"
-            />
-          </div>
-
-          <div className="flex-1 flex flex-col px-5 pt-3 pb-6 max-[360px]:px-3 space-y-3 [@media(max-height:620px)]:pt-2 [@media(max-height:620px)]:pb-3 max-w-sm mx-auto w-full">
-            {/*
-              Sin botón, y a propósito.
-
-              El que estaba acá pintaba confeti y un `alert` de compra
-              completada sin haber hecho ninguna llamada. Un control que no
-              ejecuta nada no debe tener la forma de un control: se dice que la
-              operación no existe y la pantalla sigue sirviendo para elegir
-              activos y ver saldos, que eso sí es real.
-            */}
-            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3 [@media(max-height:620px)]:text-[11px] [@media(max-height:620px)]:py-1.5">
-              {TRADE_UNAVAILABLE_TEXT}
-            </p>
-
-            {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
-            <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] [@media(max-height:620px)]:min-h-[152px] auto-rows-fr">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'backspace'].map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => handleKeypadPress(k)}
-                  className="h-full py-3 [@media(max-height:620px)]:py-1.5 bg-white hover:bg-slate-100 rounded-xl font-display font-extrabold text-base text-black active:scale-95 transition-all shadow-2xs flex items-center justify-center cursor-pointer"
-                >
-                  {k === 'backspace' ? <ArrowLeft className="w-4 h-4 stroke-[2.5]" /> : k}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-          FLUJO USAR: VENDER CRYPTO (ESTILO REUTILIZABLE A CAMBIAR SIN INVERTIR)
-         ===================================================================== */}
-      {currentStep === 'use_sell' && (
-        /* Mismo reparto que en `use_buy`: la tarjeta arriba, el teclado abajo. */
-        <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#f8f9fa] select-none">
-          {/* Header */}
-          <div className="p-4 pt-5 max-[360px]:p-3 max-[360px]:pt-3 max-[360px]:pb-2 [@media(max-height:620px)]:pt-2 [@media(max-height:620px)]:pb-1 flex items-center justify-between shrink-0">
-            <button
-              onClick={() => setCurrentStep('initial')}
-              type="button"
-              className="w-11 h-11 rounded-full bg-white flex items-center justify-center text-black shadow-2xs hover:bg-slate-50 cursor-pointer border border-slate-200/60"
-            >
-              <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
-            </button>
-            <h2 className="text-base font-extrabold font-display text-black">Vender</h2>
-            <div className="w-9" />
-          </div>
-
-          <div className="px-5 pt-1 max-[360px]:px-3 max-w-sm mx-auto w-full">
-            <AssetTradeCard
-              trade={sellTrade}
-              sourceTitle="Quiero vender"
-              destinationTitle="Para recibir"
-              sourcePickerLabel="Elegir la moneda que querés vender"
-              destinationPickerLabel="Elegir la moneda que querés recibir"
-            />
-          </div>
-
-          <div className="flex-1 flex flex-col px-5 pt-3 pb-6 max-[360px]:px-3 space-y-3 [@media(max-height:620px)]:pt-2 [@media(max-height:620px)]:pb-3 max-w-sm mx-auto w-full">
-            {/*
-              Sin botón, y por lo mismo que en "Comprar": el de acá pintaba
-              confeti y anunciaba una venta completada que nadie ejecutó.
-            */}
-            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3 [@media(max-height:620px)]:text-[11px] [@media(max-height:620px)]:py-1.5">
-              {TRADE_UNAVAILABLE_TEXT}
-            </p>
-
-            {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
-            <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] [@media(max-height:620px)]:min-h-[152px] auto-rows-fr">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'backspace'].map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => handleKeypadPress(k)}
-                  className="h-full py-3 [@media(max-height:620px)]:py-1.5 bg-white hover:bg-slate-100 rounded-xl font-display font-extrabold text-base text-black active:scale-95 transition-all shadow-2xs flex items-center justify-center cursor-pointer"
-                >
-                  {k === 'backspace' ? <ArrowLeft className="w-4 h-4 stroke-[2.5]" /> : k}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+      {(currentStep === 'use_buy' || currentStep === 'use_sell') && (
+        <SwapScreen
+          key={currentStep}
+          direction={currentStep === 'use_sell' ? 'sell' : 'buy'}
+          onBack={() => setCurrentStep('initial')}
+          depositInfo={depositInfo}
+          holdings={holdings}
+          balance={balance}
+        />
       )}
     </div>
   );

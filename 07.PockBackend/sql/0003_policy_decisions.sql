@@ -21,10 +21,16 @@
 CREATE TABLE IF NOT EXISTS rewallet.policy_decisions (
   id          BIGSERIAL PRIMARY KEY,
   user_id     TEXT        NOT NULL,
-  -- El monto del envío en unidades mínimas del activo, como texto: los saldos
-  -- se mueven en `numeric(20,6)` y un `bigint` de Postgres no alcanza para las
-  -- sumas que hace la regla de ritmo sin riesgo de desborde por redondeo.
-  amount      NUMERIC(20, 6) NOT NULL,
+  -- El monto del envío en unidades mínimas del activo, como texto.
+  --
+  -- `NUMERIC(38, 18)` y **no** `(20, 6)`: el monto viaja en la unidad mínima del
+  -- activo, y un activo de 18 decimales —cualquier nativo EVM— manda wei. Con
+  -- precisión 20 el techo es 10^14: 0,0001 MON ya lo pasa, así que cada envío en
+  -- una red de 18 decimales moría con `numeric field overflow` (22003) en el
+  -- momento de registrar el veredicto, y la pantalla lo mostraba como "no se pudo
+  -- revisar la política". 38,18 es la misma escala que usa el resto del esquema
+  -- para los importes.
+  amount      NUMERIC(38, 18) NOT NULL,
   recipient   TEXT        NOT NULL,
   verdict     TEXT        NOT NULL CHECK (verdict IN ('allow', 'confirm', 'deny')),
   rule_id     TEXT        CHECK (rule_id IN ('max_single_send', 'velocity_per_hour', 'new_recipient')),

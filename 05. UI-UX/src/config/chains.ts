@@ -120,11 +120,29 @@ export const SUPPORTED_EVM_CHAINS = [ethereumMainnet, monad, baseMainnet, arbitr
  * (`solana:mainnet`), que no es CAIP-2: son dos vocabularios del mismo clúster y
  * no hay forma de que uno signifique el otro sin decirlo.
  */
+/*
+ * El clúster de Solana donde esta build firma, leído del env.
+ *
+ * `VITE_SOLANA_CLUSTER=devnet` sólo para demos o entornos descartables: la
+ * config de producción no lleva la variable y firma en mainnet. Un bundle
+ * cuyo clúster no coincide con el del backend corta el envío con
+ * `CHAIN_MISMATCH` en vez de firmar contra la red de otro.
+ */
+const SOLANA_CLUSTER_ENV = import.meta.env.VITE_SOLANA_CLUSTER === 'devnet';
+
 export const SOLANA_MAINNET = {
   key: 'solana',
   label: 'Solana',
-  network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
-  cluster: 'solana:mainnet',
+  /*
+   * Los valores de las dos redes vienen de `domain/solana/cluster.ts` del
+   * backend, donde están verificados contra el RPC de cada clúster. CAIP-2 es
+   * el prefijo del genesis hash del clúster; `cluster` es la forma que usa
+   * la wallet.
+   */
+  network: SOLANA_CLUSTER_ENV
+    ? 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
+    : 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+  cluster: SOLANA_CLUSTER_ENV ? 'solana:devnet' : 'solana:mainnet',
 } as const;
 
 /** La red en la que se inicializa la wallet embebida. Ethereum, a propósito. */

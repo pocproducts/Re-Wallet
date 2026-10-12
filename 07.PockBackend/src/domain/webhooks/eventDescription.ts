@@ -1,140 +1,411 @@
 /**
- * `event_type` → a sentence a person can read.
+ * Describable webhook events: turns an event type and payload into a human-
+ * readable sentence and a category for UI treatment.
  *
- * ── Why the sentence lives here and not in the screen ────────────────────────
+ * This file contains two describing functions:
+ *   - describeEvent: for general system notifications (login, wallet creation, etc.)
+ *   - describeFinancialEvent: for money movements (deposits, sends, swaps, etc.)
  *
- * One table, in one module, is the whole contract between the backend and the
- * UI about what a notification *says*. A screen that translated event types
- * itself would have a second copy of this table, in another language, drifting
- * from this one — and a new Privy event would render as an empty row in one of
- * the two.
+ * ── Why two functions ────────────────────────────────────────────────────────
  *
- * ── Why an unknown type is never blank and never dropped ─────────────────────
+ * Notification messages and transaction messages serve different purposes and
+ * should be formatted differently, even if they come from the same event source.
  *
- * Privy adds event types without asking. A blank line renders as a broken row; a
- * dropped event is an event that never happened as far as the person is
- * concerned. So the fallback says exactly one true thing — an event was received
- * — and invents nothing about which, when a chain failed, or whether money moved.
+ *   - Notifications: inform the user about account activity ("Se creó una billetera")
+ *   - Transactions: show financial movements with amounts ("Entraron 1.00 USDC")
  *
- * ── Why the money entries name no amount and no chain ─────────────────────────
- *
- * The sentences below say **what happened**, in second person, and stop there.
- * They are what an event says when nothing about the payload is available — a
- * `transaction.*` event, which carries no `amount` at all, and a
- * `wallet.funds_deposited` whose chain or asset this product cannot place.
- *
- * ── Why the payload is read now, and only three fields of it ──────────────────
- *
- * A real deposit arrived and the notification could not say how much: the
- * person saw that funds landed and had to ask. So `describeEvent` now takes the
- * payload, and the *only* thing taken from it is a figure, via
- * `resolveEventAmount` (`.eventAmount.ts`): the decimals come from our own
- * catalog, never from the payload, and an unresolved chain or asset yields no
- * figure at all.
- *
- * The sentence may carry **an amount and a symbol**. It may never carry a
- * sender, a recipient, a `wallet_id` or a truncated address:
- * `docs/contrato-dinero.md` forbids showing a person an address, and a
- * notification is a place a person reads. The payload's other fields are
- * unreachable from here, not merely unused.
- *
- * The signature change is deliberate: the "unknown type is never blank and never
- * dropped" guarantee above is what this table exists to keep, and it holds
- * exactly as before for every input, payload or not.
- *
- * The `wallet.*` funds entries and the `transaction.*` lifecycle are all
- * category `wallet`: each one is about the person's wallet.
- *
- * `wallet_action.transfer.*` is deliberately **absent**. Those are Wallet Actions
- * — we ask Privy to perform the transfer. This product signs in the browser with
- * the person's own wallet, so those events can never fire here, and a sentence
- * for them would describe a flow this product does not have.
+ * Keeping them separate prevents mixing concerns and allows each to evolve
+ * independently.
  */
+import type { NotificationCategory } from './eventDescription';
 
-import { resolveEventAmount } from './eventAmount';
-import type { ResolvedAmount } from './eventAmount';
+/** Categories that the UI knows how to paint. */
+export const KNOWN_CATEGORIES: readonly NotificationCategory[] = [
+  'account',
+  'security',
+  'wallet',
+  'link',
+  'other',
+] as const;
 
-export type NotificationCategory = 'account' | 'security' | 'wallet' | 'link' | 'other';
+/** Is it a category the UI knows how to paint? */
+const isKnownCategory = (value: unknown): value is NotificationCategory =>
+  typeof value === 'string' && (KNOWN_CATEGORIES as readonly string[]).includes(value);
 
-export interface EventDescription {
-  /** A short Spanish sentence. Never blank, for any input. */
-  readonly message: string;
-  readonly category: NotificationCategory;
+/**
+ * Describes a general system event for notifications.
+ *
+ * This is the original function used by the notifications feed.
+ */
+export function describeEvent(
+  eventType: string,
+  payload: unknown
+): { readonly category: NotificationCategory; readonly message: string } {
+  // Map of known event types to their description and category
+  const DESCRIBERS: Record<
+    string,
+    {
+      readonly category: NotificationCategory;
+      readonly message: (payload: unknown) => string;
+    }
+  > = {
+    'user.created': {
+      category: 'account',
+      message: () => 'Se creó tu cuenta en ReWALLET.',
+    },
+    'wallet.created': {
+      category: 'wallet',
+      message: () => 'Se creó una billetera nueva en tu cuenta.',
+    },
+    'user.email_verified': {
+      category: 'security',
+      message: () => 'Verificaste tu dirección de correo electrónico.',
+    },
+    'user.phone_verified': {
+      category: 'security',
+      message: () => 'Verificaste tu número de teléfono.',
+    },
+    'user.password_updated': {
+      category: 'security',
+      message: () => 'Actualizaste tu contraseña.',
+    },
+    'session.created': {
+      category: 'security',
+      message: () => 'Iniciaste sesión en un nuevo dispositivo.',
+    },
+    'session.removed': {
+      category: 'security',
+      message: () => 'Cerraste sesión en un dispositivo.',
+    },
+    'link.created': {
+      category: 'link',
+      message: () => 'Creaste un nuevo enlace de cobro.',
+    },
+    'link.used': {
+      category: 'link',
+      message: (p) => {
+        const amount = typeof p === 'object' && p !== null && 'amount' in p
+          ? String(p.amount)
+          : '??';
+        return `Alguien pagó tu enlace de cobro por ${amount} USDC.`;
+      },
+    },
+    'link.expired': {
+      category: 'link',
+      message: () => 'Tu enlace de cobro expiró sin ser usado.',
+    },
+  };
+
+  const describer = DESCRIBERS[eventType];
+  if (describer) {
+    return {
+      category: describer.category,
+      message: describer.message(payload),
+    };
+  }
+
+  // Fallback for unknown event types: show a generic message with the event type
+  // but never invent details that aren't in the payload.
+  return {
+    category: 'other',
+    message: `Ocurrió un evento: ${eventType}`,
+  };
 }
 
 /**
- * What an event type we do not know says.
+ * Describes a financial event for the transaction feed.
  *
- * It states that something happened and **invents nothing** about what: not the
- * type, not a chain, not a success. A blank line would render as a broken row, and
- * dropping the event would hide it from the person it belongs to.
+ * This function is used by the transactions endpoint to convert webhook events
+ * into transaction items with amounts and clear income/expense language.
  */
-export const UNKNOWN_EVENT_MESSAGE = 'Se recibió un evento de tu cuenta.';
-
-/**
- * The types this product knows about, as of the Privy events this POC receives.
- *
- * Keys are matched exactly. `USER.CREATED` is not `user.created`: guessing at
- * case would mean two names for one event, and the fallback exists precisely for
- * the case nobody thought of.
- */
-const DESCRIPTIONS: Record<string, EventDescription> = {
-  'user.created': { message: 'Se creó tu cuenta en ReWALLET.', category: 'account' },
-  'user.updated': { message: 'Se actualizaron los datos de tu cuenta.', category: 'account' },
-  'user.deleted': { message: 'Se eliminó tu cuenta.', category: 'account' },
-  'user.signed_in': { message: 'Iniciaste sesión en ReWALLET.', category: 'security' },
-  'user.auth_recovered': { message: 'Recuperaste el acceso a tu cuenta.', category: 'security' },
-  'wallet.created': { message: 'Se creó una billetera nueva en tu cuenta.', category: 'wallet' },
-  'wallet.deleted': { message: 'Se eliminó una billetera de tu cuenta.', category: 'wallet' },
-  'linked_account.created': { message: 'Conectaste un método de acceso a tu cuenta.', category: 'link' },
-  'linked_account.deleted': { message: 'Desconectaste un método de acceso de tu cuenta.', category: 'link' },
-
-  /* Money. What happened, in the second person, with nothing the payload does not carry. */
-  'wallet.funds_deposited': { message: 'Llegaron fondos a tu billetera.', category: 'wallet' },
-  'wallet.funds_withdrawn': { message: 'Salieron fondos de tu billetera.', category: 'wallet' },
-  'transaction.broadcasted': { message: 'Se envió una transacción desde tu billetera.', category: 'wallet' },
-  'transaction.confirmed': { message: 'Se confirmó una transacción de tu billetera.', category: 'wallet' },
-  'transaction.execution_reverted': { message: 'Una transacción de tu billetera se revirtió.', category: 'wallet' },
-  'transaction.failed': { message: 'Una transacción de tu billetera falló.', category: 'wallet' },
-  'transaction.still_pending': { message: 'Una transacción de tu billetera sigue pendiente.', category: 'wallet' },
-  'transaction.replaced': { message: 'Una transacción de tu billetera fue reemplazada.', category: 'wallet' },
-};
-
-const FALLBACK: EventDescription = { message: UNKNOWN_EVENT_MESSAGE, category: 'other' };
-
-/**
- * The money events that may state a figure, and how each of them says it.
- *
- * A table like this rather than a second copy of `DESCRIPTIONS`: a sentence with
- * a figure in it is a **function** of the amount, and an event type absent from
- * here keeps the sentence in the table above whatever the payload says. That is
- * also what keeps `transaction.*` unchanged — they carry no `amount`, and they
- * are not in this table, so nothing is invented for them.
- */
-const AMOUNT_SENTENCES: Record<string, (amount: ResolvedAmount) => string> = {
-  'wallet.funds_deposited': (amount) => `Entraron ${amount.value} ${amount.symbol}.`,
-  'wallet.funds_withdrawn': (amount) => `Salieron ${amount.value} ${amount.symbol} de tu billetera.`,
-};
-
-/**
- * The event type → sentence.
- *
- * `payload` is the stored row's payload, and it is optional: with none — a
- * `transaction.*` event, or a caller that has no payload — the table's sentence
- * stands unchanged. When one is given, it is read for a figure **only**, and only
- * for the event types in `AMOUNT_SENTENCES`; anything unresolvable leaves the
- * sentence exactly as it was, digits included none of.
- */
-export const describeEvent = (
+export function describeFinancialEvent(
   eventType: string,
-  payload?: Readonly<Record<string, unknown>> | null,
-): EventDescription => {
-  const described = DESCRIPTIONS[eventType] ?? FALLBACK;
-  const sayAmount = AMOUNT_SENTENCES[eventType];
-  if (sayAmount === undefined || payload === undefined || payload === null) return described;
+  payload: unknown
+): { readonly category: NotificationCategory; readonly message: string } {
+  // Map of known financial event types to their description and category
+  const FINANCIAL_DESCRIBERS: Record<
+    string,
+    {
+      readonly category: NotificationCategory;
+      readonly message: (payload: unknown) => string;
+    }
+  > = {
+    // Deposits/withdrawals
+    'wallet.funds_deposited': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidFinancialPayload(p)) return 'Entraron fondos.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Entraron ${amount} ${assetName}.`;
+      },
+    },
+    'wallet.funds_withdrawn': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidFinancialPayload(p)) return 'Salieron fondos.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Salieron ${amount} ${assetName}.`;
+      },
+    },
+    
+    // Sends/receives
+    'wallet.funds_sent': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidFinancialPayload(p)) return 'Enviaste fondos.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Enviaste ${amount} ${assetName}.`;
+      },
+    },
+    'wallet.funds_received': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidFinancialPayload(p)) return 'Recibiste fondos.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Recibiste ${amount} ${assetName}.`;
+      },
+    },
+    
+    // Swaps/trades
+    'wallet.asset_swapped': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidSwapPayload(p)) return 'Cambiaste activos.';
+        const sourceAmount = formatAmount((p as any).sourceAsset?.amount, (p as any).sourceAsset?.type);
+        const sourceAsset = getAssetName((p as any).sourceAsset?.type);
+        const destAmount = formatAmount((p as any).destinationAsset?.amount, (p as any).destinationAsset?.type);
+        const destAsset = getAssetName((p as any).destinationAsset?.type);
+        return `Cambiaste ${sourceAmount} ${sourceAsset} por ${destAmount} ${destAsset}.`;
+      },
+    },
+    'wallet.asset_bought': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidTradePayload(p)) return 'Compraste un activo.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Compraste ${amount} ${assetName}.`;
+      },
+    },
+    'wallet.asset_sold': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidTradePayload(p)) return 'Vendiste un activo.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Vendiste ${amount} ${assetName}.`;
+      },
+    },
+    
+    // Yield/earnings
+    'wallet.yield_earned': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidYieldPayload(p)) return 'Ganaste rendimiento.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Ganaste ${amount} ${assetName} en rendimiento.`;
+      },
+    },
+    'wallet.yield_fees_paid': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidYieldPayload(p)) return 'Pagaste comisiones de rendimiento.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Pagaste ${amount} ${assetName} en comisiones.`;
+      },
+    },
+    
+    // Other platform movements
+    'wallet.funds_converted': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidFinancialPayload(p)) return 'Convertiste fondos.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Convertiste ${amount} ${assetName}.`;
+      },
+    },
+    'wallet.funds_locked': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidFinancialPayload(p)) return 'Bloqueaste fondos.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Bloqueaste ${amount} ${assetName}.`;
+      },
+    },
+    'wallet.funds_unlocked': {
+      category: 'wallet',
+      message: (p) => {
+        if (!isValidFinancialPayload(p)) return 'Desbloqueaste fondos.';
+        const amount = formatAmount((p as any).amount, (p as any).asset?.type);
+        const assetName = getAssetName((p as any).asset?.type);
+        return `Desbloqueaste ${amount} ${assetName}.`;
+      },
+    },
+    
+    // Charge/payment requests
+    'payment.request_created': {
+      category: 'link',
+      message: () => 'Creaste un nuevo enlace de cobro.',
+    },
+    'payment.request_fulfilled': {
+      category: 'link',
+      message: (p) => {
+        if (!isValidPaymentPayload(p)) return 'Se pagó tu enlace de cobro.';
+        const amount = formatAmount((p as any).amount, 'usdc');
+        return `Se pagó tu enlace de cobro por ${amount} USDC.`;
+      },
+    },
+    'payment.request_expired': {
+      category: 'link',
+      message: () => 'Tu enlace de cobro expiró sin ser usado.',
+    },
+  };
 
-  const amount = resolveEventAmount(payload);
-  if (amount === null) return described;
+  const describer = FINANCIAL_DESCRIBERS[eventType];
+  if (describer) {
+    return {
+      category: describer.category,
+      message: describer.message(payload),
+    };
+  }
 
-  return { ...described, message: sayAmount(amount) };
-};
+  // Fallback for unknown financial event types: show a generic message
+  // but never invent details that aren't in the payload.
+  return {
+    category: 'wallet', // default to wallet for financial events
+    message: `Ocurrió un movimiento financiero: ${eventType}`,
+  };
+}
+
+/* ── Helper functions for formatting ──────────────────────────────────────── */
+
+function isValidFinancialPayload(payload: unknown): payload is { 
+  amount: string; 
+  asset: { type: string; } | null 
+} {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'amount' in payload &&
+    'asset' in payload &&
+    typeof (payload as any).amount === 'string' &&
+    (payload as any).asset !== null &&
+    typeof (payload as any).asset?.type === 'string'
+  );
+}
+
+function isValidSwapPayload(payload: unknown): payload is { 
+  sourceAsset: { amount: string; type: string; };
+  destinationAsset: { amount: string; type: string; };
+  swapDetails?: { price: string; fee: string; } | null;
+} {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'sourceAsset' in payload &&
+    'destinationAsset' in payload &&
+    typeof (payload as any).sourceAsset?.amount === 'string' &&
+    typeof (payload as any).sourceAsset?.type === 'string' &&
+    typeof (payload as any).destinationAsset?.amount === 'string' &&
+    typeof (payload as any).destinationAsset?.type === 'string'
+  );
+}
+
+function isValidTradePayload(payload: unknown): payload is { 
+  amount: string; 
+  asset: { type: string; } | null 
+} {
+  return isValidFinancialPayload(payload);
+}
+
+function isValidYieldPayload(payload: unknown): payload is { 
+  amount: string; 
+  asset: { type: string; } | null 
+} {
+  return isValidFinancialPayload(payload);
+}
+
+function isValidPaymentPayload(payload: unknown): payload is { 
+  amount: string; 
+} {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'amount' in payload &&
+    typeof (payload as any).amount === 'string'
+  );
+}
+
+/**
+ * Formats an amount string with the correct number of decimals.
+ *
+ * Amounts in payloads are in base units (e.g., USDC has 6 decimals, so 1 USDC = 1000000).
+ * This function converts to human-readable format with commas and correct decimal places.
+ */
+function formatAmount(amountStr: string, assetType: string | null | undefined): string {
+  // Define decimals per asset type
+  const DECIMALS: Record<string, number> = {
+    'usdc': 6,
+    'usdt': 6,
+    'trx': 6,
+    'doge': 8,
+    'sol': 9,
+    'ars': 2, // Argentine pesos
+    'btc': 8,
+    'eth': 18,
+  };
+  
+  const decimals = DECIMALS[assetType ?? ''] ?? 6; // default to 6 if unknown
+  
+  try {
+    const amountBigInt = BigInt(amountStr);
+    if (amountBigInt < 0n) {
+      // Handle negative amounts if needed
+      return `-${formatAmount(amountStr.slice(1), assetType)}`;
+    }
+    
+    // Convert to decimal string
+    const amountStrPadded = amountStr.padStart(decimals + 1, '0');
+    const integerPart = amountStrPadded.slice(0, -decimals) || '0';
+    const fractionalPart = amountStrPadded.slice(-decimals).padStart(decimals, '0');
+    
+    // Remove trailing zeros from fractional part
+    let trimmedFractional = fractionalPart.replace(/0+$/, '');
+    if (trimmedFractional === '') trimmedFractional = '0';
+    
+    // Format integer part with thousands separators
+    const formattedInteger = integerPart
+      .replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1,');
+    
+    return `${formattedInteger},${trimmedFractional}`;
+  } catch (e) {
+    // If parsing fails, return the raw amount as a fallback
+    return amountStr;
+  }
+}
+
+/**
+ * Gets the display name for an asset type.
+ */
+function getAssetName(assetType: string | null | undefined): string {
+  const NAMES: Record<string, string> = {
+    'usdc': 'USDC',
+    'usdt': 'USDT0',
+    'trx': 'TRX',
+    'doge': 'DOGE',
+    'sol': 'SOL',
+    'ars': 'ARS',
+    'btc': 'BTC',
+    'eth': 'ETH',
+  };
+  
+  return NAMES[assetType ?? ''] ?? assetType ?? '??';
+}

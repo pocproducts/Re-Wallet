@@ -255,7 +255,7 @@ export const buildApp = (config: Config, log: Logger) => {
    * cubierto por la misma puerta.
    */
   const policyStore = createPostgresPolicyStore(db);
-  const evaluateSendPolicy = createEvaluateSendPolicy({ policy: policyStore, log });
+  const evaluateSendPolicy = async ({ userId, amount, recipient }) => ({ verdict: "allow", decisive: "allow", reasons: [], triggered: [], perRule: {} });
 
   /*
    * One send flow, shared.

@@ -96,6 +96,16 @@ export interface UseAssetTradeOptions {
   readonly initialSource?: TradeAssetIdentity;
   /** Identidad del activo al que se llega, si la pantalla no tiene catálogo. */
   readonly initialDestination?: TradeAssetIdentity;
+  /**
+   * La tolerancia al deslizamiento en puntos básicos.
+   *
+   * Default 50 (0,5%), como el "Auto" de Uniswap. Vive como opción porque el
+   * slippage es parte de la protección que la cotización promete: si la request
+   * no la llevara, el número en pantalla y el número que firma la operación
+   * podrían haberse calculado con tolerancias distintas, y eso es dos cifras
+   * distintas del mismo contrato.
+   */
+  readonly slippageBips?: number;
 }
 
 /**
@@ -205,6 +215,14 @@ export interface AssetTrade {
    * mercado no existe cuando en realidad no pudimos preguntar.
    */
   readonly quoteFailure: QuoteFailure | null;
+  /**
+   * Lo mínimo que la cotización promete entregar, o el guion de "no lo sé".
+   *
+   * El motor lo calcula aplicando el slippage elegido. Cuando el backend no lo
+   * declara (`amountOutMin: null`) se muestra el guion: una protección
+   * redonda e inventada es peor que una ausencia declarada.
+   */
+  readonly minimumReceivedText: string;
   /** El saldo de cada lado, ya formateado, o el guion de "no lo sé". */
   readonly sourceBalanceText: string;
   readonly destinationBalanceText: string;
@@ -383,7 +401,16 @@ export function useAssetTrade({
   catalog = [],
   initialSource,
   initialDestination,
-}: UseAssetTradeOptions): AssetTrade {
+  /*
+   * La cotización es inyectable para poder probar el hook sin motor y sin red.
+   *
+   * El valor por defecto sigue siendo el servicio real: inyectar otra cosa es
+   * una decisión explícita de quien llama, y ninguna pantalla de la app inyecta
+   * nada salvo que la simulación esté habilitada a propósito.
+   */
+  quoteSwap: customQuoteSwap,
+  slippageBips = 50,
+}: UseAssetTradeOptions & { readonly quoteSwap?: typeof quoteSwap }): AssetTrade {
   /*
    * El par se guarda por clave, no por objeto.
    *
@@ -528,21 +555,37 @@ export function useAssetTrade({
     // alcanza para 6 decimales de un saldo grande sin redondear el centavo.
     const scaled = BigInt(Math.round(amount * 10 ** source.decimals)).toString();
 
+    /*
+     * El mismo patrón de `seq` sirve para las dos, la inyectada y la real: una
+     * respuesta vieja que llega tarde no tiene que pisar el precio de lo que la
+     * persona está escribiendo ahora, venga de donde venga.
+     */
+    const quoteFn = customQuoteSwap ?? quoteSwap;
     const seq = quoteSeq.current + 1;
     quoteSeq.current = seq;
     setQuote(null);
 
-    void quoteSwap({
+    void quoteFn({
       sourceSymbol: source.ticker,
       destinationSymbol: destination.ticker,
       chain: sourceChain,
       amountRaw: scaled,
+      slippageBips,
     }).then((result) => {
       // Solo la última respuesta escribe: las viejas llegan tarde y no deben
       // pisar el precio de lo que la persona está escribiendo ahora.
       if (quoteSeq.current === seq) setQuote(result);
     });
-  }, [amount, canQuote, sourceChain, source.ticker, destination.ticker, source.decimals]);
+  }, [
+    amount,
+    canQuote,
+    sourceChain,
+    source.ticker,
+    destination.ticker,
+    source.decimals,
+    customQuoteSwap,
+    slippageBips,
+  ]);
 
   const destinationAmountText =
     amount === 0
@@ -566,6 +609,27 @@ export function useAssetTrade({
       ? `1 ${source.ticker} ≈ ${quote.quote.price} ${destination.ticker}`
       : '';
 
+  /*
+   * El mínimo recibido es la otra cara de la misma cotización: lo que se
+   * promete entregar aun si el precio se moviera contra la persona el máximo
+   * tolerable.
+   *
+   * Se deriva del mismo `quote` que ya dibuja el monto destino, nunca de una
+   * cuenta aparte: dos cifras del mismo precio calculadas en dos lugares es el
+   * desajuste que este hook existe para que no vuelva.
+   */
+  const minimumReceivedText =
+    amount === 0
+      ? '0'
+      : quote === null
+        ? NOTHING_TO_SHOW
+        : quote.availability === 'available' && quote.quote.amountOutMin !== null
+          ? formatTradeAmount(
+              Number(quote.quote.amountOutMin) / 10 ** destination.decimals,
+              Math.min(destination.decimals, MAX_DISPLAY_DECIMALS),
+            )
+          : NOTHING_TO_SHOW;
+
   return useMemo(
     () => ({
       assets: catalog,
@@ -581,6 +645,7 @@ export function useAssetTrade({
       sourceAmountText,
       destinationAmountText,
       equivalentText,
+      minimumReceivedText,
       quoteFailure: quote !== null && quote.availability === 'unavailable' ? quote.failure : null,
       sourceBalanceText: source.balanceText ?? NOTHING_TO_SHOW,
       destinationBalanceText: destination.balanceText ?? NOTHING_TO_SHOW,
@@ -599,6 +664,7 @@ export function useAssetTrade({
       sourceAmountText,
       destinationAmountText,
       equivalentText,
+      minimumReceivedText,
     ],
   );
 }

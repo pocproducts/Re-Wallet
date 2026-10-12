@@ -191,24 +191,41 @@ export const LoginGate: React.FC = () => {
   }
 
   if (etapa === 'codigo') {
+    /*
+     * El segundo paso lleva la otra foto detrás (`/onbarding2.jpg`). El
+     * componente del código — el pegado, el borrado, la cuenta regresiva y
+     * los reintentos — no se toca: sólo deja de pintar su propio fondo
+     * (`overBackground`) para que la imagen se vea detrás.
+     */
     return (
-      <div className="relative w-full h-full">
-        <CodeVerification
+      <div
+        className="relative w-full h-full overflow-hidden bg-[#0A0A0A]"
+        style={{
+          backgroundImage: 'url(/onbarding2.jpg)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+        }}
+      >
+        <div className="absolute inset-0 bg-black/45" aria-hidden="true" />
+        <div className="relative z-10 h-full">
+          <CodeVerification
           email={email.trim()}
           onSubmit={(code) => void handleVerifyCode(code)}
           onResend={() => void handleResend()}
           resendAvailableInSeconds={CODE_RESEND_AVAILABLE_IN_SECONDS}
           invalid={codigoInvalido}
           errorMessage={codigoInvalido ? errorMessage : null}
-          onBack={() => {
-            setCodigoInvalido(false);
-            setErrorMessage(null);
-            setEtapa('correo');
-          }}
-        />
+            onBack={() => {
+              setCodigoInvalido(false);
+              setErrorMessage(null);
+              setEtapa('correo');
+            }}
+            overBackground
+          />
+        </div>
 
         {verificando && (
-          <div className="absolute inset-0 bg-[#0A0A0A]/80 flex items-center justify-center">
+          <div className="absolute inset-0 z-20 bg-[#0A0A0A]/80 flex items-center justify-center">
             <Loader2 className="w-6 h-6 text-lemon animate-spin" />
           </div>
         )}
@@ -220,29 +237,27 @@ export const LoginGate: React.FC = () => {
 
   if (etapa === 'bienvenida') {
     return (
-      <div className="w-full h-full bg-[#0A0A0A] text-white flex flex-col px-6 safe-top-5 safe-bottom-5 font-sans">
-        {/* Cabecera: marca */}
-        <div className="flex items-center justify-between pt-2 shrink-0">
-          <span className="text-lemon text-2xl font-black tracking-tight">rewallet.</span>
-          <span className="bg-white/10 text-white text-[12px] font-semibold px-3 py-1.5 rounded-full">
-            ES
-          </span>
-        </div>
-
-        {/* Claim */}
-        <div className="flex-1 flex flex-col justify-center">
-          <p className="text-[15px] text-[#8E8E93] mb-2">Tu dinero.</p>
-          <h1 className="text-[38px] leading-[1.05] font-black tracking-tight mb-4">
-            UNA BILLETERA INTELIGENTE
-          </h1>
-          <p className="text-[15px] leading-relaxed text-[#8E8E93] mb-10">
-            Gastá, enviá y ahorrá desde una sola cuenta. Enviá a cualquiera con su
-            $ReTag o su código QR.
-          </p>
-        </div>
-
-        {/* Una puerta, dos palabras: ambas llevan al mismo paso correo→código */}
-        <div className="shrink-0 pb-2">
+      /*
+       * La bienvenida es la foto de marca y los dos botones. Nada más.
+       *
+       * El logo en texto, el selector de idioma y la presentación
+       * ("Tu dinero. / UNA BILLETERA INTELIGENTE") se fueron: la imagen ya
+       * tiene la marca impresa, y la presentación la ve la persona dentro de
+       * la propia foto. Quedan los dos actos —"Crear cuenta" y "Ya tengo
+       * una cuenta"— y el consentimiento de términos abajo.
+       */
+      <div
+        className="relative w-full h-full text-white overflow-hidden font-sans bg-[#0A0A0A]"
+        style={{
+          backgroundImage: 'url(/onbarding1.jpg)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+        }}
+      >
+        <div className="absolute inset-0 bg-black/45" aria-hidden="true" />
+        <div className="relative z-10 flex flex-col justify-end h-full px-6 safe-top-5 safe-bottom-5">
+          {/* Una puerta, dos palabras: ambas llevan al mismo paso correo→código */}
+          <div className="shrink-0 pb-2">
           <button
             type="button"
             onClick={() => setEtapa('correo')}
@@ -258,18 +273,34 @@ export const LoginGate: React.FC = () => {
             Ya tengo una cuenta
           </button>
 
-          <p className="text-[10px] text-[#555555] text-center leading-relaxed mt-6">
-            Al continuar aceptás nuestros Términos y Política de Privacidad.
-          </p>
+            <p className="text-[10px] text-[#B0B0B5] text-center leading-relaxed mt-6">
+              Al continuar aceptás nuestros Términos y Política de Privacidad.
+            </p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="w-full h-full bg-[#0A0A0A] text-white flex flex-col px-6 safe-top-5 safe-bottom-5 font-sans">
-      {/* Cabecera: volver a la bienvenida */}
-      <div className="flex items-center justify-between pt-2 mb-8 shrink-0">
+    /*
+     * Paso 2 del onboarding: la otra foto de marca detrás
+     * (`/onbarding2.jpg`) y solo lo que la persona tiene que hacer: volver,
+     * escribir el correo y apretar Continuar. Sin rótulo de marca ni texto
+     * de presentación: la imagen ya los tiene.
+     */
+    <div
+      className="relative w-full h-full text-white overflow-hidden font-sans bg-[#0A0A0A]"
+      style={{
+        backgroundImage: 'url(/onbarding2.jpg)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }}
+    >
+      <div className="absolute inset-0 bg-black/45" aria-hidden="true" />
+      <div className="relative z-10 flex flex-col h-full px-6 safe-top-5 safe-bottom-5 font-sans">
+        {/* Cabecera: volver a la bienvenida */}
+        <div className="flex items-center justify-between pt-2 mb-8 shrink-0">
         <button
           onClick={() => {
             setErrorMessage(null);
@@ -279,34 +310,24 @@ export const LoginGate: React.FC = () => {
           aria-label="Volver"
           className="w-11 h-11 flex items-center justify-center bg-[#1C1C1E] border border-[#2C2C2E] text-white rounded-full active:scale-95 transition-transform cursor-pointer"
         >
-          <ChevronLeft className="w-5 h-5 stroke-[2.2]" />
-        </button>
-        <span className="text-lemon text-xl font-black tracking-tight">rewallet.</span>
-      </div>
-
-      <div className="flex-1 flex flex-col justify-center">
-        <div className="w-14 h-14 rounded-2xl bg-[#1C1C1E] border border-[#2C2C2E] text-lemon flex items-center justify-center mb-6">
-          <Mail className="w-6 h-6 stroke-[2.2]" />
+            <ChevronLeft className="w-5 h-5 stroke-[2.2]" />
+          </button>
         </div>
 
-        <div className="space-y-2 mb-8">
-          <h1 className="text-2xl font-black text-white tracking-tight">
-            Entrá con tu correo
-          </h1>
-          <p className="text-xs text-[#8E8E93] font-medium">
-            Escribí tu correo y te mandamos un código de 6 dígitos. Con ese código
-            entrás: si es la primera vez, la cuenta se crea sola.
-          </p>
-        </div>
+        <div className="flex-1 flex flex-col justify-center">
 
-        <div className="space-y-4">
-          <label htmlFor="login-email" className="block text-xs font-bold text-white">
-            Correo electrónico
-          </label>
-
-          <input
-            id="login-email"
-            type="email"
+          <div className="space-y-4">
+            {/*
+              No hay label visual a propósito: el nombre accesible del campo lo
+              lee el lector de pantalla y nada más (el placeholder nunca es un
+              nombre accesible). Sin texto de presentación arriba, el campo es
+              lo único que quedó para que esta pantalla diga nada más que lo
+              estrictamente necesario.
+            */}
+            <input
+              id="login-email"
+              type="email"
+              aria-label="Correo electrónico"
             inputMode="email"
             autoComplete="email"
             autoCapitalize="off"
@@ -322,7 +343,7 @@ export const LoginGate: React.FC = () => {
             }}
             placeholder="vos@correo.com"
             disabled={ocupado}
-            className="w-full min-h-[52px] bg-[#1C1C1E] border border-[#2C2C2E] focus:border-lemon rounded-full px-5 text-base text-white placeholder-[#8E8E93] focus:outline-none transition-colors font-medium disabled:opacity-60"
+            className="w-full min-h-[46px] bg-[#1C1C1E] border border-[#2C2C2E] focus:border-lemon rounded-full px-5 text-sm text-white placeholder-[#8E8E93] focus:outline-none transition-colors font-medium disabled:opacity-60"
           />
 
           {errorMessage && (
@@ -333,7 +354,7 @@ export const LoginGate: React.FC = () => {
             type="button"
             onClick={() => void handleSendCode()}
             disabled={ocupado}
-            className="w-full min-h-[56px] rounded-full bg-lemon text-black text-sm font-black uppercase tracking-wider flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-all cursor-pointer"
+            className="w-full min-h-[46px] rounded-full bg-lemon text-black text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-all cursor-pointer"
           >
             {ocupado ? (
               <>
@@ -346,10 +367,7 @@ export const LoginGate: React.FC = () => {
           </button>
         </div>
       </div>
-
-      <p className="text-[11px] font-medium text-[#555555] text-center shrink-0 pb-1">
-        Te mandamos un código a ese correo. No hace falta crear la cuenta antes.
-      </p>
+      </div>
     </div>
   );
 };

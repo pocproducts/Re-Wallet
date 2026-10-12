@@ -1,199 +1,160 @@
-# ReWALLET
+# Re Wallet™ — a dollar account for people who don't know crypto
 
-> Una billetera que no miente: el balance real, el rendimiento real, y cuando
-> algo no se pudo leer, lo dice.
-
-Para gente que no usa cripto. Deposita dólares digitales, su dinero rinde solo,
-y envía a una persona — no a una dirección hexadecimal.
+> **Live beta:** https://beta.rewallet.win · **Landing:** https://rewallet.win
+> **Spanish version of this document:** [README.es.md](./README.es.md)
 
 ---
 
-## Qué es
+## The problem
 
-Una billetera multi-chain (EVM + Solana) donde **cada número viene de la
-cadena**. No hay tabla de precios escrita a mano, no hay saldo estimado, no
-hay promedio que parece una tasa.
+In Argentina, saving in dollars means cash under the mattress or handing your money to an app that takes custody of it. Crypto wallets ask for seed phrases, network selection and gas fees — the people who actually need to protect their savings don't use them.
 
-La regla que la sostiene:
+The problem is not access to dollars. **It is trust.** Every existing option asks the saver to believe a number on a screen.
 
-> **Si no se pudo leer, se dice que no se pudo leer.** Nunca se sustituye una
-> lectura ausente por un `0`.
+## The product
 
-Un `0` afirma que la persona no tiene esa plata. Casi siempre sería mentira.
+Re Wallet is a dollar account with an email login:
 
-## Qué hace hoy
+1. **You sign up with your email.** Privy creates an embedded wallet for you — no seed phrase, no extension, no network to choose.
+2. **You see your dollars.** USDC on Solana, plus the rest of your crypto, one balance.
+3. **Send to an @tag.** You send to `@sofia`, not to a 44-character address. It is a real SPL transfer on Solana, signed in your browser.
+4. **Your dollars earn.** Balances can sit in yield venues (Kamino on Solana, Aave on Monad) and the app shows the position as read from chain.
 
-| | |
-|---|---|
-| **Balance compuesto** | Crypto libre + dólares digitales + posiciones invertidas, con el estado de lectura de cada parte |
-| **Rendimiento** | Aave V3 en Monad, Kamino en Solana. APR ponderado por posición real, no promedio simple |
-| **Envío** | A un tag (`@nombre`) o a una dirección. Es una **transacción on-chain**: la firma el navegador, paga comisión de red y tarda lo que tarde la cadena. Con idempotencia, para que un doble toque no mande dos veces |
-| **Política de gasto** | Tres reglas antes de firmar: magnitud, ritmo por hora, destino nuevo |
-| **Conversión** | Cotización real vía Uniswap Trading API en Monad |
-| **Cobrar** | Elegís en qué se cobra → el importe → QR y link. El link lleva la identidad de ReWALLET y vence en 24 horas |
+### Honest balance — the differentiator
 
-**Cadenas:** Monad · Ethereum · Base · Arbitrum · Optimism · Polygon · Solana
+Every number in the app is read from the chain or it is not shown. When a read fails, the app says so:
+
+- It never renders a `0` where the truth is "we could not read it". A zero is a claim about someone's money.
+- It never derives a price in the browser. Quotes come from the backend, and an unreadable quote is shown as unreadable.
+- Each failure carries its **cause**: "no route for this pair", "not enough liquidity", "the network did not answer" and "this deployment is not configured" are four different sentences, because they are four different facts.
+- The transfer screen always shows the transaction hash and links to the explorer. An unverifiable send is a promise, not a send.
+
+## How it uses Solana
+
+Solana is not decoration here; it is where the dollars live and move.
+
+- **USDC as a real SPL transfer.** `POST /api/send/prepare` builds an unsigned Solana message server-side with the reference client (`@solana/web3.js`): the sender's associated token account, the recipient's ATA (created if missing) and a **`TransferChecked`** instruction — checked, so the token program verifies the mint and the decimals on chain instead of trusting the caller.
+- **Signed by the user's own embedded wallet.** The browser receives the compiled message bytes and calls `signAndSendTransaction` through Privy. The app never holds a private key and never signs on the user's behalf; the session cookie authenticates the API, not the money.
+- **The signature is the receipt.** The base58 signature returned by the wallet is what the screen shows, with a link to `explorer.solana.com`. That is the same identifier any judge can open and verify without believing us.
+- **Solana balances and yield are read, not assumed.** Lamports and SPL balances are read over JSON-RPC; the Kamino Earn vault is read from chain (and its share price from Kamino's public API). If the RPC fails, the balance says it failed to read.
+- **Cluster is configuration, not a constant.** Mainnet by default; a `SOLANA_CLUSTER` value switches the deployment to devnet for demos, together with the devnet USDC mint and the devnet genesis hash — one place decides, so a prepared message can never be signed against a different ledger than the one the app says.
+
+**On fees, honestly:** today the wallet pays the standard Solana network fee (a fraction of a cent) and the app refuses the send with a clear message when the wallet has no native balance to pay it. Sponsored gas, so a user never needs to hold SOL, is the next step — not a claim in this README.
+
+## Architecture
+
+```
+                       ┌──────────────────────────────────────────────┐
+   Browser (mobile)    │  React SPA (Vite)                            │
+   ─────────────────   │  · Privy email login + embedded wallets      │
+                       │  · signs Solana messages with the user wallet │
+                       │  · shows hash + explorer link after signing   │
+                       └───────────────┬──────────────────────────────┘
+                                       │ same origin (httpOnly __Host- cookie)
+                                       ▼
+                       ┌──────────────────────────────────────────────┐
+   Cloudflare Worker   │  Hono API + static assets, one origin        │
+   ─────────────────   │  /api/auth  /api/portfolio /api/send         │
+                       │  /api/pool  /api/payment-requests            │
+                       │  /api/wallet/policy  /api/wallet/swap        │
+                       └───┬───────────────┬──────────────┬───────────┘
+                           │               │              │
+                    ┌──────▼─────┐  ┌──────▼──────┐  ┌────▼─────────┐
+                    │ Privy      │  │ Solana RPC  │  │ Neon         │
+                    │ users +    │  │ balances,   │  │ Postgres     │
+                    │ wallets    │  │ SPL, Kamino │  │ users, sends │
+                    └────────────┘  └─────────────┘  │ policy log   │
+                                                     └──────────────┘
+                    EVM + Monad: JSON-RPC balance readers, Aave V3 pool
+                    Swap (Monad): Uniswap Trading API for real quotes
+```
+
+**Why one origin:** the session is an httpOnly `SameSite=Lax` cookie with a `__Host-` prefix. Two origins would force `SameSite=None` plus credentialed CORS — the exact pair of security downgrades this design refuses.
 
 ## Stack
 
-| Capa | Tecnología |
-|---|---|
-| Frontend | React + Vite + Tailwind |
-| Backend | Hono + Cloudflare Workers |
-| Base de datos | Neon Postgres |
-| Auth + Wallets | Privy (EVM + Solana) |
-| Rendimiento | Aave V3 (Monad) · Kamino (Solana) |
-| Oráculos | Chainlink |
-| Conversión | Uniswap Trading API |
+`Solana` · `USDC (SPL)` · `@solana/web3.js` · `Kamino` (yield positions) · `Privy` (email auth + embedded wallets) · `Cloudflare Workers` (API + assets) · `Neon Postgres` · `React + Vite + TypeScript` · `Hono` · `Aave V3 + Monad` (secondary yield) · `Uniswap Trading API` (Monad swap quotes)
 
-## Estructura
+## Repository layout
 
-07.PockBackend/   Backend — Hono, arquitectura hexagonal
-05. UI-UX/       Frontend — React, Vite, Tailwind
+```
+05. UI-UX/        the app (React + Vite + TypeScript, tests with Vitest)
+07.PockBackend/   the API (Hono on Cloudflare Workers, Neon Postgres)
+04. Landing Page/ the public landing site
+07.PockBackend/sql/  schema and migrations
+docs/             contracts and decisions (in Spanish)
+odd/tasks/        the task record for each feature
+```
 
-04. Landing Page/   Landing page (marketing, ciclo de vida aparte)
+## Run it in under five minutes
 
-qr-probe/         Página de prueba de QR (worker de diagnóstico)
-
-docs/
-├── contratos/   Las reglas de diseño que no se rompen
-├── decisiones/   Hallazgos verificados, con cómo se comprobaron
-└── 03. Auditorias/   Revisiones técnicas
-
-odd/tasks/        Documentos de trabajo en curso: qué se decidió y por qué
-tasks/            Roadmap operativo y tareas
-02. Contexto iniciar del proyecto/       Borradores del diseño
-
-## Cómo correr
+Prerequisites: Node 20+, a Postgres database (Neon works), and a Privy app id.
 
 ```bash
-# Backend
+# 1. API
 cd 07.PockBackend
 npm install
-npm run dev
+cat > .env <<'ENV'
+DATABASE_URL=            # Neon or any Postgres
+PRIVY_APP_ID=
+PRIVY_APP_SECRET=
+PRIVY_WEBHOOK_SIGNING_SECRET=
+SESSION_SECRET=          # openssl rand -base64 48
+SOLANA_RPC_URL=          # optional: public default, verified
+SOLANA_CLUSTER=          # optional: mainnet (default) | devnet
+ENV
+npm test                  # 935 tests, no network, no database required
+npm run build             # bundles the Worker (esbuild → dist-worker.js)
+npx wrangler dev          # serves /api locally
 
-# Frontend
-cd 05. UI-UX
+# 2. App
+cd ../05. UI-UX
 npm install
-npm run dev
+cp .env.example .env      # VITE_PRIVY_APP_ID (+ VITE_API_BASE_URL for a remote API,
+                          #  VITE_SOLANA_CLUSTER=devnet for a devnet demo build)
+npm test                  # 241 tests
+npm run dev               # http://localhost:3000
 ```
 
-El Worker sirve el API y el front desde **un solo origen**. No es una
-comodidad: la sesión es una cookie `httpOnly` con prefijo `__Host-`, y con dos
-orígenes esa cookie tendría que volverse cross-site.
+Deploy: `npm run build && npx wrangler deploy` from `07.PockBackend` (the Worker serves the SPA from `05. UI-UX/dist` **and** the API, so there is one origin and one certificate).
 
-Secretos: no están en el repo.
+## Trust & compliance
 
-```bash
-cd 07.PockBackend
-wrangler secret put PRIVY_APP_ID
-wrangler secret put PRIVY_APP_SECRET
-wrangler secret put DATABASE_URL
-wrangler secret put SESSION_SECRET
-wrangler secret put UNISWAP_API_KEY
-```
+- **Who signs, who holds.** The user's embedded wallet signs every transfer; Re Wallet never holds the private key and cannot move funds without the user's signature. The backend prepares unsigned messages and reads balances. The session cookie authenticates the API — it is not a spending permission.
+- **Yield is variable and sourced.** Rates come from the venue (Kamino's vault, Aave's reserve) and are shown with their source and as a projected annual figure, never as a promise. There is no "always growing" claim in the product.
+- **No hidden numbers.** If a read fails, the app shows the failure and its cause. This is also what makes support possible: the failure has a code, and the code is logged.
+- **Data.** The app stores the user's email, tag and wallet addresses in Postgres, and the RPC providers see the addresses that are read. There is no selling of data and no third-party analytics beyond Cloudflare's own.
+- **Regulatory posture (open item).** A product that receives dollars and routes them to yield may fall under local PSAV/registration rules in Argentina. We treat this as a pre-launch requirement, not a detail: the current deployment is a public beta with test-scale balances, and legal review is scheduled before any real-money onboarding.
 
-## Tests
+## What works today, and what is next
 
-```bash
-cd 07.PockBackend && npm test    # backend — 921 tests
-cd 05. UI-UX && npm test          # frontend — 224 tests
-```
+**Works end to end today:** email login with embedded wallets · balances read from chain (Solana + six EVM networks) · USDC send to an @tag on Solana with the signature on screen · send on Monad · yield positions read from Kamino and Aave · payment requests with a QR/link · spending policy evaluated before signing.
 
-Toda la suite corre **sin red y sin base de datos**. No es una comodidad: es lo
-que permite ejercitar el flujo completo de sesión, los lectores de cadena y los
-stores inyectando dobles. Un test que necesita que la RPC esté arriba es un test
-que solo corre el día que la RPC está arriba.
+**Next, in order:**
 
-Hay dos proyectos de test en el front, con reglas distintas y declaradas en
-`vitest.config.ts`:
+1. **Kamino deposit execution.** The prepared transaction deliberately reports `executes: false`: the vault's two Farms instructions do not have an authoritative layout we could verify, and we refuse to build a money transaction we cannot validate. Reads and the deposit message exist; the executing path lands when the layout is verified against the on-chain program.
+2. **Sponsored gas on Solana**, so a new user never needs SOL.
+3. **Solana Pay for the "Cobrar" QR**, so a payment request is an ecosystem standard instead of a custom payload.
+4. **Local peso ramps** in and out — without them the product does not serve an Argentine saver.
 
-| Proyecto | Qué entra | Entorno |
-|---|---|---|
-| `servicios` | `test/**/*.test.ts` — lógica pura, normalizadores, aritmética | `node` |
-| `hooks` | `src/**/__tests__/**/*.test.ts` — lo que monta React | `jsdom` |
+## Evidence
 
-Dos de ellos vigilan cosas que antes no existían y que ya se rompieron una vez
-cada una:
+| What | Where |
+| --- | --- |
+| USDC send to an @tag on Solana (signature) | `<paste explorer.solana.com signature URL>` |
+| Kamino deposit (labeled next, see above) | — |
+| Live beta | https://beta.rewallet.win |
+| Demo video (≤3:00, English) | `<paste YouTube link>` |
+| Pitch (2:00, English) | `<paste link>` |
 
-- `qrSvgPath.test.ts` — que el atributo `d` del QR sea un path válido. Estuvo
-  roto dos veces: una con una transformación metida dentro del `d`, que el
-  navegador descarta entero, y otra dibujando los módulos apagados.
-- `transferPromises.test.ts` — que ningún texto visible prometa envío gratis o
-  instantáneo. Hoy el envío paga comisión de red y tarda lo que tarde la cadena,
-  y un copy que diga otra cosa es una promesa rota.
+## Team
 
-## Despliegue
+- **Joaquín** — architecture and backend (Cloudflare Workers, Solana integrations, policy engine)
+- **Facundo** — product and growth
+- **Santiago** — finance and operations
 
-Un solo Worker sirve la API y el front, en dos dominios:
+Buenos Aires, Argentina.
 
-| Dominio | Worker |
-|---|---|
-| `app.rewallet.win` | `rewallet-poc-api` |
-| `beta.rewallet.win` | `rewallet-poc-api` |
+## License
 
-```bash
-cd "05. UI-UX" && npm run build     # el front viaja DENTRO del worker del backend
-cd 07.PockBackend && npm run build && npx wrangler deploy
-```
-
-**El deploy se hace desde `07.PockBackend`, nunca desde `05. UI-UX`.** El
-`wrangler.jsonc` del front declara un Worker propio que compite por el mismo
-dominio, y ya pasó una vez: le ganó la ruta al backend y `/api/auth/session`
-devolvió 404 en vez de 401, que es el login muerto.
-
-El síntoma es inconfundible: **`404` en `/api/auth/session` significa que otro
-Worker ganó la ruta.** `401` es lo correcto —API viva, sin sesión.
-
-`test.rewallet.win` es un Worker de diagnóstico con `qr-probe/`: una página con
-el QR real de la app, usada para separar "el QR está roto" de "el código no llega
-a tu pantalla". La página se genera —no se edita a mano— porque importa el encoder
-del proyecto:
-
-```bash
-cd "05. UI-UX" && npx tsx scripts/generar-qr-probe.mjs
-cd ../../qr-probe && npx wrangler deploy
-```
-
-## Estado
-
-Beta privada, en `app.rewallet.win`. El producto está detrás de sesión.
-
-### Lo que no existe todavía
-
-Cosas que el repo **no** debe aparentar lo contrario:
-
-- **La conversión cotiza contra Uniswap, pero no ejecuta.** Hacen falta dos
-  firmas —Permit2 y la transacción—. Y sólo ofrece los pares que están
-  configurados en `dexRegistry`: un par que no está configurado se dice que no
-  se soporta. Antes recitaba una lista escrita a mano, con `USDT` donde el
-  registro declara `USDT0` y un `routerAddress` que era `'0x...'`, o sea un
-  botón que miente con forma de lista.
-- **La política de gasto evalúa y corta**, pero el historial de decisiones es
-  consultable por endpoint y todavía no tiene pantalla.
-- **El envío interno entre cuentas ReWALLET no existe.** La opción "A otra cuenta
-  ReWALLET" está deshabilitada y lo dice: *"Enviar a un $ReTag todavía no está
-  disponible"*. Es un stub honesto, y conviene que siga siéndolo.
-- **No hay liquidación interna.** El envío por `@tag` mueve una transacción
-  on-chain como cualquier otro: paga comisión de red y tarda lo que tarde la
-  cadena.
-
-### Lo que está decidido y documentado, pero sin implementar
-
-**Envío con liquidación interna.** El producto decidió que el envío por ReWALLET
-mueve plata por dentro y liquida contra la cadena agrupado, para que "sin
-comisión e instantáneo" sean hechos y no promesas. El diseño está completo y la
-decisión de riesgo está tomada —ante un fallo del batch, **se difiere**— en
-[`odd/tasks/modelo-de-saldo-liquidez-interna.md`](odd/tasks/modelo-de-saldo-liquidez-interna.md).
-
-El modelo tiene dos saldos, no uno: **total** (lo que la persona siente que tiene)
-y **disponible** (lo que puede mover a la cadena ahora), con un solo invariante
-—`disponible ≤ saldo real en la cadena`— que es el número que impide inventar
-plata.
-
-Hasta que eso exista, el copy de comisión e inmediatez se sacó de las pantallas, y
-un test lo verifica. Ver [`odd/tasks/copy-honesto.md`](odd/tasks/copy-honesto.md).
-
-## Licencia
-
-Privado — ReWALLET. Ver [`LICENSE`](LICENSE).
+See [LICENSE](./LICENSE).

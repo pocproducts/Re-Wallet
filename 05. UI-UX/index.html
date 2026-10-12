@@ -14,6 +14,11 @@
     -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>ReWALLET - Dólares Digitales y Rendimientos</title>
+    <!--
+      El ícono de la pestaña es el logo de marca: `src/public/favicon.png`,
+      publicado en la raíz del deploy por el `publicDir` de `vite.config.ts`.
+    -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="description" content="ReWALLET: Una cuenta en dólares digitales para ahorrar, enviar y hacer rendir tu dinero sin aprender cripto." />
     <meta property="og:title" content="ReWALLET - Dólares Digitales y Rendimientos" />
     <meta property="og:description" content="ReWALLET: Una cuenta en dólares digitales para ahorrar, enviar y hacer rendir tu dinero sin aprender cripto." />
@@ -34,9 +39,102 @@
       en el bloque `@theme` de `index.css`.
     -->
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!--
+      El capturador de errores de arranque. Inline y PRIMERO siempre.
+
+      Tiene que vivir antes de los módulos porque ahí es donde se producen las
+      fallas que nos traen acá cuando la app no llega a mostrar nada: chunks que
+      no cargan, parseo que rompe, excepciones del primer render. Sin él, la
+      "pantalla negra" no tiene texto; con él, el teléfono dice qué pasó.
+
+      Un nodo por paso y window.addEventListener, sin nada más: este script es
+      el que corre incluso en el navegador que no entiende ni el resto del
+      bundle, así que su propio lenguaje queda lo más viejo posible por diseño.
+    -->
+    <script>
+      (function () {
+        var enviados = 0;
+        var reportar = function (texto, origen) {
+          var marcador = document.getElementById('boot-marker');
+          if (marcador) {
+            marcador.style.whiteSpace = 'pre-wrap';
+            marcador.style.textAlign = 'center';
+            marcador.style.padding = '24px';
+            marcador.style.color = '#ffffff';
+            marcador.style.fontWeight = '500';
+            marcador.textContent = 'No pudimos cargar ReWALLET: ' + texto + (origen ? ' | ' + origen : '');
+          }
+          if (enviados >= 3) return;
+          enviados += 1;
+          try {
+            var detalle = (texto + (origen ? ' | ' + origen : '') + ' | ' + navigator.userAgent).slice(0, 380);
+            fetch('/api/diagnostics', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ etapa: 'boot', codigo: 'unknown_error', detalle: detalle }),
+            }).catch(function () {});
+          } catch (e) {}
+        };
+        window.addEventListener('error', function (evento) {
+          if (evento.message) {
+            reportar(
+              evento.message,
+              (evento.filename || '') + ':' + (evento.lineno || 0) + ':' + (evento.colno || 0),
+            );
+            return;
+          }
+          var fuente = evento.target && (evento.target.src || evento.target.href);
+          if (fuente) reportar('no cargo ' + fuente, '');
+        }, true);
+        window.addEventListener('unhandledrejection', function (evento) {
+          var razon = evento.reason;
+          reportar(String((razon && (razon.stack || razon.message)) || razon || 'promesa rechazada'), '');
+        });
+        /*
+         * Safari reporta los errores de los scripts `type=module` como un
+         * "Script error." sin nombre de archivo — el detalle se opacina por
+         * diseño del navegador. Un `import()` desde un script clásico en vez
+         * rechaza la promesa con el error COMPLETO, y como el modulo ya está
+         * en el grafo no lo ejecuta dos veces: revela, no duplica.
+         */
+        window.setTimeout(function () {
+          var modulo = document.querySelector('script[type="module"]');
+          if (modulo && modulo.src) {
+            var p = modulo.src;
+            var importarModulo = new Function('return import(' + JSON.stringify(p) + ')');
+            importarModulo().catch(function (e) {
+              reportar(
+                String((e && (e.stack || e.message)) || e),
+                'modulo:' + (e && e.fileName ? e.fileName + ':' + (e.lineNumber || 0) : ''),
+              );
+            });
+          }
+        }, 0);
+      })();
+    </script>
   </head>
   <body class="bg-slate-950 text-slate-100 antialiased overflow-x-hidden selection:bg-emerald-500 selection:text-black">
     <div id="root"></div>
+    <!--
+      La marca de arranque.
+
+      Vive FUERA de `#root` a propósito: React reemplaza el contenido de su
+      contenedor cuando monta, y si la pantalla que monta rompe el primer
+      render lo deja en cero. Sin una marca afuera, cualquiera de esas dos
+      fallas se lee en el teléfono igual: una pantalla negra sobre el
+      `bg-slate-950` del body.
+
+      El script de arriba además la escribe con el error real cuando uno
+      ocurre: así "cargando" pasa a ser el diagnóstico, no la hipótesis.
+
+      React la borra con el primer render (`App`, `useEffect` del comienzo).
+    -->
+    <div
+      id="boot-marker"
+      style="position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0A0A0A;color:#ccff00;font-family:system-ui,sans-serif;font-size:13px;font-weight:700;letter-spacing:0.04em;"
+    >
+      ReWALLET está cargando…
+    </div>
     <script type="module" src="/src/main.tsx"></script>
     
     

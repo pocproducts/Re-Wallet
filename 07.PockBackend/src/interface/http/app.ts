@@ -42,6 +42,7 @@ import { createDepositInfoRoutes } from './routes/depositInfo';
 import { createDigitalDollarsRoutes } from './routes/digitalDollars';
 import { createDiagnosticsRoutes } from './routes/diagnostics';
 import { createNotificationsRoutes } from './routes/notifications';
+import { createTransactionsRoutes } from './routes/transactions';
 import { createPortfolioRoutes } from './routes/portfolio';
 import { createSendRoutes } from './routes/send';
 import { createPaymentRequestsRoutes } from './routes/paymentRequests';
@@ -140,6 +141,8 @@ export interface AppDeps {
   /** Absent when no signing secret is wired: the intake is then not there. */
   readonly ingestWebhook?: IngestPrivyWebhook;
   readonly readNotifications?: ReadNotifications;
+  /** Transactions route: get the person's financial movement history. */
+  readonly getTransactions?: GetTransactions;
   /** Absent when the webhook store is not wired: the metrics route is then not there. */
   readonly readMetrics?: ReadPrivyMetrics;
   /** Absent when the contacts store is not wired: the route is then not there. */
@@ -386,6 +389,19 @@ export const createApp = (deps: AppDeps) => {
       createNotificationsRoutes({
         sessions: deps.sessions,
         readNotifications: deps.readNotifications,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+  
+  if (deps.getTransactions) {
+    app.route(
+      '/api/transactions',
+      createTransactionsRoutes({
+        sessions: deps.sessions,
+        getTransactions: deps.getTransactions,
         cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
         now: deps.now,
         log,

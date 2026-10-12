@@ -27,6 +27,13 @@ interface CodeVerificationProps {
   errorMessage?: string | null;
   /** Vuelve a la pantalla anterior (por ejemplo, a corregir el correo). */
   onBack?: () => void;
+  /**
+   * La pantalla va montada sobre la imagen de marca y no pinta su propio
+   * fondo oscuro: con fondo propio la foto desaparece. Es una decisión de
+   * capa, no de comportamiento — la cuenta regresiva, el pegado y el borrado
+   * son los mismos con y sin la imagen.
+   */
+  overBackground?: boolean;
 }
 
 export const CodeVerification: React.FC<CodeVerificationProps> = ({
@@ -37,6 +44,7 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
   invalid = false,
   errorMessage = null,
   onBack,
+  overBackground = false,
 }) => {
   const [digits, setDigits] = useState<string[]>(() => Array(CODE_LENGTH).fill(''));
   const [error, setError] = useState(false);
@@ -175,7 +183,9 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
   };
 
   return (
-    <div className="w-full h-full bg-[#0A0A0A] text-white flex flex-col px-6 safe-top-5 safe-bottom-5 font-sans">
+    <div
+      className={`w-full h-full text-white flex flex-col px-6 safe-top-5 safe-bottom-5 font-sans ${overBackground ? 'bg-transparent' : 'bg-[#0A0A0A]'}`}
+    >
       {/* Cabecera: volver + aviso de a dónde se manda el código */}
       <div className="flex items-center justify-between mb-6 pt-2 shrink-0">
         {onBack && (
@@ -228,7 +238,7 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
           )}
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 max-w-[300px] mx-auto">
           {digits.map((digit, index) => (
             <input
               key={index}
@@ -245,7 +255,7 @@ export const CodeVerification: React.FC<CodeVerificationProps> = ({
               maxLength={1}
               autoComplete={index === 0 ? 'one-time-code' : 'off'}
               aria-label={`Dígito ${index + 1} de ${CODE_LENGTH}`}
-              className={`flex-1 min-w-0 h-[55px] bg-[#1C1C1E] border rounded-xl text-center text-2xl font-black placeholder-[#555555] focus:outline-none transition-all caret-lemon ${
+              className={`flex-1 min-w-0 h-[46px] bg-[#1C1C1E] border rounded-xl text-center text-xl font-black placeholder-[#555555] focus:outline-none transition-all caret-lemon ${
                 digit
                   ? 'border-lemon text-lemon shadow-[0_0_15px_rgba(204,255,0,0.2)]'
                   : 'border-[#2C2C2E] text-white focus:border-lemon'

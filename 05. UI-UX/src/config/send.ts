@@ -40,7 +40,7 @@
 
 import { checksumAddress } from 'viem';
 
-import { SOLANA_MAINNET, SUPPORTED_EVM_CHAINS, arbitrumMainnet, baseMainnet, ethereumMainnet, monad, optimismMainnet, polygonMainnet } from './chains';
+import { SOLANA_MAINNET, SUPPORTED_EVM_CHAINS, arbitrumMainnet, baseMainnet, ethereumMainnet, evmChainById, monad, optimismMainnet, polygonMainnet } from './chains';
 import type { DepositChainId } from '../types/deposit.types';
 
 /**
@@ -340,4 +340,29 @@ export const classifyRecipient = (chain: SendChainId, value: string): RecipientK
   if (isValidRecipientForChain(chain, value)) return 'address';
   if (hasEvmShape(value.trim()) || isSolanaAddress(value.trim())) return 'unusable';
   return looksLikeRewalletTag(value) ? 'rewallet' : 'unusable';
+};
+
+/**
+ * El enlace a la transacción en la exploradora de la red, o `null`.
+ *
+ * ── Por qué vive acá y no en la pantalla ────────────────────────────────────
+ *
+ * Porque no hacerlo era un bug real: la pantalla buscaba el explorer sólo
+ * entre las cadenas EVM, y en Solana esa cadena no está — el resultado era un
+ * envío firmado que no se podía abrir en una exploradora, justo la pieza que
+ * demuestra que el envío ocurrió. La regla es chica pero es un contrato:
+ * Solana no tiene id EIP-155, no entra en ese catálogo, y su exploradora
+ * pública es fija.
+ *
+ * ── Qué no hace ─────────────────────────────────────────────────────────────
+ *
+ * No infiere nada de la cadena por el nombre ni por el símbolo: lee la vista
+ * ya resuelta del envío, que nace del catálogo del backend. Un link a una
+ * exploradora equivocada en una billetera es una página que parece phishing.
+ */
+export const sendExplorerUrlFor = (chain: SendChainView | null, hash: string | null): string | null => {
+  if (hash === null || chain === null) return null;
+  if (chain.kind === 'solana') return `https://explorer.solana.com/tx/${hash}`;
+  const base = evmChainById(chain.chainId)?.blockExplorers?.default.url;
+  return base === undefined ? null : `${base}/tx/${hash}`;
 };

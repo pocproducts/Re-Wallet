@@ -31,6 +31,7 @@ import {
   useTradeCatalog,
 } from '../../hooks/useAssetTrade';
 import { assetOrDefault } from '../../config/markets';
+import { isSwapMockEnabled, quoteSwapMock } from '../../services/swap';
 import {
   readContacts as fetchContacts,
   EMPTY_CONTACTS,
@@ -274,12 +275,29 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
     initialSource: assetOrDefault('USDC'),
     initialDestination: assetForTrade,
   });
+  /*
+   * Si la cotización simulada está puesta, esta pantalla lo dice y lo muestra.
+   *
+   * Se lee una sola vez para que la bandera no pueda valer una cosa al pedir la
+   * cotización y otra al dibujarla: con dos lecturas, un bundle partido en
+   * pedazos podría mostrar el precio simulado sin el cartel que lo delata, que
+   * es exactamente el estado que hay que volver imposible.
+   */
+  const swapIsSimulated = isSwapMockEnabled();
+
   const swapTrade = useAssetTrade({
     amountText: keypadAmount,
     setAmountText: setKeypadAmount,
     catalog: tradeCatalog,
     initialSource: assetForTrade,
     initialDestination: assetOrDefault('USDC'),
+    /*
+     * La simulación entra sólo si la bandera está encendida, y va acá y no en
+     * las otras dos hojas a propósito: `swapTrade` es la única que puede mostrar
+     * el precio, y habilitar el mock en más de un lugar multiplica los sitios
+     * donde alguien puede olvidarse de apagarlo.
+     */
+    quoteSwap: swapIsSimulated ? quoteSwapMock : undefined,
   });
   const sellTrade = useAssetTrade({
     amountText: keypadAmount,
@@ -1090,14 +1108,67 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
 
           <div className="flex-1 flex flex-col px-5 pt-3 pb-6 space-y-3 max-w-sm mx-auto w-full">
             {/*
-              Sin botón, y por la misma decisión del flujo "Usar": no hay motor,
-              así que la acción no existe y no se ofrece. El texto es el mismo de
-              las otras pantallas —vive en `useAssetTrade`— porque cinco pantallas
-              diciendo la verdad con cinco palabras distintas vuelven a mentir.
+              Sin motor no hay precio, y sin precio no hay nada que ofrecer. El
+              texto es el mismo de las otras pantallas —vive en `useAssetTrade`—
+              porque cinco pantallas diciendo la verdad con cinco palabras
+              distintas vuelven a mentir.
+
+              El número simulado aparece **sólo** con la bandera encendida, y
+              aparece junto al cartel que lo delata, en la misma pantalla. Un
+              precio inventado sin la palabra "simulado" al lado es la forma
+              más convincente de mentir, así que los dos viajan juntos o no
+              viaja ninguno.
             */}
-            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
-              {TRADE_UNAVAILABLE_TEXT}
-            </p>
+            {swapIsSimulated && swapTrade.equivalentText !== '' ? (
+              <>
+                <p className="text-center text-xs font-extrabold uppercase tracking-wide leading-relaxed text-amber-900 bg-amber-100 rounded-2xl border-2 border-amber-500 px-4 py-3">
+                  Cotización simulada: datos falsos, no mueve dinero
+                </p>
+                <div className="text-center space-y-2">
+                  {/* `equivalentText` ya trae el par adentro: prefijarlo otra vez duplicaba el símbolo. */}
+                  <p className="font-medium text-black">{swapTrade.equivalentText}</p>
+                  <p className="text-sm text-slate-500">
+                    {swapTrade.sourceAmountText} de {swapTrade.source.ticker} →{' '}
+                    {swapTrade.destinationAmountText} de {swapTrade.destination.ticker}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      /*
+                       * No hay firma y no hay transacción: lo único que pasa es
+                       * un aviso para quien esté mirando.
+                       *
+                       * El identificador sale con el prefijo `simulado-` y no
+                       * como 64 caracteres hexadecimales. Uno que empiece con
+                       * `0x` ya se lee como una transacción, y acá no hubo
+                       * ninguna: una billetera no muestra el comprobante de algo
+                       * que no ocurrió.
+                       */
+                      const simulatedId = `simulado-${Math.random().toString(36).slice(2, 10)}`;
+                      window.dispatchEvent(
+                        new CustomEvent('mock-swap-executed', {
+                          /*
+                           * Sin `quoteId`: el hook no lo expone, y el que arma el
+                           * mock lo inventa él mismo. Un identificador de
+                           * cotización que no salió de ninguna cotización no tiene
+                           * por qué viajar a ningún lado.
+                           */
+                          detail: { simulated: true, simulatedId },
+                        }),
+                      );
+                      setCurrentView('overview');
+                    }}
+                    className="w-full py-3 rounded-2xl bg-black text-white font-bold text-sm cursor-pointer active:scale-95 transition-all shadow-md hover:bg-slate-900"
+                  >
+                    Simular el swap (no mueve dinero)
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
+                {TRADE_UNAVAILABLE_TEXT}
+              </p>
+            )}
 
             {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
             <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] auto-rows-fr">

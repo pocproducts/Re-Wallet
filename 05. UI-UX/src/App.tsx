@@ -204,46 +204,18 @@ export default function App() {
    * aquella persona había movido plata que nunca movió.
    *
    * Hoy la lista es exactamente lo que el backend conoce: nada. El array sigue
-   * viviendo acá porque los cobros que la persona **crea** en la app sí son un
-   * hecho —uno lo generó ella y lo puede ver—, pero ya no se siembra con
-   * ejemplos.
+  /*
+   * El feed de transacciones financieras, leído una vez por sesión.
+   *
+   * En lugar de mantener un estado local de transacciones, usamos un hook que
+   * lee las transacciones financieras desde el backend una vez por sesión,
+   * exactamente como hacemos con el portfolio y los avisos.
    */
-  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
-
-  useEffect(() => {
-    try {
-      const storedTx = localStorage.getItem(TRANSACTIONS_STORAGE_KEY);
-      if (storedTx) {
-        const parsedTx = JSON.parse(storedTx);
-        if (Array.isArray(parsedTx) && parsedTx.length > 0) {
-          setTransactions(parsedTx);
-        }
-      }
-    } catch (e) {
-      console.warn('Error reading stored transactions:', e);
-    }
-  }, []);
+  const transactionsHook = useTransactions(sessionStatus === 'authenticated');
+ 
 
   // Agregar nueva transacción / cobro a la actividad
-  const handleAddTransaction = (newTx: TransactionItem) => {
-    setTransactions((prev) => {
-      const updated = [newTx, ...prev];
-      try {
-        localStorage.setItem(TRANSACTIONS_STORAGE_KEY, JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Error saving transactions:', e);
-      }
-      return updated;
-    });
-  };
-
-  /*
-   * La dirección de cobro: la primera red real que el backend reportó.
-   *
-   * Antes el modal de cobrar usaba un saldo de Bitcoin escrito a mano y un
-   * `@user` como destino. Ahora usa la dirección que devolvió
-   * `GET /api/portfolio`, y si no hay ninguna no genera el cobro: es preferible
-   * no poder cobrar antes que mostrar un QR que no lleva a ninguna parte.
+ 
    */
   const receiveAddress = useMemo<ChargeReceiveAddress | null>(() => {
     const first = portfolio.receiveAddresses[0];
@@ -324,6 +296,17 @@ export default function App() {
    * mientras corre, para que dos cierres de sesión no se pisen.
    */
   const [restarting, setRestarting] = useState(false);
+
+  /*
+   * La marca de arranque del shell (`index.html`, `#boot-marker`) se borra con
+   * el primer render de la app —sólo cuando ya se renderizó algo— y nadie más
+   * la toca: si llega a quedarse, el JavaScript en este navegador murió antes
+   * del primer frame de React, y eso es el diagnóstico exacto de la "pantalla
+   * negra" desde el teléfono.
+   */
+  useEffect(() => {
+    document.getElementById('boot-marker')?.remove();
+  }, []);
 
   return (
     /*
@@ -491,7 +474,7 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <ActivityView
                         profile={profile}
-                        transactions={transactions}
+                        transactions={transactionsHook.transactions}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
@@ -530,7 +513,7 @@ export default function App() {
            * El mismo origen que recibe `CreateChargeView`, y por el mismo
            * motivo: el link del cobro se arma en el navegador, no con una
            * constante escrita a mano acá.
-           */
+ 
           origin={typeof window === 'undefined' ? '' : window.location.origin}
           onAddTransaction={handleAddTransaction}
           onNavigateToActivity={() => {

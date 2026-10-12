@@ -26,6 +26,31 @@ import type { Logger } from '../../../domain/ports/logger';
 import { noopLogger } from '../../../domain/ports/logger';
 import { readSessionCookie, SESSION_COOKIE_NAME } from '../cookie';
 import { UNAUTHENTICATED_BODY } from './auth';
+import type { SwapQuote } from '../../../domain/ports/swap-provider';
+
+/*
+ * La cotización y la ejecución llegan del dominio con `bigint`.
+ *
+ * `c.json` llama a `JSON.stringify`, que no sabe serializar un `bigint` y lanza
+ * `TypeError: Do not know how to serialize a BigInt`. Sin este mapeo, una
+ * cotización que el motor calculó bien revienta con un 500 en la arista —y el
+ * front la lee como red caída, una afirmación falsa sobre lo que pasó.
+ *
+ * El texto se queda como texto porque un `number` redondería justo la cifra que
+ * la operación comunica: `amountOut` con 6 decimales no entra en un double sin
+ * deslizar el centavo.
+ */
+const quoteToJson = (quote: SwapQuote) => ({
+  quoteId: quote.quoteId,
+  amountIn: quote.amountIn.toString(),
+  amountOut: quote.amountOut.toString(),
+  amountOutMin: quote.amountOutMin.toString(),
+  validUntil: quote.validUntil,
+  price: quote.price,
+  feeTier: quote.feeTier,
+  chain: quote.chain,
+  blockNumber: quote.blockNumber ?? null,
+});
 
 export interface SwapRoutesDeps {
   readonly sessions: { read: (token: string, now: Date) => Promise<{ userId: string } | null> };
@@ -111,7 +136,7 @@ export const createSwapRoutes = (deps: SwapRoutesDeps) => {
       return c.json(result, 400);
     }
 
-    return c.json(result, 200);
+    return c.json({ status: 'ok', quote: quoteToJson(result.quote) }, 200);
   });
 
   app.post('/execute', async (c) => {
@@ -169,7 +194,17 @@ export const createSwapRoutes = (deps: SwapRoutesDeps) => {
       return c.json(result, 400);
     }
 
-    return c.json(result, 200);
+    return c.json(
+      {
+        status: 'ok',
+        result: {
+          txHash: result.result.txHash,
+          amountOut: result.result.amountOut.toString(),
+          gasUsed: result.result.gasUsed.toString(),
+        },
+      },
+      200,
+    );
   });
 
   return app;

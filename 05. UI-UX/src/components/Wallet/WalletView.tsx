@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 
-import { Bug, Bell, Eye, EyeOff, ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
+import { Bug, Bell, Eye, EyeOff, ArrowDown, ArrowUp, ArrowLeftRight, ChevronRight } from 'lucide-react';
 import { UserProfileData } from '../../types';
 import { splitUsdDisplay } from '../../services/portfolio';
 import { formatVenueRate } from '../../services/walletBalance';
@@ -45,13 +45,14 @@ interface WalletViewProps {
   /**
    * Qué acción abre la persona desde la fila de abajo.
    *
-   * `'usar'` salió de acá y de `ActionModalType`: su menú sólo ofrecía Comprar y
-   * Vender, y las dos son cambio de activo. Hoy no hay motor de swap, así que
-   * una acción que no se puede ejecutar no se ofrece. Las pantallas de compra y
-   * venta **no se borraron** — están estacionadas a propósito y son la base de
-   * la Fase 2, que ya está decidida; sólo se les cerró la puerta de entrada.
+   * `'usar'` volvió a la unión. Se había ido porque su menú —Comprar/Vender—
+   * prometía un cambio de activo que no tenía motor. El motor existe: el
+   * backend cotiza en `/api/wallet/swap/quote` y la pantalla que abre sigue la
+   * disposición documentada por Uniswap. Lo que falta es la firma real de la
+   * ejecución, y por eso en este estado la operación es una simulación que la
+   * pantalla nombra como tal.
    */
-  onOpenAction?: (action: 'depositar' | 'enviar') => void;
+  onOpenAction?: (action: 'depositar' | 'usar' | 'enviar') => void;
   onOpenChargeModal?: () => void;
   onOpenSearch?: () => void;
   onOpenScanner?: () => void;
@@ -312,16 +313,16 @@ export const WalletView: React.FC<WalletViewProps> = ({
             </div>
 
             {/*
-              Dos acciones: Depositar y Enviar.
+              Tres acciones: Depositar, Usar y Enviar.
 
-              El tercer botón era "Usar" ($), y su llamada `onOpenAction('usar')`
-              ya no compila **a propósito**: `'usar'` no está en la unión de la
-              prop (ver el comentario de `onOpenAction` arriba) porque su menú
-              —Comprar/Vender— es un cambio de activo sin motor detrás. Un botón
-              que no puede hacer lo que promete no se ofrece, y el modal que lo
-              atendía sigue estacionado como base de la Fase 2.
+              "Usar" volvió con el motor afuera todavía sin firma: su pantalla
+              cotiza de verdad contra `/api/wallet/swap/quote` y ejecuta una
+              simulación etiquetada como simulación hasta que la firma real
+              exista (Permit2 + `/api/wallet/swap/execute`). Un botón que no
+              puede hacer lo que promete no se ofrece; uno que hace sólo de
+              demostración se ofrece diciéndolo.
             */}
-            <div className="grid grid-cols-2 gap-3 pt-4">
+            <div className="grid grid-cols-3 gap-3 pt-4">
               {/* Depositar */}
               <div className="flex flex-col items-center">
                 <button
@@ -333,6 +334,20 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 </button>
                 <span className="text-xs font-semibold text-black mt-2">
                   Depositar
+                </span>
+              </div>
+
+              {/* Usar (swap) */}
+              <div className="flex flex-col items-center">
+                <button
+                  onClick={() => onOpenAction?.('usar')}
+                  type="button"
+                  className="w-14 h-14 rounded-full bg-black flex items-center justify-center text-[#ccff00] shadow-md hover:bg-slate-900 active:scale-90 transition-transform cursor-pointer"
+                >
+                  <ArrowLeftRight className="w-5 h-5 stroke-[2.5]" />
+                </button>
+                <span className="text-xs font-semibold text-black mt-2">
+                  Usar
                 </span>
               </div>
 
