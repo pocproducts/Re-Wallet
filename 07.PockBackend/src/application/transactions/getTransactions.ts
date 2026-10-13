@@ -53,6 +53,10 @@ export interface TransactionItem {
   readonly expiresAt?: string;
   /** Payload del código QR para cobros QR. */
   readonly qrPayload?: string;
+  /** Firma de la transacción en Solana (para ver en explorador). */
+  readonly signature?: string;
+  /** Sección de la transacción: 'Hoy' o 'Anteriores'. */
+  readonly section?: 'Hoy' | 'Anteriores';
 }
 
 export interface TransactionsResponse {
@@ -193,6 +197,8 @@ function createTransactionItems(event: {
         concept: `Evento desconocido: ${event.eventType}`,
         expiresAt: undefined,
         qrPayload: undefined,
+        signature: undefined,
+        section: undefined,
       }];
   }
 }
@@ -216,6 +222,8 @@ function createDepositTransaction(event: {
       concept: 'Payload de depósito inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -226,6 +234,8 @@ function createDepositTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -237,6 +247,8 @@ function createDepositTransaction(event: {
     concept: `Se depositaron ${amount} ${assetName} en tu cuenta.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -257,6 +269,8 @@ function createWithdrawalTransaction(event: {
       concept: 'Payload de retiro inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -267,6 +281,8 @@ function createWithdrawalTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -278,6 +294,8 @@ function createWithdrawalTransaction(event: {
     concept: `Se retiraron ${amount} ${assetName} de tu cuenta.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -298,6 +316,8 @@ function createSentTransaction(event: {
       concept: 'Payload de envío inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -308,6 +328,8 @@ function createSentTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -316,9 +338,11 @@ function createSentTransaction(event: {
     amount: `- ${amount} ${assetName}`,
     isPositive: false,
     type: payload.asset.type.toLowerCase(),
-    concept: `Envidaste ${amount} ${assetName}.`,
+    concept: `Enviaste ${amount} ${assetName}.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -339,6 +363,8 @@ function createReceivedTransaction(event: {
       concept: 'Payload de recepción inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -349,6 +375,8 @@ function createReceivedTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -360,6 +388,8 @@ function createReceivedTransaction(event: {
     concept: `Recibiste ${amount} ${assetName}.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -380,6 +410,8 @@ function createSwapTransactions(event: {
       concept: 'Payload de intercambio inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -392,6 +424,8 @@ function createSwapTransactions(event: {
   const sourceAssetName = getAssetName(payload.sourceAsset.type);
   const destAmount = formatAmount(payload.destinationAsset.amount, payload.destinationAsset.type);
   const destAssetName = getAssetName(payload.destinationAsset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [
     {
@@ -404,6 +438,8 @@ function createSwapTransactions(event: {
       concept: `En el intercambio, enviaste ${sourceAmount} ${sourceAssetName} y recibiste ${destAmount} ${destAssetName}.`,
       expiresAt: undefined,
       qrPayload: undefined,
+      signature,
+      section: undefined, // Will be set in frontend based on date
     },
     {
       id: `${event.id}-destination`,
@@ -415,6 +451,8 @@ function createSwapTransactions(event: {
       concept: `En el intercambio, enviaste ${sourceAmount} ${sourceAssetName} y recibiste ${destAmount} ${destAssetName}.`,
       expiresAt: undefined,
       qrPayload: undefined,
+      signature,
+      section: undefined, // Will be set in frontend based on date
     }
   ];
 }
@@ -436,6 +474,8 @@ function createBoughtTransaction(event: {
       concept: 'Payload de compra inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -446,6 +486,8 @@ function createBoughtTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -457,6 +499,8 @@ function createBoughtTransaction(event: {
     concept: `Compraste ${amount} ${assetName}.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -477,6 +521,8 @@ function createSoldTransaction(event: {
       concept: 'Payload de venta inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -487,6 +533,8 @@ function createSoldTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -498,6 +546,8 @@ function createSoldTransaction(event: {
     concept: `Vendiste ${amount} ${assetName}.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -518,6 +568,8 @@ function createYieldEarnedTransaction(event: {
       concept: 'Payload de rendimiento inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -528,6 +580,8 @@ function createYieldEarnedTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -539,6 +593,8 @@ function createYieldEarnedTransaction(event: {
     concept: `Ganaste ${amount} ${assetName} en rendimiento.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -559,6 +615,8 @@ function createYieldFeesPaidTransaction(event: {
       concept: 'Payload de comisiones inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -569,6 +627,8 @@ function createYieldFeesPaidTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -580,6 +640,8 @@ function createYieldFeesPaidTransaction(event: {
     concept: `Pagaste ${amount} ${assetName} en comisiones de rendimiento.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -600,6 +662,8 @@ function createConvertedTransaction(event: {
       concept: 'Payload de conversión inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -610,6 +674,8 @@ function createConvertedTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -621,6 +687,8 @@ function createConvertedTransaction(event: {
     concept: `Convertiste ${amount} ${assetName}.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -641,6 +709,8 @@ function createLockedTransaction(event: {
       concept: 'Payload de bloqueo inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -651,6 +721,8 @@ function createLockedTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -662,6 +734,8 @@ function createLockedTransaction(event: {
     concept: `Bloqueaste ${amount} ${assetName}.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -682,6 +756,8 @@ function createUnlockedTransaction(event: {
       concept: 'Payload de desbloqueo inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -692,6 +768,8 @@ function createUnlockedTransaction(event: {
   
   const amount = formatAmount(payload.amount, payload.asset.type);
   const assetName = getAssetName(payload.asset.type);
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -703,6 +781,8 @@ function createUnlockedTransaction(event: {
     concept: `Desbloqueaste ${amount} ${assetName}.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 
@@ -723,6 +803,8 @@ function createPaymentFulfilledTransaction(event: {
       concept: 'Payload de pago inválido',
       expiresAt: undefined,
       qrPayload: undefined,
+      signature: undefined,
+      section: undefined,
     }];
   }
 
@@ -731,6 +813,8 @@ function createPaymentFulfilledTransaction(event: {
   };
   
   const amount = formatAmount(payload.amount, 'usdc'); // Assuming USDC for payment requests
+  // Try to extract signature from payload
+  const signature = (payload as any).signature ?? (payload as any).transactionSignature;
   
   return [{
     id: event.id,
@@ -742,6 +826,8 @@ function createPaymentFulfilledTransaction(event: {
     concept: `Se pagó tu enlace de cobro por ${amount} USDC.`,
     expiresAt: undefined,
     qrPayload: undefined,
+    signature,
+    section: undefined, // Will be set in frontend based on date
   }];
 }
 

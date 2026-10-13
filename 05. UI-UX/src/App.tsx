@@ -213,10 +213,6 @@ export default function App() {
    */
   const transactionsHook = useTransactions(sessionStatus === 'authenticated');
  
-
-  // Agregar nueva transacción / cobro a la actividad
- 
-   */
   const receiveAddress = useMemo<ChargeReceiveAddress | null>(() => {
     const first = portfolio.receiveAddresses[0];
     return first ? { label: first.label, address: first.address } : null;
@@ -511,7 +507,7 @@ export default function App() {
           receiveAddress={receiveAddress}
           /*
            * El mismo origen que recibe `CreateChargeView`, y por el mismo
-           * motivo: el link del cobro se arma en el navegador, no con una
+           * motivo: el link del cobro se arma en el navegador, no con una *
            * constante escrita a mano acá.
  
           origin={typeof window === 'undefined' ? '' : window.location.origin}
@@ -522,14 +518,6 @@ export default function App() {
           }}
         />
 
-{/*
-           MODAL DE ACCIÓN A PANTALLA COMPLETA VERDE LIMA (DEPOSITAR, USAR, ENVIAR).
-
-           'usar' abre el menú de Comprar/Vender (swap).
-         */}
-        <ActionFullscreenModal
-          action={activeActionModal}
-          onClose={() => setActiveActionModal(null)}
           userTag={userTag}
           depositInfo={depositInfo}
           holdings={portfolio.holdings}

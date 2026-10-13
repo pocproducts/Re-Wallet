@@ -148,12 +148,14 @@ interface ParsedTokenAccount {
  */
 const baseAmountOf = (account: ParsedTokenAccount): bigint | null => {
   const amount = account.account?.data?.parsed?.info?.tokenAmount?.amount;
-  // The amount is a **string** in the answer. A JSON number here would already
-  // have passed through a double before this code saw it, and `String(number)`
-  // would bake the rounding into the answer rather than notice it.
-  if (typeof amount !== 'string' || !/^\d+$/.test(amount)) return null;
-  return BigInt(amount);
-};
+  if (amount === null || amount === undefined) return null;
+  
+  const amountString = String(amount);
+  // Check if it's a non-negative integer (no decimal point, no minus sign)
+  if (!/^[0-9]+$/.test(amountString)) return null;
+  
+  return BigInt(amountString);
+}
 
 export interface HttpSolanaBalanceReaderOptions {
   readonly url?: string;

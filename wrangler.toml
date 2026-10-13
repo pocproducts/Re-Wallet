@@ -1,0 +1,26 @@
+name = "rewallet-poc-api"
+main = "./07.PockBackend/dist-worker.js"
+compatibility_date = "2026-10-02"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "empty_assets"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+[[routes]]
+pattern = "app.rewallet.win"
+custom_domain = true
+
+[[routes]]
+pattern = "beta.rewallet.win"
+custom_domain = true
+
+[observability]
+enabled = false
+
+[vars]
+MONAD_POOL_RPC_URL = "https://rpc.monad.xyz"
+SOLANA_CLUSTER = "mainnet"
+SOLANA_RPC_URL = "https://solana-mainnet.g.alchemy.com/v2/alch_B0r4hPucJhGprG0iz22YJ"
