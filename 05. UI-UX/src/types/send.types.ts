@@ -43,7 +43,7 @@
  */
 
 /** La clave de red del catálogo, la misma que usa depósito. */
-export type SendChainKey = 'monad' | 'ethereum' | 'solana';
+export type SendChainKey = 'monad' | 'ethereum' | 'solana' | 'base' | 'arbitrum' | 'optimism' | 'polygon';
 
 /** El activo del envío, **con su escala**: el backend la compara con el catálogo. */
 export interface SendAssetRequest {

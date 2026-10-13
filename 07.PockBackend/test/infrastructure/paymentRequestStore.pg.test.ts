@@ -16,8 +16,13 @@
  *   3. **No address is ever selected.** The adapter reads a charge's identity,
  *      amount, note, status and dates — and the payee's tag, which is an identity
  *      a person can read out loud. The address stays behind
- *      `POST /api/payment-requests/:id/pay`, which resolves it and hands it to
- *      the send flow.
+ *      `POST /api/payment-requests/:id/pay`, which resolves it and hands it to the
+ *      send flow.
+ *   4. **What the charge is for travels whole.** `chain`, `asset_symbol` and
+ *      `asset_decimals` are written on the insert and selected on both reads.
+ *      They are asserted here at the SQL level because the payment path reads
+ *      them off the row: a read that left them out would leave the transfer's
+ *      chain and scale undefined rather than obviously wrong.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -59,6 +64,9 @@ const ROW = {
   amount: '150.25',
   note: 'la vuelta',
   status: 'pending',
+  chain: 'monad',
+  asset_symbol: 'USDC',
+  asset_decimals: 6,
   created_at: NOW,
   expires_at: LATER,
   paid_by_user_id: null,
@@ -75,13 +83,27 @@ describe('createPostgresPaymentRequestStore — writing a charge', () => {
       userId: ROW.user_id,
       amount: '150.25',
       note: 'la vuelta',
+      chain: 'monad',
+      assetSymbol: 'USDC',
+      assetDecimals: 6,
       createdAt: NOW,
       expiresAt: LATER,
     });
 
     const sql = sqlOf(db);
     expect(sql).toContain('INSERT INTO rewallet.payment_requests');
-    for (const column of ['id', 'user_id', 'amount', 'note', 'status', 'created_at', 'expires_at']) {
+    for (const column of [
+      'id',
+      'user_id',
+      'amount',
+      'note',
+      'status',
+      'chain',
+      'asset_symbol',
+      'asset_decimals',
+      'created_at',
+      'expires_at',
+    ]) {
       expect(sql).toContain(column);
     }
     // `status` is the table's own default, written out so the row's state is a
@@ -90,6 +112,32 @@ describe('createPostgresPaymentRequestStore — writing a charge', () => {
     // Nothing that does not exist in the table.
     expect(sql).not.toContain('updated_at');
     expect(sql).not.toContain('paid_by_user_id');
+  });
+
+  it('writes what the charge is a charge for, bound and not interpolated', async () => {
+    const db = recordingDb([ROW]);
+
+    await createPostgresPaymentRequestStore(db).create({
+      id: ID,
+      userId: ROW.user_id,
+      amount: '0.000000000000000001',
+      note: null,
+      chain: 'ethereum',
+      assetSymbol: 'ETH',
+      assetDecimals: 18,
+      createdAt: NOW,
+      expiresAt: LATER,
+    });
+
+    // The three values are parameters, and `asset_decimals` is the catalog's
+    // number rather than anything a body said.
+    const values = valuesOf(db);
+    expect(values).toContain('ethereum');
+    expect(values).toContain('ETH');
+    expect(values).toContain(18);
+    // An eighteen-decimal charge, whole: the column can hold it and this adapter
+    // does not round it on the way in.
+    expect(values).toContain('0.000000000000000001');
   });
 
   it('reports a collision as `null` instead of raising', async () => {
@@ -101,6 +149,9 @@ describe('createPostgresPaymentRequestStore — writing a charge', () => {
       userId: ROW.user_id,
       amount: '1',
       note: null,
+      chain: 'monad',
+      assetSymbol: 'USDC',
+      assetDecimals: 6,
       createdAt: NOW,
       expiresAt: LATER,
     });
@@ -119,6 +170,9 @@ describe('createPostgresPaymentRequestStore — writing a charge', () => {
       userId: ROW.user_id,
       amount: '150.25',
       note: 'la vuelta',
+      chain: 'monad',
+      assetSymbol: 'USDC',
+      assetDecimals: 6,
       createdAt: NOW,
       expiresAt: LATER,
     });
@@ -140,6 +194,9 @@ describe('createPostgresPaymentRequestStore — writing a charge', () => {
       userId: ROW.user_id,
       amount: '150.25',
       note: null,
+      chain: 'monad',
+      assetSymbol: 'USDC',
+      assetDecimals: 6,
       createdAt: NOW,
       expiresAt: LATER,
     });
@@ -189,6 +246,9 @@ describe('createPostgresPaymentRequestStore — reading a charge', () => {
       id: ID,
       userId: ROW.user_id,
       amount: '150.25',
+      chain: 'monad',
+      assetSymbol: 'USDC',
+      assetDecimals: 6,
       note: 'la vuelta',
       status: 'pending',
       createdAt: NOW,
@@ -197,6 +257,27 @@ describe('createPostgresPaymentRequestStore — reading a charge', () => {
       paidAt: null,
       requesterTag: 'ana.abcd',
     });
+  });
+
+  it('selects what the charge is for, so a read never returns a half row', async () => {
+    const db = recordingDb([ROW]);
+
+    await createPostgresPaymentRequestStore(db).findById(ID);
+
+    const sql = sqlOf(db);
+    for (const column of ['p.chain', 'p.asset_symbol', 'p.asset_decimals']) {
+      expect(sql).toContain(column);
+    }
+  });
+
+  it('reads decimals back as a number, whatever shape the driver returns', async () => {
+    // `INTEGER` comes back as a string on some drivers and a number on others.
+    // The conversion is stated here so it cannot quietly become something else.
+    const db = recordingDb([{ ...ROW, asset_decimals: '18' }]);
+
+    const row = await createPostgresPaymentRequestStore(db).findById(ID);
+
+    expect(row?.assetDecimals).toBe(18);
   });
 
   it('reports a charge that is not there as `null`, not as an empty charge', async () => {

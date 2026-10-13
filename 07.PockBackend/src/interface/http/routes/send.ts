@@ -42,6 +42,23 @@
  * `RECIPIENT_NO_WALLET_ON_CHAIN` — travel out of `SendRejected` on the same 400
  * as every other refusal, carrying the code and nothing else.
  *
+ * ── Why the policy is enforced by the use case and not by this route ────────
+ *
+ * The three spending rules are applied inside `prepareSend`, after the request
+ * has been fully validated and before anything is compiled or written. A check
+ * that lived here would guard one door out of two: the payment of a charge calls
+ * the same use case, and a policy enforced in the route would not know that. So
+ * what travels through this surface is only the **gesture** —`policyConfirmed` in
+ * the body, read as literally `true`— and the two codes a refusal can carry:
+ *
+ * 400 `POLICY_DENIED`: a rule said no. No field of the body lifts it.
+ * 400 `POLICY_CONFIRM_REQUIRED`: a rule asked a question and no explicit gesture
+ *      came with it.
+ *
+ * `POST /api/wallet/policy/evaluate` stays, and stays separate: the screen asks
+ * there first, to show the reason while the person still has a choice. That is a
+ * courtesy to the front. The decision that holds is the one made inside.
+ *
  * ── Why the status codes are the ones the rest of the app uses ───────────────
  *
  * 401: no cookie, or a cookie that does not verify. Nothing was read.

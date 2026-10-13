@@ -33,7 +33,7 @@ import type {
 } from '../types/portfolio.types';
 
 /** Las cadenas que el backend lee hoy, en el orden en que las devuelve. */
-const KNOWN_CHAIN_IDS: readonly PortfolioChainId[] = ['monad', 'ethereum', 'solana'];
+const KNOWN_CHAIN_IDS: readonly PortfolioChainId[] = ['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'solana'];
 
 /** Cuántos decimales muestra una cantidad en la lista de criptoactivos. */
 export const CRYPTO_DISPLAY_DECIMALS = 6;
@@ -118,6 +118,10 @@ export interface UnreadableChain {
 const CHAIN_LABELS: Readonly<Record<PortfolioChainId, string>> = {
   monad: 'Monad',
   ethereum: 'Ethereum',
+  base: 'Base',
+  arbitrum: 'Arbitrum One',
+  optimism: 'OP Mainnet',
+  polygon: 'Polygon',
   solana: 'Solana',
 };
 

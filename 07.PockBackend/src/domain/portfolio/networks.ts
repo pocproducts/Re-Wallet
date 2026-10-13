@@ -20,24 +20,28 @@
 import type { WalletChain } from '../wallet/chains';
 
 /** The EVM networks the portfolio reads, by the wallet row that serves them. */
-export const EVM_NETWORKS = ['monad', 'ethereum'] as const;
+export const EVM_NETWORKS = ['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon'] as const;
 
 export type EvmNetwork = (typeof EVM_NETWORKS)[number];
 
 /** Every chain the portfolio reports on, in the order it reports them. */
-export const PORTFOLIO_CHAINS = ['monad', 'ethereum', 'solana'] as const;
+export const PORTFOLIO_CHAINS = ['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'solana'] as const;
 
 export type PortfolioChain = (typeof PORTFOLIO_CHAINS)[number];
 
 /**
  * The wallet row that serves a portfolio chain.
  *
- * This is the whole "one EVM address, two networks" rule, as data. `monad` and
- * `ethereum` both map to `ethereum`, because both are read with the same address
- * out of the same single row.
+ * This is the whole "one EVM address, several networks" rule, as data. Every
+ * EVM chain maps to `ethereum`, because all of them are read with the same
+ * address out of the same single row.
  */
 export const WALLET_CHAIN_FOR: Readonly<Record<PortfolioChain, WalletChain>> = {
   monad: 'ethereum',
   ethereum: 'ethereum',
+  base: 'ethereum',
+  arbitrum: 'ethereum',
+  optimism: 'ethereum',
+  polygon: 'ethereum',
   solana: 'solana',
 };

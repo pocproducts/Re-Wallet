@@ -65,7 +65,7 @@ import {
   type SolanaTransferPreparer,
   type SolanaTransferRequest,
 } from '../../domain/ports/solana-transfer-preparer';
-import { SOLANA_MAINNET_NETWORK } from '../../domain/send/transfer';
+import { activeSolanaCluster } from '../../domain/solana/cluster';
 import { isSolanaAddress } from '../../domain/send/recipients';
 import { transportDetail, withDeadline, type DeadlinePolicy } from './httpDeadline';
 
@@ -181,7 +181,7 @@ export const createHttpSolanaTransferPreparer = (
   options: HttpSolanaTransferPreparerOptions = {},
 ): SolanaTransferPreparer => {
   const url = options.url ?? DEFAULT_SOLANA_RPC_URL;
-  const network = options.network ?? SOLANA_MAINNET_NETWORK;
+  const network = options.network ?? activeSolanaCluster().network;
   /*
    * The deadline is handed to `Connection` as its `fetch`, so it covers the RPC
    * call the library makes and this file never has to remember to bound one. That

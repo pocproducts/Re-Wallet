@@ -1,0 +1,31 @@
+# EL WORKER DE DIAGNÓSTICO DEL QR
+#
+# Por qué vive acá y no en la raíz: el `wrangler.toml` de la raíz está en
+# `.gitignore` a propósito, así que una configuración de Worker ahí no se
+# versiona. Este archivo sí, y con él el probe se puede levantar desde un clone
+# limpio.
+#
+# Para qué sirve: separar dos preguntas que se parecen mucho.
+#
+#   "¿El QR está roto?"          → esta página, con el código real de la app
+#   "¿El código no llega a la pantalla?" → si acá se ve y en la app no, el
+#                                    problema es el transporte, no el QR
+#
+# La página se genera con `05. UI-UX/scripts/generar-qr-probe.mjs` y **no se
+# edita a mano**: importa el encoder del proyecto, así que no puede quedar
+# desincronizada de la app. La primera versión copió la lógica a mano, arrastró
+# el mismo bug que la app y sirvió para diagnosticar el equivocado.
+
+name = "hello-worker-test"
+main = "./index.js"
+compatibility_date = "2026-09-29"
+compatibility_flags = ["nodejs_compat"]
+
+[[routes]]
+pattern = "test.rewallet.win"
+custom_domain = true
+
+# La página es estática y no necesita build: por eso `directory` es el mismo
+# directorio donde vive este archivo.
+[assets]
+directory = "."

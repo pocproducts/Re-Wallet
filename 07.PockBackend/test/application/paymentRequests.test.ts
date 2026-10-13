@@ -41,6 +41,8 @@ import { inMemoryPaymentRequests, seedPaymentRequest } from '../support/paymentR
 
 const NOW = new Date('2026-10-04T05:00:00.000Z');
 const OWNER = '11111111-1111-4111-8111-111111111111';
+/** A legal id: 32 characters of the 64-symbol alphabet. */
+const ID = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 describe('the id of a charge', () => {
   it('is 32 characters of a 64-character alphabet: 192 bits of entropy', () => {
@@ -143,6 +145,10 @@ describe('the amount of a charge', () => {
     expect(canonicalChargeAmount('10')).toBe('10');
     expect(canonicalChargeAmount('0001.5')).toBe('1.5');
     expect(canonicalChargeAmount('0.000001')).toBe('0.000001');
+    // Eighteen decimals, because the catalog has assets with eighteen and a
+    // column that cannot hold one truncates a charge into a different number.
+    expect(canonicalChargeAmount('0.000000000000000001')).toBe('0.000000000000000001');
+    expect(canonicalChargeAmount('0.0000000000001')).toBe('0.0000000000001');
   });
 
   it('refuses everything that is not a positive decimal string in whole units', () => {
@@ -165,22 +171,24 @@ describe('the amount of a charge', () => {
       1.5,
       {},
       [],
-      '123456789012345', // 15 integer digits: numeric(20,6) holds 14
-      '0.0000001', // seven decimals: the column holds six
+      '123456789012345678901', // 21 integer digits: numeric(38,18) holds 20
+      '0.0000000000000000001', // nineteen decimals: the column holds eighteen
     ]) {
       expect(() => parseChargeAmount(value), JSON.stringify(value) ?? 'undefined').toThrow();
     }
   });
 
   it('becomes the smallest-unit integer of the asset it is paid in', () => {
-    // This is the whole reason the amount travels as a decimal string: the asset
-    // is chosen when the payment happens, so the integer in the smallest unit
-    // cannot be known when the charge is created — and the screen must not
-    // compute it either, or a float would decide how much money moves.
+    // This is the whole reason the amount travels as a decimal string: the
+    // integer in the smallest unit cannot be known before the asset is, and a
+    // float that shifted it on the front would be deciding how much money moves.
     expect(chargeAmountToRaw('150.25', 6)).toBe(150_250_000n);
     expect(chargeAmountToRaw('150.25', 18)).toBe(150_250_000_000_000_000_000n);
     expect(chargeAmountToRaw('1', 9)).toBe(1_000_000_000n);
     expect(chargeAmountToRaw('0.000001', 6)).toBe(1n);
+    // Eighteen decimals into eighteen decimals: exact, no drift, no rounding.
+    expect(chargeAmountToRaw('0.000000000000000001', 18)).toBe(1n);
+    expect(chargeAmountToRaw('0.0000000000001', 18)).toBe(100_000n);
     // Trailing zeroes in the charge do not change the integer.
     expect(chargeAmountToRaw('150.250000', 6)).toBe(150_250_000n);
   });
@@ -205,6 +213,120 @@ describe('the amount of a charge', () => {
 describe('creating a charge', () => {
   const USER = '11111111-1111-4111-8111-111111111111';
 
+  /** The body of a charge that names something the catalog has. */
+  const chargeBody = (overrides: Record<string, unknown> = {}) => ({
+    amount: '10',
+    chain: 'monad',
+    asset: { symbol: 'USDC' },
+    ...overrides,
+  });
+
+  it('takes the chain and the symbol, and resolves the decimals itself', async () => {
+    // The body carries no decimals because there is no field for them: they are
+    // a fact about the token, and a client that could send them could send
+    // `decimals: 0` and choose the size of the transfer. What the row gets is the
+    // catalog's six for USDC on Monad, whatever the body said or omitted.
+    const requests = inMemoryPaymentRequests();
+    const create = createPaymentRequest({ requests: requests.store, now: () => NOW, newId: () => ID });
+
+    const view = await create(USER, chargeBody({ decimals: 0, asset: { symbol: 'USDC', decimals: 0 } }));
+
+    expect(view.chain).toBe('monad');
+    expect(view.asset).toEqual({ symbol: 'USDC', decimals: 6 });
+    expect(requests.rows()[0]?.assetDecimals).toBe(6);
+  });
+
+  it('stores a charge of eighteen decimals exactly, with no truncation', async () => {
+    // ETH has eighteen decimals on Ethereum. With the old `numeric(20,6)` this
+    // was stored as 0 — and a charge of 0 pays nothing while looking paid. The
+    // value that comes back has to be the value that went in, digit for digit.
+    const requests = inMemoryPaymentRequests();
+    const create = createPaymentRequest({ requests: requests.store, now: () => NOW, newId: () => ID });
+
+    const view = await create(USER, chargeBody({ amount: '0.000000000000000001', chain: 'ethereum', asset: { symbol: 'ETH' } }));
+
+    expect(view.amount).toBe('0.000000000000000001');
+    expect(view.asset).toEqual({ symbol: 'ETH', decimals: 18 });
+    expect(requests.rows()[0]?.amount).toBe('0.000000000000000001');
+    // And it is payable: the smallest unit of ETH has an integer for it.
+    expect(chargeAmountToRaw(view.amount, view.asset.decimals)).toBe(1n);
+  });
+
+  it('refuses a chain this app does not have, with its own code', async () => {
+    // Refused at **creation**: the person who can fix it is the one asking. A
+    // payer cannot change the chain, so finding out at the pay screen would turn
+    // a wrong request into somebody else's dead end.
+    const requests = inMemoryPaymentRequests();
+    const create = createPaymentRequest({ requests: requests.store, now: () => NOW });
+
+    for (const chain of ['bitcoin', 'MonAD', '', undefined, 42, 'monad ']) {
+      await expect(create(USER, chargeBody({ chain })), JSON.stringify(chain)).rejects.toMatchObject({
+        code: 'CHAIN_UNKNOWN',
+      });
+    }
+    expect(requests.rows()).toHaveLength(0);
+  });
+
+  it('refuses a symbol that is not an asset of that chain, and says what it has', async () => {
+    const requests = inMemoryPaymentRequests();
+    const create = createPaymentRequest({ requests: requests.store, now: () => NOW });
+
+    // DOGE is nowhere in this app; OUSD exists, but only on Ethereum — asking
+    // for it on Monad is asking for something this app cannot receive.
+    for (const [chain, symbol] of [
+      ['monad', 'DOGE'],
+      ['monad', 'OUSD'],
+      ['solana', 'USDT'],
+      ['monad', 'usdc'],
+      ['monad', ''],
+    ] as const) {
+      await expect(
+        create(USER, chargeBody({ chain, asset: { symbol } })),
+        `${symbol} on ${chain}`,
+      ).rejects.toMatchObject({ code: 'ASSET_NOT_ON_CHAIN' });
+    }
+    expect(requests.rows()).toHaveLength(0);
+  });
+
+  it('names what it could not find, in words that do not require knowing crypto', async () => {
+    const requests = inMemoryPaymentRequests();
+    const create = createPaymentRequest({ requests: requests.store, now: () => NOW });
+
+    // The sentence goes to the operator's log, never to the browser, but it still
+    // has to say which asset was asked for, where it was looked for, and what is
+    // there instead — otherwise "not on chain" is a refusal nobody can act on.
+    let detail = '';
+    try {
+      await create(USER, chargeBody({ asset: { symbol: 'OUSD' } }));
+    } catch (error) {
+      if (error instanceof PaymentRequestRejected) detail = error.message;
+    }
+
+    expect(detail).toContain('OUSD');
+    expect(detail).toContain('monad');
+    // What *is* available, so the answer is actionable rather than just negative.
+    expect(detail).toContain('MON');
+    expect(detail).toContain('USDC');
+  });
+
+  it('refuses an amount this asset has no integer for, instead of rounding it', async () => {
+    // USDC has six decimals on Monad. `1.1234567` has no integer that means it,
+    // and rounding it would move money in a direction nobody chose — so it is
+    // refused where the answer is still "change the amount".
+    const requests = inMemoryPaymentRequests();
+    const create = createPaymentRequest({ requests: requests.store, now: () => NOW });
+
+    await expect(create(USER, chargeBody({ amount: '1.1234567' }))).rejects.toMatchObject({
+      code: 'AMOUNT_NOT_REPRESENTABLE',
+    });
+    // The same amount in an eighteen-decimal asset is fine: the column's ceiling
+    // is not the asset's scale, and each one is checked by its own question.
+    await expect(
+      create(USER, chargeBody({ amount: '1.1234567', chain: 'ethereum', asset: { symbol: 'ETH' } })),
+    ).resolves.toMatchObject({ amount: '1.1234567' });
+    expect(requests.rows()).toHaveLength(1);
+  });
+
   it('draws another id when the one it drew is already on file', async () => {
     // A 192-bit collision is not a security event — it is a birthday paradox that
     // will not happen — but it still has an answer, and "draw again" is the only
@@ -228,7 +350,7 @@ describe('creating a charge', () => {
       newId: () => drawn[index++] ?? fresh,
     });
 
-    const charge = await create(USER, { amount: '20' });
+    const charge = await create(USER, chargeBody({ amount: '20' }));
 
     expect(charge.id).toBe(fresh);
     expect(charge.status).toBe('pending');
@@ -248,8 +370,8 @@ describe('creating a charge', () => {
       newId: () => 'corto',
     });
 
-    await expect(create(USER, { amount: '10' })).rejects.toBeInstanceOf(PaymentRequestRejected);
-    await expect(create(USER, { amount: '10' })).rejects.toMatchObject({ code: 'ID_UNUSABLE' });
+    await expect(create(USER, chargeBody())).rejects.toBeInstanceOf(PaymentRequestRejected);
+    await expect(create(USER, chargeBody())).rejects.toMatchObject({ code: 'ID_UNUSABLE' });
     expect(requests.rows()).toHaveLength(0);
   });
 
@@ -262,7 +384,7 @@ describe('creating a charge', () => {
 
     // Not a refusal of the person: the server could not find a free id, which is
     // a fact about this deployment, not about their charge.
-    await expect(create(USER, { amount: '20' })).rejects.toBeInstanceOf(PaymentRequestUnavailable);
+    await expect(create(USER, chargeBody({ amount: '20' }))).rejects.toBeInstanceOf(PaymentRequestUnavailable);
     expect(requests.rows()).toHaveLength(1);
   });
 });
@@ -317,5 +439,32 @@ describe('expiry is derived, never written', () => {
     // Not an id at all: the same answer, because the id is the only way in.
     await expect(read(undefined)).rejects.toBeInstanceOf(PaymentRequestNotFound);
     await expect(read('corto')).rejects.toBeInstanceOf(PaymentRequestNotFound);
+  });
+
+  it('says what it asks for: the chain, the asset and the asset’s scale', async () => {
+    // This is what makes `/cobrar/{id}` legible without putting the chain in the
+    // URL: the link is still just an id, and the row is what says "10 USDC on
+    // Monad". A screen that had to ask separately would be asking the person.
+    const requests = inMemoryPaymentRequests([
+      seedPaymentRequest({
+        id: ID,
+        userId: OWNER,
+        amount: '10',
+        chain: 'ethereum',
+        assetSymbol: 'ETH',
+        assetDecimals: 18,
+        createdAt: NOW,
+        expiresAt: new Date(NOW.getTime() + 3_600_000),
+        requesterTag: 'ana.abcd',
+      }),
+    ]);
+    const read = readPaymentRequest({ requests: requests.store, now: () => NOW });
+
+    const view = await read(ID);
+
+    expect(view.chain).toBe('ethereum');
+    expect(view.asset).toEqual({ symbol: 'ETH', decimals: 18 });
+    expect(view.amount).toBe('10');
+    expect(view.requesterTag).toBe('ana.abcd');
   });
 });

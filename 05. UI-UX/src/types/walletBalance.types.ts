@@ -70,7 +70,7 @@ export interface WalletBalancePrice {
 export type WalletBalancePieceSource = 'free_wallet' | 'pool_position';
 
 /** The chains the backend reads today. `null` when the piece is not on-chain. */
-export type WalletBalanceChain = 'monad' | 'ethereum' | 'solana';
+export type WalletBalanceChain = 'monad' | 'ethereum' | 'solana' | 'base' | 'arbitrum' | 'optimism' | 'polygon';
 
 /** A piece that was read: it always carries a quantity, a price and a value. */
 export interface WalletBalancePieceOk {

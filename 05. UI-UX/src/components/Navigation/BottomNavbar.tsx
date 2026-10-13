@@ -5,15 +5,18 @@ import { NavTab } from '../../types';
 interface BottomNavbarProps {
   currentTab: NavTab;
   onTabChange: (tab: NavTab) => void;
-  onOpenChargeModal?: () => void;
-  onOpenBugModal?: () => void;
+  /**
+   * Si viene, dibuja la columna QR **fuera** de la cápsula del navbar, en la
+   * misma fila: dos secciones — la nav más larga y el botón QR al lado — sin
+   * meter el QR dentro del navbar.
+   */
+  onScanQr?: () => void;
 }
 
 export const BottomNavbar: React.FC<BottomNavbarProps> = ({
   currentTab,
   onTabChange,
-  onOpenChargeModal,
-  onOpenBugModal,
+  onScanQr,
 }) => {
   const tabs: Array<{
     id: NavTab;
@@ -28,22 +31,12 @@ export const BottomNavbar: React.FC<BottomNavbarProps> = ({
   return (
     <nav
       aria-label="Barra de navegación principal"
-      /*
-       * `safe-bottom-6` y no `safe-bottom-4`: 24px de aire más la barra de inicio.
-       *
-       * Con 16px la cápsula flotante y el botón de Cobrar quedaban visualmente
-       * pegados al borde inferior. 24px es lo que ya usan las pantallas a
-       * pantalla completa (`safe-bottom-6` en los modales lima), así que navbar y
-       * modales comparten el mismo aire en lugar de tener dos medidas distintas.
-       *
-       * El `calc()` de la utility es obligatorio: sin él el navegador descarta la
-       * declaración y el padding queda en 0 aunque la clase esté en el HTML.
-       */
       className="relative z-40 w-full px-4 pt-2 safe-bottom-6 bg-transparent select-none shrink-0"
     >
-      <div className="flex items-center justify-between gap-3 max-w-md mx-auto">
-        {/* Cápsula flotante blanca principal SOLO CON ICONOS y transición fluida */}
-        <div className="flex-1 h-14 bg-white/95 backdrop-blur-md rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-slate-200/80 flex items-center justify-around px-3 relative overflow-hidden">
+      {/* Una fila, dos secciones: navbar (columna larga) + QR (columna corta, fuera de la cápsula) */}
+      <div className="flex items-center gap-3 max-w-md mx-auto">
+        {/* Columna 1: cápsula flotante blanca principal SOLO 3 TABS */}
+        <div className="flex-1 h-14 bg-white/95 backdrop-blur-md rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.08)] border border-slate-200/80 flex items-center justify-around px-3 relative overflow-hidden">
           {tabs.map((tab) => {
             const isActive = currentTab === tab.id;
             const Icon = tab.icon;
@@ -57,7 +50,6 @@ export const BottomNavbar: React.FC<BottomNavbarProps> = ({
                 aria-label={tab.label}
                 className="relative min-h-[44px] min-w-[48px] p-2 rounded-full flex items-center justify-center transition-all duration-300 ease-out active:scale-90 cursor-pointer"
               >
-                {/* Fondo activo fluido verde lima neón */}
                 <div
                   className={`w-12 h-10 rounded-2xl flex items-center justify-center transition-all duration-300 ease-out ${
                     isActive
@@ -71,8 +63,6 @@ export const BottomNavbar: React.FC<BottomNavbarProps> = ({
                     }`}
                   />
                 </div>
-
-                {/* Micro-indicador de estado inferior */}
                 <div
                   className={`absolute -bottom-0.5 w-1.5 h-1.5 rounded-full bg-black transition-all duration-300 ${
                     isActive ? 'scale-100 opacity-100' : 'scale-0 opacity-0'
@@ -83,18 +73,18 @@ export const BottomNavbar: React.FC<BottomNavbarProps> = ({
           })}
         </div>
 
-        {/* Botón Circular Flotante de COBRAR con QR (reemplazando el botón BUG) */}
-        <button
-          onClick={onOpenChargeModal || onOpenBugModal}
-          type="button"
-          title="Cobrar con QR"
-          aria-label="Cobrar con QR"
-          className="w-14 h-14 rounded-full bg-black flex items-center justify-center shadow-[0_8px_25px_rgba(0,0,0,0.25)] shrink-0 active:scale-90 transition-transform duration-200 border border-slate-800 group cursor-pointer"
-        >
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-[#ccff00] group-hover:scale-110 transition-transform duration-200">
-            <QrCode className="w-6 h-6 stroke-[2.2]" />
-          </div>
-        </button>
+        {/* Columna 2: botón QR, afuera de la cápsula pero en la misma fila */}
+        {onScanQr && (
+          <button
+            onClick={onScanQr}
+            type="button"
+            aria-label="Escanear QR"
+            title="Escanear QR"
+            className="w-14 h-14 shrink-0 rounded-full bg-black flex items-center justify-center shadow-[0_8px_25px_rgba(0,0,0,0.3)] active:scale-90 transition-transform cursor-pointer border border-slate-800"
+          >
+            <QrCode className="w-6 h-6 text-[#ccff00] stroke-[2.2]" />
+          </button>
+        )}
       </div>
     </nav>
   );

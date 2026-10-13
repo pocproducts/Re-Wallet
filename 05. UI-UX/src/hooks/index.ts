@@ -3,6 +3,7 @@ export * from './useDepositInfo';
 export * from './useNotifications';
 export * from './usePool';
 export * from './usePoolDeposit';
+export * from './usePriceHistory';
 export * from './useSendTransfer';
 export * from './usePortfolio';
 export * from './useSessionGate';

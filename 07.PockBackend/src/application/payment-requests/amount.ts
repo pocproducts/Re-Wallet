@@ -2,33 +2,53 @@
  * THE AMOUNT OF A CHARGE: a decimal string in whole units, and an integer in the
  * smallest unit of the asset it ends up being paid in.
  *
- * ── Why this is the one place a decimal amount is right ──────────────────────
+ * ── Why the amount is a decimal string and not the smallest-unit integer ──────
  *
  * Every other amount in this project is an **integer in the smallest unit** —
  * `amountRaw`, the `transfer` calldata, the movement's `meta.amountRaw` — and it
- * should stay that way. But `payment_requests` has one `amount numeric(20,6)`
- * and **no column for the asset it is denominated in**, because which asset a
- * charge is paid in is chosen when somebody pays it, not when it is created. The
- * scale of the smallest unit is therefore unknowable at creation time, and a
- * screen that guessed it would be deciding how much money moves.
+ * should stay that way. This file is the one boundary in between: a charge stores
+ * the amount in whole units of the asset it names, as a **string**, and the
+ * integer that moves is computed here, on the server, at that asset's scale.
  *
- * So the charge is an amount of **dollars**, written as a decimal string, and the
- * integer is computed here, on the server, once the asset is known. There is no
- * float in this file: `Number('150.25')` is not exact, and the error of a float
- * in a payment amount is a payment of the wrong amount.
+ * The charge used to store dollars and to be paid in whatever asset the payer
+ * picked, so the scale was unknowable at creation time. It no longer is:
+ * `chain`, `asset_symbol` and `asset_decimals` are on the row, resolved by the
+ * server from `../../domain/deposit/catalog.ts`. The scale is known when the
+ * charge is made, and the only reason this is still a decimal string is that a
+ * JSON number has already lost the digits that distinguish it from its neighbour
+ * by the time it arrives. There is no float in this file: `Number('150.25')` is
+ * not exact, and the error of a float in a payment amount is a payment of the
+ * wrong amount.
  *
  * ── Why the front must not compute this integer ──────────────────────────────
  *
  * Because the front would need the stored amount as a float to shift it, and the
  * whole point of storing it as a string is that it survives the trip. The screen
- * shows the amount and picks the asset; the shift happens here, once, on the side
- * that also decides whether it is representable.
+ * shows the amount and the asset the charge names; the shift happens here, once,
+ * on the side that also decides whether it is representable.
  *
- * ── Why six decimals is the ceiling and not a preference ─────────────────────
+ * ── Why eighteen decimals is the ceiling and not a preference ───────────────
  *
- * It is `numeric(20,6)`. An amount with a seventh decimal place is not a number
- * this column can hold, so it is refused at creation with `AMOUNT_INVALID` rather
- * than silently rounded into a charge for a different number of dollars.
+ * It is `numeric(38,18)`, and it used to be `numeric(20,6)`. The column followed
+ * the catalog: `DEPOSIT_NETWORKS` has ETH, MON and OUSD at eighteen decimals and
+ * SOL at nine, so a charge of six decimals was a column that could not hold half
+ * the assets the app offers. It was widened by `sql/0005` because a charge of
+ * 0.0000000000001 ETH stored as `0` is not a rounded charge — it is a charge for
+ * a number nobody wrote, and paying it moves money that was never asked for.
+ *
+ * The ceiling is still a refusal and not a rounding: an amount with a nineteenth
+ * decimal place is not a number this column can hold, so it is refused at
+ * creation with `AMOUNT_INVALID`.
+ *
+ * ── The ceiling is not the asset's scale ───────────────────────────────────
+ *
+ * Two different limits, and they are checked by two different functions. This
+ * file's `canonicalChargeAmount` answers *"can the column hold this?"* — twenty
+ * integer digits, eighteen decimals. `chargeAmountToRaw` answers *"can this
+ * asset have this amount?"* — an asset with six decimals has no integer that
+ * means `1.123456`, so that is `AMOUNTNotRepresentable`. The second is the one
+ * that matters at payment, and it is checked once at creation, when the charge
+ * names its asset, and again at payment, on the charge's own asset.
  *
  * ── Why a charge that cannot exist in the chosen asset is a refusal ──────────
  *
@@ -49,7 +69,7 @@ export { AMOUNT_NOT_REPRESENTABLE, ChargeAmountInvalid, ChargeAmountNotRepresent
  * `1.2.3` are not, and neither is a `number`: a float that arrived as a JSON
  * number has already lost the digits that distinguish it from its neighbour.
  */
-const DECIMAL = /^\d{1,14}(?:\.\d{1,6})?$/;
+const DECIMAL = /^\d{1,20}(?:\.\d{1,18})?$/;
 
 /**
  * The amount as this project stores and returns it: a canonical decimal string.
@@ -59,7 +79,7 @@ const DECIMAL = /^\d{1,14}(?:\.\d{1,6})?$/;
  * comparison between two rows does not have to know how either was typed.
  *
  * @throws `ChargeAmountInvalid` when it is not a positive decimal string that
- *         `numeric(20,6)` can hold.
+ *         `numeric(38,18)` can hold.
  */
 export const canonicalChargeAmount = (value: unknown): string => {
   if (typeof value !== 'string') {
@@ -90,7 +110,7 @@ const canonicalChargeValueIsZero = (canonical: string): boolean => !/[1-9]/.test
  * The amount, validated and canonicalised.
  *
  * @throws `ChargeAmountInvalid` for anything that is not a positive decimal
- *         string in whole units at six decimals or fewer.
+ *         string in whole units at eighteen decimals or fewer.
  */
 export const parseChargeAmount = (value: unknown): string => canonicalChargeAmount(value);
 

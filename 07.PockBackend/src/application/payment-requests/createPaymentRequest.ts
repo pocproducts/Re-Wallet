@@ -12,7 +12,7 @@
  * cannot decide for them:
  *
  * ```
- *  1. AMOUNT_INVALID        a positive decimal in whole units, at six decimals
+ *  1. AMOUNT_INVALID        a positive decimal in whole units, at eighteen decimals
  *  2. NOTE_INVALID          text, or nothing, at most 280 characters
  *  3. EXPIRY_OUT_OF_RANGE   between one minute and thirty days
  * ```
@@ -20,6 +20,34 @@
  * And then the id, which is not a refusal but a check: a draw that the table
  * would reject is refused here rather than becoming a `CHECK` violation in a log,
  * because a charge whose id cannot be stored is a link that leads nowhere.
+ *
+ * ── What the body says, and what it deliberately does not ───────────────────
+ *
+ * ```
+ * { "amount": "10", "chain": "monad", "asset": { "symbol": "USDC" } }
+ * ```
+ *
+ * Chain and symbol, and **no decimals**. The decimals come from the catalog,
+ * because they are a fact about the token and not about the request: a client
+ * that could send them could send `decimals: 0` and have the server build a
+ * transfer of `10` wei instead of `10` USDC. This is the same rule
+ * `prepareSend` applies to a recipient's `decimals`, and it is applied one level
+ * earlier — at the moment the charge is made, which is where the question first
+ * has an answer.
+ *
+ * The catalog is also what decides **whether the charge can exist**:
+ *
+ * ```
+ *  5. CHAIN_UNKNOWN            the chain is not one this app has
+ *  6. ASSET_NOT_ON_CHAIN       the symbol is not one of that chain's assets
+ *  7. AMOUNT_NOT_REPRESENTABLE the amount has no integer in that asset's scale
+ * ```
+ *
+ * All three are refusals at **creation**, not at payment. A charge for something
+ * this app cannot move is not a charge, and the person who can fix it is the one
+ * who asked for it — the payer cannot change the asset, so discovering the
+ * problem at the payment screen would turn a wrong request into somebody else's
+ * dead end.
  *
  * ── Who is asking ────────────────────────────────────────────────────────────
  *
@@ -37,8 +65,13 @@
  * just does not get to decide when that is.
  */
 import { newPaymentRequestId, PAYMENT_REQUEST_ID_PATTERN } from './id';
-import { ChargeAmountInvalid, canonicalChargeAmount } from './amount';
-import { PaymentRequestRejected, PaymentRequestUnavailable } from './errors';
+import { ChargeAmountInvalid, ChargeAmountNotRepresentable, canonicalChargeAmount, chargeAmountToRaw } from './amount';
+import {
+  ASSET_NOT_ON_CHAIN,
+  CHAIN_UNKNOWN,
+  PaymentRequestRejected,
+  PaymentRequestUnavailable,
+} from './errors';
 import {
   DEFAULT_PAYMENT_REQUEST_TTL_MS,
   MAX_PAYMENT_REQUEST_NOTE_LENGTH,
@@ -46,6 +79,7 @@ import {
   MIN_PAYMENT_REQUEST_TTL_MS,
 } from './expiry';
 import { toPaymentRequestView, type PaymentRequestView } from './view';
+import { DEPOSIT_NETWORKS, type DepositAssetSpec, type DepositChain } from '../../domain/deposit/catalog';
 import type { PaymentRequestStore, StoredPaymentRequest } from '../../domain/ports/payment-request-store';
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
@@ -56,8 +90,18 @@ export const MAX_PAYMENT_REQUEST_ID_ATTEMPTS = 5;
 /** The body, read field by field and never cast. */
 export interface CreatePaymentRequestBody {
   readonly amount?: unknown;
+  readonly chain?: unknown;
+  readonly asset?: { readonly symbol?: unknown } | null;
   readonly note?: unknown;
   readonly expiresInMs?: unknown;
+}
+
+/** A chain and the asset on it, both resolved from the catalog. */
+export interface ChargeAsset {
+  readonly chain: DepositChain;
+  readonly symbol: string;
+  /** The catalog's decimals. Never the body's — the body has no such field. */
+  readonly decimals: number;
 }
 
 export interface CreatePaymentRequestDeps {
@@ -127,6 +171,52 @@ const parseExpiry = (value: unknown, defaultMs: number): number => {
   return ms;
 };
 
+const isDepositChain = (value: unknown): value is DepositChain =>
+  typeof value === 'string' && DEPOSIT_NETWORKS.some((network) => network.chain === value);
+
+/**
+ * What the charge is for: the chain, the asset, and the asset's own scale.
+ *
+ * `DEPOSIT_NETWORKS` is the **same** catalog that deposit and send read, and that
+ * is the point: a charge may only name what the app can actually receive. If
+ * this had its own list, a charge could be created for a token no address exists
+ * for, and the discovery would land on the person paying.
+ *
+ * The decimals come out of here and never out of the body, and that is not a
+ * convenience: `decimals` decides how the stored decimal string becomes the
+ * integer that moves, so a body that carried them would be a body carrying the
+ * size of the transfer.
+ *
+ * `AMOUNT_NOT_REPRESENTABLE` — the amount has no integer in this asset — is
+ * raised by the caller through `chargeAmountToRaw`, and is the reason the asset
+ * is resolved **before** anything is written rather than at payment time.
+ */
+export const resolveChargeAsset = (chain: unknown, symbol: unknown): ChargeAsset => {
+  if (!isDepositChain(chain)) {
+    throw new PaymentRequestRejected(
+      CHAIN_UNKNOWN,
+      `no tenemos esa cadena: ${JSON.stringify(chain)}`,
+    );
+  }
+  const network = DEPOSIT_NETWORKS.find((candidate) => candidate.chain === chain);
+  const asset: DepositAssetSpec | undefined =
+    typeof symbol === 'string' ? network?.assets.find((candidate) => candidate.symbol === symbol) : undefined;
+
+  if (asset === undefined) {
+    // The message has to survive being read by somebody who does not know what a
+    // symbol is: it says what was asked for, where it was looked for, and what
+    // *is* there instead.
+    const available = network?.assets.map((candidate) => candidate.symbol).join(', ') ?? '';
+    throw new PaymentRequestRejected(
+      ASSET_NOT_ON_CHAIN,
+      `no encontramos el activo ${JSON.stringify(symbol)} en la cadena "${chain}". ` +
+        `En esa cadena sí hay: ${available || 'ninguno'}.`,
+    );
+  }
+
+  return { chain, symbol: asset.symbol, decimals: asset.decimals };
+};
+
 export const createPaymentRequest = (deps: CreatePaymentRequestDeps): CreatePaymentRequest => {
   const log = deps.log ?? noopLogger;
   const defaultTtl = deps.ttlMs ?? DEFAULT_PAYMENT_REQUEST_TTL_MS;
@@ -134,7 +224,7 @@ export const createPaymentRequest = (deps: CreatePaymentRequestDeps): CreatePaym
 
   return async (userId: string, body: CreatePaymentRequestBody): Promise<PaymentRequestView> => {
     /*
-     * 1. The amount. `numeric(20,6)`, so the string either fits or is refused —
+     * 1. The amount. `numeric(38,18)`, so the string either fits or is refused —
      *    and it is a string, because a float that arrived as a JSON number has
      *    already lost the digits that make it a different amount.
      */
@@ -148,7 +238,35 @@ export const createPaymentRequest = (deps: CreatePaymentRequestDeps): CreatePaym
       throw error;
     }
 
-    /* 2. The note, and 3. the deadline. Both are cheap and both are refusable. */
+    /*
+     * 2. What it is a charge for.
+     *
+     *    Resolved here, from the catalog, and refused here if it does not exist.
+     *    Two refusals with a sentence that names what was not found, because a
+     *    charge in something this app cannot move is not a charge — and the
+     *    person who asked for it is the one who can fix it.
+     */
+    const asset = resolveChargeAsset(body?.chain, body?.asset?.symbol);
+
+    /*
+     * 3. The amount at THIS asset's scale.
+     *
+     *    The column holds 18 decimals, but an asset with 6 does not: a charge of
+     *    `1.123456` USDC has no integer that means it, and rounding it would move
+     *    money in a direction nobody chose. So this is refused at creation, where
+     *    the answer is still "change the amount", and never at payment, where the
+     *    only answer left would be "you cannot pay".
+     */
+    try {
+      chargeAmountToRaw(amount, asset.decimals);
+    } catch (error) {
+      if (error instanceof ChargeAmountNotRepresentable) {
+        throw new PaymentRequestRejected('AMOUNT_NOT_REPRESENTABLE', error.message);
+      }
+      throw error;
+    }
+
+    /* 4. The note, and 5. the deadline. Both are cheap and both are refusable. */
     const note = parseNote(body?.note);
     const ttl = parseExpiry(body?.expiresInMs, defaultTtl);
 
@@ -156,7 +274,7 @@ export const createPaymentRequest = (deps: CreatePaymentRequestDeps): CreatePaym
     const expiresAt = new Date(createdAt.getTime() + ttl);
 
     /*
-     * 4. The id.
+     * 6. The id.
      *
      *    A collision on a 192-bit id is not a security event — it is a birthday
      *    paradox that will not happen — but it has to have an answer, and "draw
@@ -179,7 +297,17 @@ export const createPaymentRequest = (deps: CreatePaymentRequestDeps): CreatePaym
       }
 
       try {
-        row = await deps.requests.create({ id, userId, amount, note, createdAt, expiresAt });
+        row = await deps.requests.create({
+          id,
+          userId,
+          amount,
+          chain: asset.chain,
+          assetSymbol: asset.symbol,
+          assetDecimals: asset.decimals,
+          note,
+          createdAt,
+          expiresAt,
+        });
       } catch (error) {
         log.error('charge.rows_unavailable', { userId, error });
         // Not a refusal of the person: the rows could not be written. 502, and a
@@ -188,7 +316,15 @@ export const createPaymentRequest = (deps: CreatePaymentRequestDeps): CreatePaym
       }
 
       if (row !== null) {
-        log.log('charge.created', { userId, id, amount, expiresAt: expiresAt.toISOString() });
+        log.log('charge.created', {
+          userId,
+          id,
+          amount,
+          chain: asset.chain,
+          symbol: asset.symbol,
+          decimals: asset.decimals,
+          expiresAt: expiresAt.toISOString(),
+        });
         return toPaymentRequestView(row, createdAt);
       }
 

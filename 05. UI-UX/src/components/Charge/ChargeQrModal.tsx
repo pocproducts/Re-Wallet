@@ -12,12 +12,24 @@ import { QrScannerModal } from '../Wallet/QrScannerModal';
 import { PayChargeView } from '../Wallet/PayChargeView';
 import {
   CHARGE_FAILURE_TEXT,
+  chargeAssetOptions,
   chargeAmountToDecimal,
+  chargeChainLabel,
+  formatChargeAmount,
   createPaymentRequest,
+  type ChargeAssetOption,
   type PaymentRequest,
 } from '../../services/paymentRequests';
+import {
+  canConfirmCharge,
+  chargeChoiceLabel,
+  chargeFamilies,
+} from '../../services/chargeAssetChoice';
+import { useDepositInfo } from '../../hooks/useDepositInfo';
+import { identityOf } from '../../services/portfolioIdentity';
 import { paymentRequestShareUrl } from '../../config/paymentLinks';
-import { encodeQrText, qrSvgPath } from '../../services/qrEncode';
+import { AssetIcon } from '../common/AssetIcon';
+import { QrCode } from '../common/QrCode';
 
 /**
  * Una dirección de cobro y la red a la que pertenece.
@@ -60,7 +72,25 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
   origin,
   onAddTransaction,
 }) => {
-  const [step, setStep] = useState<'select_action' | 'charge_input' | 'charge_qr'>('select_action');
+  /*
+ * LOS PASOS, y por qué la elección de moneda es uno propio.
+ *
+ * Antes eran tres: `select_action`, `charge_input` y `charge_qr`, y la moneda se
+ * elegía dentro de `charge_input` — con el importe, el teclado y el selector en
+ * la misma pantalla. Con todo eso a la vista, elegir la moneda se leía como un
+ * campo más del formulario y no como la decisión que es: un cobro en USDC-Solana
+ * y uno en MON-Monad no son el mismo cobro, y quien paga los ve distintos.
+ *
+ * Ahora la pregunta tiene pantalla propia:
+ *
+ * ```
+ * select_action -> charge_asset -> charge_input -> charge_qr
+ * Cobrar/Pagar   ¿en qué cobra?   el importe     el QR y el link
+ * ```
+ */
+  const [step, setStep] = useState<'select_action' | 'charge_asset' | 'charge_input' | 'charge_qr'>(
+    'select_action',
+  );
   const [amount, setAmount] = useState('0');
   const [copied, setCopied] = useState(false);
   /** El cobro real, o `null` mientras no se creó ninguno. */
@@ -68,6 +98,86 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
   const [creating, setCreating] = useState(false);
   /** El código de por qué no se pudo cobrar, en las palabras de la pantalla. */
   const [failureCode, setFailureCode] = useState<string | null>(null);
+  /** La clave `${cadena}:${símbolo}` elegida, o `null` si todavía no eligió. */
+  const [assetKey, setAssetKey] = useState<string | null>(null);
+
+  /*
+   * EL SELECTOR: la lista sale del catálogo, no de acá.
+   *
+   * Es el mismo `GET /api/deposit-info` que usan el depósito y el envío, leído por
+   * `useDepositInfo`. No hay acá ninguna lista de tickers: agregarla al catálogo
+   * la hace aparecer sola, y un ticker escrito a mano sería un cobro en algo que
+   * el servidor no tiene.
+   *
+   * El hook se abre con el modal —antes no se lee nada con el modal cerrado— y
+   * puede reusar la lectura con `reload()`, que es lo que hace el botón de
+   * reintentar cuando la lectura falló.
+   */
+  const depositInfo = useDepositInfo(isOpen);
+  const assetOptions = useMemo(() => chargeAssetOptions(depositInfo.networks), [depositInfo.networks]);
+  const chosen: ChargeAssetOption | null =
+    assetOptions.find((option) => option.key === assetKey) ?? null;
+
+  /*
+   * LAS FAMILIAS, del servicio y no de acá.
+   *
+   * Que la lista de "en qué cobrás" la arme `chargeFamilies` y no esta pantalla
+   * no es purismo: esa función viene con los tests que fijan que el catálogo es
+   * la autoridad, que USDC trae todas sus redes y que las otras familias traen
+   * una sola. Reescribarla acá la dejaría sin cubrir justo en el paso donde se
+   * elige qué se cobra.
+   */
+  const families = useMemo(() => chargeFamilies(assetOptions), [assetOptions]);
+
+  /** Las redes donde el catálogo tiene USDC, en su orden. */
+  const usdcNetworks = useMemo(
+    () => families.find((family) => family.id === 'USDC')?.options ?? [],
+    [families],
+  );
+
+  /*
+   * Qué familia está activa, deducida de la elección y no guardada aparte.
+   *
+   * Un segundo booleano "estoy en USDC" puede quedar desincronizado del `assetKey`
+   * y mostrar un chip encendido con otra red debajo. Como las familias son por
+   * símbolo, la que está activa es la del activo elegido.
+   */
+  const activeFamilyId =
+    chosen === null ? null : chosen.symbol === 'USDC' ? 'USDC' : chosen.symbol === 'MON' ? 'MON' : 'SOL';
+
+  /**
+   * Elegir una familia entera.
+   *
+   * Para USDC —que vive en varias redes— se conserva la red que ya estaba
+   * elegida si venía de USDC, y si no se arranca por la primera del catálogo. No
+   * se deja sin red esperando un toque: confirmar sin tocar red tiene que
+   * funcionar, y la red que se usó queda escrita arriba del botón.
+   */
+  const handleSelectFamily = (familyId: string): void => {
+    if (familyId === 'USDC') {
+      const current =
+        chosen?.symbol === 'USDC'
+          ? chosen
+          : (usdcNetworks.find((option) => option.chain === chosen?.chain) ?? usdcNetworks[0]);
+      if (current === undefined) return;
+      setAssetKey(current.key);
+      return;
+    }
+
+    const family = families.find((candidate) => candidate.id === familyId);
+    const option = family?.options[0];
+    if (option === undefined) return;
+    setAssetKey(option.key);
+  };
+
+  /** Cambiar de red dentro de USDC, que es la única familia con varias. */
+  const handleSelectNetwork = (option: ChargeAssetOption): void => setAssetKey(option.key);
+
+  /** El logo del activo elegido, para el recordatorio de la pantalla del importe. */
+  const chosenIdentity = useMemo(
+    () => (chosen === null ? null : identityOf(chosen.symbol)),
+    [chosen],
+  );
 
   /*
    * PAGAR: no es un paso de este menú, es otra pantalla encima.
@@ -102,6 +212,7 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
       setFailureCode(null);
       setIsPayScannerOpen(false);
       setPayForChargeId(null);
+      setAssetKey(null);
     }
   }, [isOpen]);
 
@@ -124,7 +235,7 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
     [charge, origin],
   );
 
-  const qrMatrix = useMemo(() => (shareUrl === null ? null : encodeQrText(shareUrl)), [shareUrl]);
+  
 
   /*
    * El pago con QR ya no simula un pago.
@@ -192,6 +303,15 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
      */
     if (receiveAddress === null) return;
 
+    /*
+     * Sin cadena y activo elegidos no hay cobro. El botón queda deshabilitado
+     * mientras `chosen` sea `null` —catálogo sin llegar, o sin elección— y este
+     * guarda es la segunda línea. Un cobro sin activo declarado sería el cobro
+     * viejo: un importe que no dice en qué se cobra, y que obliga a quien paga a
+     * adivinarlo.
+     */
+    if (chosen === null) return;
+
     let decimal: string;
     try {
       decimal = chargeAmountToDecimal(amount);
@@ -203,7 +323,12 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
     setCreating(true);
     setFailureCode(null);
     try {
-      const created = await createPaymentRequest({ amount: decimal, note: null });
+      const created = await createPaymentRequest({
+        amount: decimal,
+        chain: chosen.chain,
+        asset: { symbol: chosen.symbol },
+        note: null,
+      });
       setCharge(created);
 
       const now = new Date();
@@ -216,7 +341,7 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
         id: `charge-${Date.now()}`,
         title: 'Cobro por QR',
         date: `Hoy, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} hs`,
-        amount: `+ U$ ${created.amount}`,
+        amount: `+ ${formatChargeAmount(created.amount)} ${created.asset.symbol}`,
         isPositive: true,
         type: 'qr_charge',
         section: 'Hoy',
@@ -253,13 +378,23 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
     window.setTimeout(() => setCopied(false), 2000);
   };
 
+  /**
+   * Lo que comparte: el importe **con su activo y su cadena**, porque es lo que
+   * le va a pedir a quien lo abre. Un texto con "U$ 10" obligaría a interpretarlo
+   * antes de pagar.
+   */
+  const shareText = (target: PaymentRequest | null): string =>
+    target === null
+      ? 'Te estoy cobrando'
+      : `Te estoy cobrando ${formatChargeAmount(target.amount)} ${target.asset.symbol}, en ${chargeChainLabel(target.chain)}`;
+
   const handleShare = () => {
     if (shareUrl === null) return;
     if (typeof navigator.share === 'function') {
       void navigator
         .share({
           title: 'Cobro de ReWALLET',
-          text: `Te estoy cobrando U$ ${charge?.amount ?? amount}`,
+          text: shareText(charge),
           url: shareUrl,
         })
         .catch(() => {
@@ -278,6 +413,7 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
     setFailureCode(null);
     setIsPayScannerOpen(false);
     setPayForChargeId(null);
+    setAssetKey(null);
     onClose();
   };
 
@@ -290,7 +426,7 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
           + Botón circular negro flotante con X en color lima abajo a la derecha
          ===================================================================== */}
       {step === 'select_action' && (
-        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between p-6 select-none overflow-y-auto font-sans shadow-2xl">
+        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between p-6 select-none overflow-y-auto font-sans shadow-2xl safe-top-5 safe-bottom-6">
           <div className="flex-1 flex flex-col justify-center max-w-sm mx-auto w-full space-y-6 pt-10 pb-4">
             <div className="space-y-6">
               <h2 className="text-3xl font-black font-display text-black tracking-tight mb-8">
@@ -301,7 +437,7 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
                 {/* Opción 1: Cobrar */}
                 <button
                   type="button"
-                  onClick={() => setStep('charge_input')}
+                  onClick={() => setStep('charge_asset')}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
                   Cobrar
@@ -342,10 +478,20 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
       {/* =====================================================================
           2. COBRAR: INGRESO DE IMPORTE
          ===================================================================== */}
-      {step === 'charge_input' && (
-        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between overflow-hidden shadow-2xl">
-          <div className="flex-1 flex flex-col justify-between p-5 h-full animate-in fade-in slide-in-from-right-3 duration-200">
-            {/* Header con botón Atrás y Cerrar */}
+      {step === 'charge_asset' && (
+        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between overflow-hidden shadow-2xl safe-top-5 safe-bottom-6">
+          <div className="flex-1 flex flex-col justify-between p-5 h-full overflow-y-auto animate-in fade-in slide-in-from-right-3 duration-200">
+            {/*
+              LA PRIMERA DECISIÓN DEL FLUJO, y sola en su pantalla.
+
+              Antes esta fila de tarjetas convivía con el importe y el teclado
+              numérico en el mismo scroll, y con todo eso en pantalla elegir la
+              moneda se leía como un campo más del formulario. Acá no hay nada más:
+              tres tarjetas, y un botón.
+
+              El logo lo pone `AssetIcon`, que cae al glifo si no hay archivo: un
+              selector sin logo parece un placeholder.
+            */}
             <div className="flex items-center justify-between shrink-0 pt-2">
               <button
                 onClick={() => setStep('select_action')}
@@ -368,23 +514,260 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
               </button>
             </div>
 
-            {/* Espacio Central: Importe Gigante */}
-            <div className="flex-1 flex flex-col justify-center items-center my-auto w-full py-4 space-y-3">
+            <div className="flex-1 flex flex-col justify-center items-center my-auto w-full py-6 space-y-5">
+              <div className="text-center space-y-1">
+                <h3 className="text-2xl font-black font-display text-black tracking-tight leading-tight">
+                  ¿En qué querés cobrar?
+                </h3>
+                <p className="text-[11px] font-bold text-black/55 leading-snug">
+                  Define quién te puede pagar y en qué red.
+                </p>
+              </div>
+
+              {/*
+                El estado de la lectura es una verdad, no un hueco. Mientras el
+                catálogo no llega se dice que se está leyendo y no se habilita
+                nada; si falló se dice y se ofrece reintentar. Un selector vacío
+                en los dos casos sería una pantalla que dice "no hay nada para
+                cobrar", que es otra cosa.
+              */}
+              {depositInfo.status !== 'ready' && (
+                <div className="w-full rounded-2xl bg-black/5 border border-black/10 px-3 py-2.5 text-center">
+                  <p className="text-[11px] font-bold text-black/70 leading-snug">
+                    {depositInfo.status === 'error'
+                      ? 'No pudimos ver en qué monedas podés cobrar.'
+                      : 'Estamos viendo en qué monedas podés cobrar…'}
+                  </p>
+                  {depositInfo.status === 'error' && (
+                    <button
+                      type="button"
+                      onClick={depositInfo.reload}
+                      className="mt-1.5 text-[11px] font-black uppercase tracking-wider text-black underline active:opacity-60 cursor-pointer"
+                    >
+                      Probar de nuevo
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {depositInfo.status === 'ready' && assetOptions.length === 0 && (
+                <p className="w-full rounded-2xl bg-black/5 border border-black/10 px-3 py-2.5 text-[11px] font-bold text-black/70 text-center leading-snug">
+                  Todavía no hay ninguna moneda para cobrar.
+                </p>
+              )}
+
+              {/*
+                LAS TRES FAMILIAS: Monad, USDC, Solana.
+
+                Antes esta pantalla ofrecía los pares (cadena, símbolo) en una lista
+                con scroll —siete filas para elegir la de siempre—. Son las tres
+                familias del producto, en el orden en que se piden, y la del medio
+                es la única que vive en varias redes.
+              */}
+              {families.length > 0 && (
+                <div className="w-full grid grid-cols-3 gap-2.5">
+                  {families.map((family) => {
+                    const identity = identityOf(family.symbol);
+                    const active = family.id === activeFamilyId;
+                    return (
+                      <button
+                        key={family.id}
+                        type="button"
+                        onClick={() => handleSelectFamily(family.id)}
+                        aria-pressed={active}
+                        className={`flex flex-col items-center gap-1.5 rounded-3xl px-2 py-4 transition-all active:scale-[0.98] cursor-pointer border-2 ${
+                          active
+                            ? 'bg-black text-[#ccff00] border-black'
+                            : 'bg-white text-black border-black/10'
+                        }`}
+                      >
+                        <AssetIcon
+                          ticker={family.symbol}
+                          glyph={identity?.glyph ?? family.symbol.slice(0, 1)}
+                          iconBg={identity?.iconBg ?? 'bg-slate-300'}
+                          sizeClass="w-11 h-11"
+                          glyphClass={active ? 'text-[#ccff00]' : 'text-base'}
+                        />
+                        <span className="text-base font-black font-display leading-none">
+                          {family.symbol}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold leading-none text-center ${
+                            active ? 'text-[#ccff00]/75' : 'text-black/50'
+                          }`}
+                        >
+                          {family.id === 'USDC'
+                            ? `${family.options.length} redes`
+                            : `en ${family.options[0]?.chainLabel ?? ''}`}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/*
+                USDC Y SUS REDES: la única familia que no tiene una red sola.
+
+                Está acá y no después del importe a propósito: la red ES parte de
+                "en qué querés cobrar". El cobro viaja con UNA cadena —quien lo abre
+                paga en esa y en ninguna otra—, así que preguntarla más adelante
+                devolvería al flujo a la mezcla que este paso deshace.
+
+                Con una sola red no se pregunta: no hay nada que elegir.
+              */}
+              {activeFamilyId === 'USDC' && usdcNetworks.length > 1 && (
+                <div className="w-full space-y-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-black/50 font-display block text-center">
+                    En qué red lo cobrás
+                  </span>
+                  <div className="flex flex-wrap gap-1.5 justify-center">
+                    {usdcNetworks.map((option) => {
+                      const active = option.chain === chosen?.chain;
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() => handleSelectNetwork(option)}
+                          aria-pressed={active}
+                          className={`rounded-full px-3.5 py-2 text-[11px] font-bold border transition-all active:scale-95 cursor-pointer ${
+                            active
+                              ? 'bg-black text-[#ccff00] border-black'
+                              : 'bg-white text-black border-black/10'
+                          }`}
+                        >
+                          {option.chainLabel}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/*
+              EL ÚNICO BOTÓN DE ABAJO, y lo que dice de lo que se está por
+              confirmar.
+
+              Deshabilitado hasta que haya símbolo y red, porque después no se
+              puede corregir sin volver. El texto evita confirmar a ciegas.
+            */}
+            <div className="max-w-sm mx-auto w-full pb-6 shrink-0 space-y-3">
+              <button
+                type="button"
+                onClick={() => setStep('charge_input')}
+                disabled={!canConfirmCharge(chosen)}
+                className="w-full py-4 rounded-2xl bg-black hover:bg-slate-900 text-[#ccff00] font-extrabold text-base shadow-xl active:scale-98 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <span>Confirmar</span>
+              </button>
+              <p className="text-[11px] font-semibold text-black/60 text-center leading-snug min-h-[2.5rem]">
+                {chosen === null
+                  ? 'Elegí una de las tres para continuar.'
+                  : `${chargeChoiceLabel(chosen)}. Después te pido el importe.`}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {step === 'charge_input' && (
+        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between overflow-hidden shadow-2xl safe-top-5 safe-bottom-6">
+          <div className="flex-1 flex flex-col justify-between p-5 h-full animate-in fade-in slide-in-from-right-3 duration-200">
+            {/* Header con botón Atrás y Cerrar. Atrás vuelve a la ELECCIÓN, no al menú:
+                corregir la moneda no debería tirar el importe ya tecleado. */}
+            <div className="flex items-center justify-between shrink-0 pt-2">
+              <button
+                onClick={() => setStep('charge_asset')}
+                type="button"
+                className="w-11 h-11 rounded-full bg-black/10 hover:bg-black/20 text-black flex items-center justify-center active:scale-90 transition-transform cursor-pointer"
+                aria-label="Volver a elegir en qué cobrás"
+              >
+                <ArrowLeft className="w-5 h-5 stroke-[2.5]" />
+              </button>
+              <h2 className="text-base font-black font-display text-black uppercase tracking-wider">
+                Cobrar
+              </h2>
+              <button
+                onClick={handleClose}
+                type="button"
+                className="w-11 h-11 rounded-full bg-black/10 hover:bg-black/20 text-black flex items-center justify-center active:scale-90 transition-transform cursor-pointer"
+                aria-label="Cerrar"
+              >
+                <X className="w-5 h-5 stroke-[2.5]" />
+              </button>
+            </div>
+
+            {/*
+              ESPACIO CENTRAL, arriba y no centrado.
+
+              El `justify-center` de antes lo bajaba hasta el medio exacto del hueco
+              libre, que en un celular alto lo dejaba pegado al teclado y medio
+              enterrado. Con `justify-start` el bloque arranca apenas termina el
+              header y ocupa lo que necesita: el importe queda arriba, que es donde
+              se mira, y el teclado sube a su lado.
+            */}
+            <div className="flex-1 flex flex-col justify-start items-center w-full pt-5 pb-2 space-y-3">
+              {/*
+                LA ELECCIÓN, YA HECHA. No es un selector: es el recordatorio de lo
+                que se confirmó en la pantalla anterior.
+
+                Este es el bloque que se eliminó de acá. La lista de pares (cadena,
+                símbolo) convivía con el importe y el teclado en el mismo scroll, y
+                con todo eso en pantalla elegir la moneda se leía como un campo más
+                del formulario. Ahora la pregunta está en su propia pantalla, y acá
+                solo se recuerda la respuesta: el símbolo va junto al número porque
+                sin él el importe no significa nada.
+
+                Cambiarla es la flecha de arriba, que vuelve a la pantalla anterior
+                con la elección intacta — no hay que retocar el importe para
+                corregir la moneda.
+              */}
+              <button
+                type="button"
+                onClick={() => setStep('charge_asset')}
+                className="flex items-center gap-2.5 rounded-full bg-black/5 border border-black/10 pl-2 pr-4 py-2 active:scale-95 transition-transform cursor-pointer"
+                aria-label="Cambiar en qué cobrás"
+              >
+                <AssetIcon
+                  ticker={chosen?.symbol ?? ''}
+                  glyph={chosenIdentity?.glyph ?? '?'}
+                  iconBg={chosenIdentity?.iconBg ?? 'bg-slate-300'}
+                  sizeClass="w-8 h-8"
+                  glyphClass="text-sm"
+                />
+                <span className="text-[11px] font-black font-display uppercase tracking-wider">
+                  {chosen === null
+                    ? 'Elegí la moneda'
+                    : `${chosen.symbol} · ${chosen.chainLabel}`}
+                </span>
+                <ArrowLeft className="w-3.5 h-3.5 stroke-[3] rotate-180 opacity-50" />
+              </button>
+
               <span className="text-sm font-black uppercase tracking-widest text-black/60 font-display">
                 Importe a cobrar
               </span>
               <div className="flex items-baseline justify-center font-display px-2">
-                <span className="text-4xl sm:text-5xl font-black text-black/40 mr-2">
-                  U$
+                <span className="text-3xl sm:text-4xl font-black text-black/40 mr-2">
+                  {chosen?.symbol ?? ''}
                 </span>
                 <span className="text-7xl sm:text-8xl font-black text-black tracking-tight select-all">
                   {amount}
                 </span>
               </div>
+              {/*
+                NO HAY UN TEXTO QUE REPITA LA ELECCIÓN ABAJO.
+
+                Decía "Te lo van a cobrar en USDC, en Solana" debajo de un importe
+                que ya dice "USDC" al lado, debajo de un pill que ya dice
+                "USDC · Solana". Tres copias del mismo dato en tres tamaños
+                distintos, y la más grande de las tres —el número— quedaba
+               Checked al medio de dos核心竞争力.
+              */}
             </div>
 
             {/* Teclado Numérico Táctil & Botón */}
-            <div className="max-w-sm mx-auto w-full pb-2">
+            <div className="max-w-sm mx-auto w-full pb-6">
               <div className="grid grid-cols-3 gap-2 text-center">
                 {['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'backspace'].map((k) => (
                   <button
@@ -412,6 +795,17 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
               )}
 
               {/*
+                Sin cadena y activo elegidos el botón no existe, y se dice cuál
+                de las dos cosas falta. Un "Generar QR" que abre un cobro sin
+                activo sería el cobro viejo con otro nombre.
+              */}
+              {receiveAddress !== null && chosen === null && depositInfo.status === 'ready' && assetOptions.length > 0 && (
+                <p className="text-[11px] font-semibold text-black/60 text-center leading-snug pb-1">
+                  Elegí en qué querés cobrar antes de generar el código.
+                </p>
+              )}
+
+              {/*
                 Por qué no se pudo cobrar, en las palabras de la pantalla —las
                 mismas que usa `CreateChargeView`, porque es el mismo hecho—.
                 Acá no hay código: si el cobro no se creó, no hay nada que
@@ -425,7 +819,7 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
 
               <button
                 type="button"
-                disabled={amount === '0' || receiveAddress === null || creating}
+                disabled={amount === '0' || receiveAddress === null || chosen === null || creating}
                 onClick={() => void handleGenerateCharge()}
                 className="w-full mt-4 py-4 rounded-2xl bg-black hover:bg-slate-900 text-white font-extrabold text-base shadow-xl active:scale-98 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
               >
@@ -440,7 +834,7 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
           3. COBRO GENERADO
          ===================================================================== */}
       {step === 'charge_qr' && (
-        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between overflow-hidden shadow-2xl">
+        <div className="w-full h-full max-w-md bg-[#ccff00] text-black flex flex-col justify-between overflow-hidden shadow-2xl safe-top-5 safe-bottom-6">
           <div className="flex-1 flex flex-col justify-between p-6 h-full overflow-y-auto animate-in zoom-in-95 duration-200">
             {/* Header: Título y Botón Cerrar */}
             <div className="flex items-center justify-between shrink-0 pt-2">
@@ -459,10 +853,21 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
             </div>
 
             {/* Total + Código QR */}
-            <div className="max-w-sm mx-auto w-full my-auto py-4 space-y-5 text-center">
-              <div>
+            <div className="max-w-sm mx-auto w-full py-4 space-y-5 text-center">
+              {/*
+                El importe con su activo y su cadena, que es lo que el cobro
+                nombra: "10 USDC, en Monad". El "U$" fijo se fue porque no decía
+                en qué se cobra, y era exactamente lo que había que dejar de
+                mostrar.
+              */}
+              <div className="space-y-1">
                 <span className="text-4xl sm:text-5xl font-black font-display text-black tracking-tight block">
-                  U$ {charge?.amount ?? amount}
+                  {formatChargeAmount(charge?.amount ?? amount)} {charge?.asset.symbol ?? chosen?.symbol ?? ''}
+                </span>
+                <span className="text-xs font-black uppercase tracking-widest text-black/55 font-display block">
+                  {charge === null
+                    ? 'Elegí arriba en qué cobrás'
+                    : `en ${chargeChainLabel(charge.chain)}`}
                 </span>
               </div>
 
@@ -472,80 +877,39 @@ export const ChargeQrModal: React.FC<ChargeQrModalProps> = ({
                 Antes esto no era un QR: era el ícono de un QR de la librería de
                 íconos, que es un dibujo y no un código. Ninguna cámara lo leía.
                 Ahora los módulos se calculan del link real —el mismo que se
-                copia y el mismo que abre `PayChargeView`— y si el link no se
+                copia y el mismo que abre `PayChargeView`—, y si el link no se
                 puede codificar no se dibuja nada en su lugar: se avisa abajo y
-                el link sigue disponible.
+                el link sigue disponible. El que decide eso es `QrCode`, que
+                además mide el marco con la misma zona quieta con la que dibuja:
+                antes el `viewBox` declaraba `size + 2` sobre un path que ocupa
+                `size + 8`, y el código salía cortado contra el borde.
               */}
-              {qrMatrix !== null ? (
-                <div className="bg-white rounded-[32px] p-6 shadow-2xl border-2 border-black/10 max-w-[280px] mx-auto flex items-center justify-center">
-                  <svg
-                    viewBox={`0 0 ${qrMatrix.size + 2} ${qrMatrix.size + 2}`}
-                    className="w-56 h-56 rounded-2xl"
-                    role="img"
-                    aria-label="Código QR del cobro"
-                    shapeRendering="crispEdges"
-                  >
-                    <rect width="100%" height="100%" fill="#ffffff" />
-                    <path d={qrSvgPath(qrMatrix)} fill="#000000" />
-                  </svg>
-                </div>
-              ) : (
-                <p className="text-[11px] font-bold text-black/70 bg-black/10 rounded-xl px-3 py-2 leading-snug">
-                  No pudimos dibujar el código. El link de abajo sirve igual: es
-                  el mismo cobro.
-                </p>
-              )}
+              <div className="max-w-[260px] mx-auto">
+                <QrCode
+                  value={shareUrl ?? ''}
+                  label="Código QR del cobro"
+                  size={228}
+                  fallback="No pudimos dibujar el código. El link de abajo sirve igual: es el mismo cobro."
+                />
+              </div>
 
               {/*
-                El link, escrito, seleccionable y copiable.
+                SOLO EL CÓDIGO, LOS BOTONES Y EL IMPORTE.
 
-                Es el **mismo** cobro que el QR de arriba —mismo id, misma fila—
-                y por eso está en la misma pantalla y no en otra. Si el QR se
-                puede escanear, el texto se puede copiar; si el texto se puede
-                copiar, el QR se puede escanear. Ninguna de las dos
-                presentaciones es la única.
+                Se fueron los dos bloques de texto que quedaban abajo del QR: el
+                link escrito y el "Cobralo en {dirección}".
+
+                No era que sobraran por poco. Esta pantalla le mostraba a alguien
+                el mismo dato cuatro veces: en el importe, en el QR, en el link
+                escrito y en la dirección de destino. Para un producto de consumo
+                eso es ruido con forma de opción —y la dirección además es un dato
+                que la app nunca expone en otro lado, porque quien paga abre el link
+                y no necesita una dirección—.
+
+                Copiar y compartir siguen estando como botones. Se elimina el
+                texto, no la acción: quien quiere el link lo pide, y quien no,
+                solo ve el código.
               */}
-              {shareUrl !== null && (
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-black/50 block">
-                    Link del cobro
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyLink}
-                    className="text-xs font-bold font-mono text-black/80 break-all px-2 cursor-pointer active:opacity-60 select-all"
-                  >
-                    {shareUrl}
-                  </button>
-                </div>
-              )}
-
-              {/*
-                La dirección de destino, escrita abajo del código y copiable.
-
-                Antes el QR no llevaba ninguna: llevaba el `@user` de la
-                persona, que no es una dirección de blockchain. La red que
-                aparece acá sale de `GET /api/portfolio`, y si no hay dirección
-                real esta pantalla no llega a existir.
-              */}
-              {receiveAddress !== null && (
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-black/50 block">
-                    Cobralo en {receiveAddress.label}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard?.writeText(receiveAddress.address);
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), 2000);
-                    }}
-                    className="text-xs font-bold font-mono text-black/80 break-all px-2 cursor-pointer active:opacity-60"
-                  >
-                    {receiveAddress.address}
-                  </button>
-                </div>
-              )}
             </div>
 
             {/* Acciones: Compartir y Copiar Link */}

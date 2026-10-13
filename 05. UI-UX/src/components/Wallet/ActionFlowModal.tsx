@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { readContacts as fetchContacts, EMPTY_CONTACTS, type ContactsView, type RewalletContact } from '../../services/contacts';
 import {
   X,
   ArrowLeft,
@@ -22,12 +23,20 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { AssetTradeCard } from '../common';
+import { SwapScreen } from './SwapScreen';
+import { AssetIcon, ChainIcon } from '../common/AssetIcon';
 import { BalancePieceRow } from '../Investments/BalancePieceRow';
 import { byUsdValueDesc } from '../../services/walletBalance';
 import type { WalletBalancePart } from '../../services/walletBalance';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import { QrScannerModal } from './QrScannerModal';
-import { TRADE_UNAVAILABLE_TEXT, useAssetTrade, useTradeCatalog } from '../../hooks/useAssetTrade';
+/*
+ * El componente de QR de la app, no el ícono de lucide que también se llama
+ * `QrCode`. Se importa con otro nombre a propósito: el ícono sigue usándose
+ * como ícono en otras pantallas de este archivo, y renombrar el de lucide
+ * sería cambiar código que no es de este arreglo.
+ */
+import { QrCode as QrCodeImage } from '../common/QrCode';
 import type { DepositInfoView } from '../../hooks/useDepositInfo';
 import { assetOn, isEvmNetwork, truncateAddress, type DepositNetworkView } from '../../services/depositInfo';
 import type { DepositChainId } from '../../types/deposit.types';
@@ -37,6 +46,7 @@ import {
   isValidRecipientForChain,
   classifyRecipient,
   looksLikeRewalletTag,
+  sendExplorerUrlFor,
   type RecipientKind,
   sendChainByKey,
   type SendChainId,
@@ -51,15 +61,11 @@ import { assetByTicker } from '../../config/assets';
 /**
  * Qué acción abre este modal.
  *
- * `'usar'` ya no es un valor posible: su menú tenía exactamente dos opciones,
- * Comprar y Vender, que son las dos caras del cambio de activo. No hay motor de
- * swap, así que la acción no se ofrece y no tiene por qué seguirEnumerada.
+ * `'usar'` abre el menú de Comprar/Vender (swap).
  *
- * Las pantallas de `use_buy` y `use_sell`, en cambio, **siguen en este archivo**
- * a propósito: son la base terminada de la Fase 2. Quedan sin puerta de entrada,
- * no muertas por accidente.
+ * `'depositar'` y `'enviar'` son las acciones de movimiento de plata.
  */
-export type ActionModalType = 'depositar' | 'enviar' | null;
+export type ActionModalType = 'depositar' | 'usar' | 'enviar' | null;
 
 interface ActionFlowModalProps {
   action: ActionModalType;
@@ -153,11 +159,18 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [keypadAmount, setKeypadAmount] = useState('0');
   const [lemontagSearch, setLemontagSearch] = useState('');
+  /*
+   * La agenda es de esta billetera y viene del servidor.
+   *
+   * Antes eran cinco contactos escritos a mano, con nombres y tags que existen
+   * de verdad, y tocar una fila mandaba plata a una persona real. Una lista que
+   * no sale de tus propios envíos no es una agenda: es una lista de destinos.
+   */
+  const [contacts, setContacts] = useState<ContactsView>(EMPTY_CONTACTS);
   const [selectedRecipient, setSelectedRecipient] = useState<{
-    name: string;
+    /** El nombre de perfil si lo hay; si no, se muestra el tag. */
+    name: string | null;
     tag: string;
-    avatarBg: string;
-    avatarImg: string;
   } | null>(null);
   /**
    * La red del envío, como clave de catálogo. `null` mientras no se eligió.
@@ -166,6 +179,15 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
    * ninguna. Ahora sale del catálogo del servidor.
    */
   const [sendNetwork, setSendNetwork] = useState<SendChainId | null>(null);
+  /**
+   * El saldo se muestra en unidades del activo o en dólares, y se cambia de
+   * uno a otro con un botón al costado.
+   *
+   * Son las dos cifras que el portfolio ya trae para la misma pieza —cantidad y
+   * valor— así que el toggle no calcula nada: dos lecturas del mismo hecho, y
+   * ninguna de las dos se inventa.
+   */
+  const [sendBalanceInUsd, setSendBalanceInUsd] = useState(false);
   /** El monto que no se pudo convertir, o `null`. */
   const [sendAmountError, setSendAmountError] = useState<string | null>(null);
   /**
@@ -201,42 +223,43 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   const holdingOf = (chain: DepositChainId, symbol: string): PortfolioHolding | null =>
     holdings.find((holding) => holding.chain === chain && holding.symbol === symbol) ?? null;
 
-  /**
-   * La lista real de "Comprar" y "Vender".
-   *
-   * No se construye acá: la construye `useTradeCatalog`, que es el mismo
-   * constructor que usa el detalle de un cripto. Copiarlo en dos pantallas es
-   * como las dos dejaron de decir lo mismo —una lista de activos y otra— sin que
-   * ninguna se quejara. Esta pantalla le pasa las tres lecturas que ya tiene.
-   */
-  const tradeCatalog = useTradeCatalog({ depositInfo, holdings, balance });
-
   /*
-   * El par que se convierte en los dos sentidos.
+   * La lista de "Comprar" / "Vender" vive en su pantalla.
    *
-   * Los dos leen el mismo catálogo real, así que no pueden mostrar activos que
-   * el backend no conoce ni saldos inventados. El par inicial lo decide el
-   * catálogo —de los dólares a la primera cripto— y no dos constantes escritas a
-   * mano: el destino por defecto era Bitcoin, que esta billetera no puede
-   * mover. Esta pantalla no pasa identidades, y por eso el par lo elige el
-   * catálogo entero; el detalle de un cripto sí pasa el activo que se está
-   * viendo.
+   * El catálogo lo arma `SwapScreen` adentro de sí misma: antes existía acá,
+   * duplicado para las dos pantallas espejadas que el estándar de Uniswap
+   * reemplaza por una sola. Quedar doble era el estado que esta escritura
+   * terminaba.
    */
-  const buyTrade = useAssetTrade({
-    amountText: keypadAmount,
-    setAmountText: setKeypadAmount,
-    catalog: tradeCatalog,
-  });
-  const sellTrade = useAssetTrade({
-    amountText: keypadAmount,
-    setAmountText: setKeypadAmount,
-    catalog: tradeCatalog,
-  });
-  /** Qué desplegable está abierto, o ninguno. */
-  const [sheetSide, setSheetSide] = useState<'source' | 'destination' | null>(null);
 
 
   // Cada vez que se abre una acción, inicializar en la pantalla lima
+  /*
+   * La agenda se lee cuando se abre la pantalla, no antes.
+   *
+   * Es una lectura de lo que **esta** billetera ya mandó, así que no tiene
+   * sentido pagarla al abrir la app: se pide cuando alguien la va a mirar. Y
+   * si falla, la pantalla dice que no pudo leerla — una agenda vacía afirmada
+   * sería "no le mandaste a nadie", que es otro hecho.
+   */
+  useEffect(() => {
+    if (currentStep !== 'send_lemon_account' || contacts.status !== 'idle') return;
+
+    let alive = true;
+    setContacts({ status: 'loading', contacts: [] });
+    fetchContacts()
+      .then((view) => {
+        if (alive) setContacts(view);
+      })
+      .catch(() => {
+        if (alive) setContacts({ status: 'error', contacts: [] });
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [currentStep, contacts.status]);
+
   useEffect(() => {
     if (action) {
       setCurrentStep('initial');
@@ -247,22 +270,19 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       setSendAmountError(null);
       setSelectedNetwork(null);
       setDepoSource('crypto');
-      setSheetSide(null);
-      /*
-       * Abrir el flujo de enviar arranca una intención nueva: el `requestId` con
-       * el que se protege el doble toque pertenece a un intento, no a la app.
-       */
       setSendNetwork(null);
       sendFlow.reset();
     }
   }, [action, sendFlow.reset]);
 
   /*
-   * `openBuy` y `openSell` se fueron con el menú de "Usar": eran sus únicas
-   * llamadoras y sin menú no hay a dónde abrir. Las pantallas `use_buy` y
-   * `use_sell` de más abajo quedan estacionadas — con su `buyTrade`, su
-   * `sellTrade` y su `AssetTradeCard` — a la espera del motor de swap de la
-   * Fase 2. Volver a armar el menú es una línea; no una reconstrucción.
+   * "Usar" abre el menú de "Comprar" y "Vender". Ambas opciones abren la
+   * misma pantalla `SwapScreen` con dirección inicial distinta: comprar es
+   * salir de dólares, vender es volver a ellos. La pantalla sigue la
+   * disposición documentada por Uniswap, su cotización viene del backend real
+   * en `app.rewallet.win` y del mock en beta/local, y su ejecución es una
+   * simulación hasta que la firma real (Permit2 + `/api/wallet/swap/execute`)
+   * exista en el front.
    */
 
   /* =========================================================================
@@ -409,16 +429,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
   /**
    * El enlace a la transacción en la exploradora de la red, o `null`.
    *
-   * La base sale de `config/chains.ts`, que ya fue verificada contra la cadena:
-   * un link a una exploradora equivocada en una billetera es una página que
-   * parece phishing. El hash es un identificador de transacción, no una
-   * dirección, y es lo que hace el envío comprobable.
+   * Lo resuelve `config/send.ts`: ahí está la regla y su prueba. El hash es
+   * un identificador de transacción, no una dirección, y es lo que hace el
+   * envío comprobable — y visible para cualquiera que quiera verificarlo sin
+   * creernos.
    */
-  const sendExplorerUrl: string | null = (() => {
-    if (sendFlow.transferHash === null || sendChainResolved === null) return null;
-    const base = evmChainById(sendChainResolved.chainId)?.blockExplorers?.default.url;
-    return base === undefined ? null : `${base}/tx/${sendFlow.transferHash}`;
-  })();
+  const sendExplorerUrl: string | null = sendExplorerUrlFor(sendChainResolved, sendFlow.transferHash);
 
   /**
    * Los activos que se pueden **enviar**, según el catálogo.
@@ -451,6 +467,23 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
     return matches.length === 1 ? matches[0] : null;
   };
 
+  /**
+   * La agenda que se muestra: los contactos reales, filtrados por lo que se
+   * escribió en el buscador.
+   *
+   * Se filtra por nombre **y** por tag, porque el buscador dice "buscá por
+   * $reTag": lo que la persona tiene a mano es el handle, no el nombre.
+   */
+  const filteredContacts: readonly RewalletContact[] = useMemo(() => {
+    const needle = lemontagSearch.trim().toLowerCase();
+    if (needle.length === 0) return contacts.contacts;
+    return contacts.contacts.filter(
+      (contact) =>
+        contact.tag.toLowerCase().includes(needle) ||
+        (contact.name ?? '').toLowerCase().includes(needle),
+    );
+  }, [contacts.contacts, lemontagSearch]);
+
   /** Un activo del catálogo con su pieza y su posición por valor en dólares. */
   const sortedByUsd = (
     items: readonly typeof depositInfo.assets[number][],
@@ -482,6 +515,34 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
    * La escala es la del catálogo y no la del locale, porque a la escala
    * equivocada `1500000` no es el envío que la persona escribió.
    */
+  /**
+   * La pieza del portfolio para este envío, o `null` si no se pudo leer.
+   *
+   * Se busca por **red y símbolo** —la fila que se está mandando en esta
+   * cadena— y no por símbolo suelto: el mismo activo en dos redes son dos
+   * saldos, y mostrar el de otra red sería mostrar el número de otro envío.
+   */
+  const sendBalancePart: WalletBalancePart | null = useMemo(() => {
+    if (sendChainResolved === null || sendAsset === null) return null;
+    const wanted = `${sendChainResolved.chain}.${sendAsset.symbol}`;
+    return (balance?.balance?.cryptoValue.parts ?? []).find((part) => part.key === wanted) ?? null;
+  }, [sendChainResolved, sendAsset, balance]);
+
+  /**
+   * El saldo de esta fila en las dos monedas que la persona puede mirar: la
+   * cantidad del activo y su valor en dólares.
+   *
+   * `null` cuando **cualquiera** de las dos no se pudo leer. Un saldo que se
+   * muestra en unidades y no se puede ver en dólares no es un saldo completo:
+   * el botón prometería una conversión que no se conoce.
+   */
+  const sendBalanceUnit: { readonly quantity: string; readonly usd: string } | null = useMemo(() => {
+    if (sendBalancePart === null || sendBalancePart.status !== 'ok') return null;
+    const { quantity, value } = sendBalancePart;
+    if (quantity === null || value === null) return null;
+    return { quantity: quantity.formatted, usd: value.formatted };
+  }, [sendBalancePart]);
+
   const startSend = (): void => {
     if (sendChainResolved === null || sendAsset === null || sendSenderAddress === null) return;
 
@@ -596,7 +657,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
-                  Dólares
+                  Dólares Digitales
                 </button>
 
                 <button
@@ -606,7 +667,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
-                  Crypto
+                  Criptoactivos
                 </button>
               </div>
             </div>
@@ -627,7 +688,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
-                  Dólar Digital
+                  Dólares Digitales
                 </button>
 
                 <button
@@ -637,24 +698,52 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }}
                   className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
                 >
-                  Crypto
+                  Criptoactivos
                 </button>
               </div>
             </div>
           )}
 
           {/*
-            ACÁ ESTABA EL MENÚ DE "USAR": "Comprar crypto" y "Vender crypto".
+            EL MENÚ DE "USAR": "Comprar" y "Vender".
 
-            Sus dos opciones eran el mismo cambio de activo en dos direcciones, y
-            las dos Applican una conversión que hoy no tiene motor: no hay
-            backend que la cotice ni transacción que la ejecute. Un botón que no
-            puede hacer lo que promete no se pone en pantalla.
-
-            Las dos pantallas de compra y venta NO se borraron — están más abajo,
-            en `use_buy` y `use_sell`, y son la base de la Fase 2 ya decidida.
-            Lo que se cerró fue la puerta.
+            Las dos abren la MISMA pantalla de swap con dirección por defecto
+            distinta —es el patrón del estándar de Uniswap, en vez de dos
+            pantallas espejadas como antes. El motor de cotización existe: el
+            backend responde en `/api/wallet/swap/quote`, y hasta que la firma
+            real exista la ejecución se simula y la pantalla lo dice.
           */}
+          {/* ACCIÓN: USAR (Comprar/Vender/Intercambiar) */}
+          {action === 'usar' && (
+            <div className="space-y-6">
+              <h2 className="text-3xl font-black font-display text-black tracking-tight mb-8">
+                ¿Qué querés hacer?
+              </h2>
+
+              <div className="space-y-4 flex flex-col items-start">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentStep('use_buy');
+                  }}
+                  className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
+                >
+                  Comprar
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentStep('use_sell');
+                  }}
+                  className="text-4xl sm:text-5xl font-black font-display text-black hover:opacity-75 active:scale-95 transition-all text-left tracking-tight cursor-pointer"
+                >
+                  Vender
+                </button>
+              </div>
+            </div>
+          )}
+
         </div>
 
         {/* BOTÓN CIRCULAR NEGRO FLOTANTE CON X EN COLOR LIMA */}
@@ -722,7 +811,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                       Desde otra cuenta ReWALLET
                     </span>
                     <span className="text-xs text-slate-400 font-medium">
-                      Gratis e instantáneo.
+                      Se mueve en la red. La comisión y el tiempo los define la cadena.
                     </span>
                   </div>
                 </div>
@@ -760,7 +849,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       {currentStep === 'depo_lemon_account' && (
         <div className="flex-1 flex flex-col h-full overflow-y-auto">
           {/* Header con flecha atrás + Título centrado */}
-          <div className="p-4 pt-5 flex items-center justify-between shrink-0">
+          <div className="p-4 pt-5 max-[360px]:p-3 max-[360px]:pt-3 max-[360px]:pb-2 [@media(max-height:620px)]:pt-2 [@media(max-height:620px)]:pb-1 flex items-center justify-between shrink-0">
             <button
               onClick={() => setCurrentStep('depo_where')}
               type="button"
@@ -864,7 +953,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   Comisión
                 </span>
                 <p className="text-base font-black font-display text-black leading-tight">
-                  Sin comisiones
+                  ReWALLET no te cobra nada
                 </p>
               </div>
 
@@ -873,7 +962,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   Acreditación
                 </span>
                 <p className="text-base font-black font-display text-black leading-tight">
-                  Instantánea
+                  1 a 3 minutos
                 </p>
               </div>
             </div>
@@ -925,14 +1014,18 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                       // pantalla ya no lleva su propia lista de activos.
                       const identity = identityOf(coin.symbol);
                       return (
-                        <div
-                          className={`w-10 h-10 rounded-full ${identity?.iconBg ?? 'bg-slate-400'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                        >
-                          {identity?.glyph ?? coin.symbol.slice(0, 1)}
-                        </div>
+                        <AssetIcon
+                          ticker={coin.symbol}
+                          glyph={identity?.glyph ?? coin.symbol.slice(0, 1)}
+                          iconBg={identity?.iconBg ?? 'bg-slate-400'}
+                          sizeClass="w-10 h-10"
+                        />
                       );
                     })()}
-                    <span className="text-base font-bold text-black">
+                    <span className="text-base font-bold text-black block">
+                      {coin.symbol}
+                    </span>
+                    <span className="text-xs text-slate-400 font-medium block">
                       {coin.name}
                     </span>
                   </div>
@@ -1009,7 +1102,6 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             {/* Sólo las redes del catálogo donde este activo existe. */}
             {networksForCoin(selectedCoin).map((network) => {
               const asset = assetOn(network, selectedCoin);
-              const identity = identityOf(selectedCoin);
               const receivable = network.address !== null;
 
               return (
@@ -1027,11 +1119,31 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   }
                 >
                   <div className="flex items-center gap-3.5">
-                    <div
-                      className={`w-10 h-10 rounded-full ${identity?.iconBg ?? 'bg-slate-300'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                    >
-                      {identity?.glyph ?? network.label.slice(0, 1)}
-                    </div>
+                    {/*
+                      LA FILA MUESTRA UNA RED, NO UN ACTIVO.
+
+                      Antes dibujábamos acá el logo de {selectedCoin}, el activo que
+                      se está depositando, al lado del nombre de la red: el círculo
+                      de USDC junto a la palabra "Ethereum" no dice nada, porque el
+                      activo es el mismo en todas las filas de esta pantalla. Lo
+                      que cambia de fila a fila es la RED, así que lo que se dibuja
+                      es el logo de la red.
+
+                      `network.chain` ya es el key de cadena —el mismo de las rutas
+                      de la API y de `SUPPORTED_EVM_CHAINS`— y `iconForChain` se
+                      encarga de normalizarlo, así que se pasa tal cual.
+
+                      El color NO se toca: sigue saliendo del `identity` del activo,
+                      porque cambiar el fondo del círculo para que el logo de cadena
+                      se lea es un cambio de diseño, no un cableado.
+                    */}
+                    <ChainIcon
+                      chain={network.chain}
+                      fallbackGlyph={network.label.slice(0, 1)}
+                      iconBg={identityOf(selectedCoin)?.iconBg ?? 'bg-slate-300'}
+                      sizeClass="w-10 h-10"
+                      glyphClass="text-sm"
+                    />
                     <div>
                       <span className="text-sm font-bold text-black block">{network.label}</span>
                       <span className="text-xs text-slate-400 font-medium block leading-tight">
@@ -1116,9 +1228,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                 <div className="bg-white rounded-[32px] p-6 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80 space-y-4 text-center">
                   <div className="text-left space-y-2">
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-slate-100 text-black flex items-center justify-center text-xs font-bold">
-                        {(identityOf(selectedCoin)?.glyph ?? selectedCoin.slice(0, 1))}
-                      </div>
+                      <AssetIcon
+                        ticker={selectedCoin}
+                        glyph={identityOf(selectedCoin)?.glyph ?? selectedCoin.slice(0, 1)}
+                        iconBg="bg-slate-100 text-black"
+                        sizeClass="w-6 h-6"
+                      />
                       <div>
                         <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Depositás</span>
                         <span className="text-xs font-extrabold text-black">
@@ -1137,9 +1252,19 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                       "cualquiera de las dos".
                     */}
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-black text-[#ccff00] flex items-center justify-center text-xs font-bold">
-                        {depositNetwork.label.slice(0, 1)}
-                      </div>
+                      {/*
+                        Este chip es una RED, no un activo: `depositNetwork.chain`
+                        y el glifo de respaldo son los de antes. Mismo círculo, mismo
+                        `bg-black` y mismo tamaño — sólo cambia qué se dibuja
+                        adentro.
+                      */}
+                      <ChainIcon
+                        chain={depositNetwork.chain}
+                        fallbackGlyph={depositNetwork.label.slice(0, 1)}
+                        iconBg="bg-black text-[#ccff00]"
+                        sizeClass="w-6 h-6"
+                        glyphClass="text-xs"
+                      />
                       <div>
                         <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">Red</span>
                         <span className="text-xs font-extrabold text-black">{depositNetwork.label}</span>
@@ -1147,14 +1272,25 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     </div>
                   </div>
 
-                  {/* QR con icono central */}
-                  <div className="w-56 h-56 mx-auto bg-black p-3 rounded-3xl flex items-center justify-center relative shadow-md">
-                    <div className="w-full h-full bg-white rounded-2xl flex items-center justify-center p-3 relative">
-                      <QrCode className="w-full h-full text-black stroke-[1.2]" />
-                      <div className="w-10 h-10 rounded-xl bg-black text-[#ccff00] flex items-center justify-center font-bold absolute text-sm shadow-md">
-                        {depositNetwork.label.slice(0, 1)}
-                      </div>
-                    </div>
+                  {/*
+                    EL CÓDIGO, DE VERDAD.
+
+                    Antes esto era un ícono de lucide con la inicial de la red
+                    encima: un dibujo al que ninguna cámara leía. Lo que la
+                    persona escanea es la dirección, y sale de acá —de la red
+                    elegida—, así que el QR lleva la de **esa** cadena y no la de
+                    otra: EVM y Solana no se codifican igual.
+
+                    El marco, el margen quieto y el aviso de "no se pudo dibujar"
+                    son los de `QrCode`: acá no se mide nada.
+                  */}
+                  <div className="max-w-fit mx-auto">
+                    <QrCodeImage
+                      value={depositAddress}
+                      label={`Código QR de tu dirección de ${depositAsset?.name ?? selectedCoin} en ${depositNetwork.label}`}
+                      size={200}
+                      fallback="No pudimos obtener una dirección para esta red."
+                    />
                   </div>
                   <p className="text-[11px] font-semibold text-slate-400 text-center">
                     QR de tu dirección de {depositNetwork.label}
@@ -1195,43 +1331,36 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     )}
                   </div>
 
-                  {/* Botón negro: Compartir datos */}
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(depositAddress)}
-                    className="w-full py-3.5 rounded-2xl bg-black hover:bg-slate-900 active:scale-98 text-white font-bold text-sm shadow-md transition-all cursor-pointer"
-                  >
-                    Copiar dirección completa
-                  </button>
-                </div>
+                  {/*
+                    SE FUERON TRES COSAS DE ESTA PANTALLA.
 
-                {/* Advertencia */}
-                <p className="text-xs text-slate-600 text-center leading-relaxed px-2 font-semibold">
-                  Asegurate de mandar {selectedCoin} por la red {depositNetwork.label}. Si lo mandás
-                  por otra red, perdés los fondos.
-                </p>
+                    El botón "Copiar dirección completa", el aviso "Asegurate de
+                    mandar… por la red…" y el bloque "Tu saldo de…".
 
-                {/*
-                  EL SALDO, O LA AUSENCIA DE SALDO.
+                    No porque sean falsas —las tres lo eran, y la del aviso incluso
+                    previene perder plata— sino porque en una pantalla de depósito
+                    compiten con lo único que importa. Para mandar plata hacen falta
+                    tres cosas: **la red, el código y la dirección**. Eso ya está
+                    arriba, con la red elegida y el QR de esa misma red. Debajo
+                    estaba, en este orden: un botón que repetía una acción que ya
+                    hadía el ícono de copiar al lado de la dirección, un párrafo de
+                    advertencia, y un saldo.
 
-                  Un activo sin lector, o una cadena que no se pudo leer, dicen que
-                  no se pudo leer. Nunca muestran `0`: un cero afirma una
-                  recepción que nadie verificó, y en un producto de pagos eso no
-                  es un detalle de formato.
-                */}
-                <div className="bg-white rounded-3xl border border-slate-200/80 p-4 text-left">
-                  <span className="text-[11px] text-slate-400 font-bold uppercase block leading-none">
-                    Tu saldo de {selectedCoin}
-                  </span>
-                  {depositAsset !== null && depositAsset.balanceReadable && assetBalanceLabel(selectedCoin) !== null ? (
-                    <span className="text-base font-black font-display text-black">
-                      {assetBalanceLabel(selectedCoin)} {selectedCoin}
-                    </span>
-                  ) : (
-                    <span className="text-sm font-semibold text-slate-500">
-                      No pudimos leer tu saldo de {selectedCoin} en {depositNetwork.label}.
-                    </span>
-                  )}
+                    El saldo es el más raro de los tres: es un dato de la *billetera*
+                    en una pantalla que habla del *depósito*, y a alguien depositing
+                    no le resuelve ninguna de sus dos preguntas.
+
+                    Este bloque es UNO para todos los activos: la red, el código y
+                    la dirección salen de variables, así que sacar esto acá saca
+                    esto para cada criptactivo del catálogo, sin tocar pantalla por
+                    pantalla.
+
+                    Lo que queda: red elegida, QR de esa red, dirección recortada
+                    con su ícono de copiar, y la explicación de las direcciones EVM
+                    compartidas.
+                  */}
+
+                  {/* Fin de la card principal: red, código y dirección. */}
                 </div>
 
                 {/*
@@ -1344,11 +1473,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     className="p-4 mb-2 bg-white rounded-3xl border border-slate-200/80 shadow-[0_4px_25px_rgba(0,0,0,0.03)] flex items-center justify-between cursor-pointer hover:bg-slate-50 active:scale-99 transition-all"
                   >
                     <div className="flex items-center gap-3.5">
-                      <div
-                        className={`w-10 h-10 rounded-full ${identity?.iconBg ?? 'bg-slate-300'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                      >
-                        {identity?.glyph ?? asset.symbol.slice(0, 1)}
-                      </div>
+                      <AssetIcon
+                        ticker={asset.symbol}
+                        glyph={identity?.glyph ?? asset.symbol.slice(0, 1)}
+                        iconBg={identity?.iconBg ?? 'bg-slate-300'}
+                        sizeClass="w-10 h-10"
+                      />
                       <div>
                         {/*
                           Título arriba y símbolo abajo, como en las filas de
@@ -1449,7 +1579,9 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   </div>
                   <div>
                     <span className="text-sm font-bold text-black block">A otra cuenta ReWALLET</span>
-                    <span className="text-xs text-slate-400 font-medium">Gratis e instantáneo.</span>
+                    <span className="text-xs text-slate-400 font-medium">
+                      Transacción on-chain: paga la red y llega según la cadena.
+                    </span>
                   </div>
                 </div>
                 <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
@@ -1482,7 +1614,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       {currentStep === 'send_lemon_account' && (
         <div className="flex-1 flex flex-col h-full overflow-y-auto">
           {/* Header con flecha atrás */}
-          <div className="p-4 pt-5 flex items-center justify-between shrink-0">
+          <div className="p-4 pt-5 max-[360px]:p-3 max-[360px]:pt-3 max-[360px]:pb-2 [@media(max-height:620px)]:pt-2 [@media(max-height:620px)]:pb-1 flex items-center justify-between shrink-0">
             <button
               onClick={() => setCurrentStep('send_where')}
               type="button"
@@ -1525,9 +1657,9 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                   <Copy className="w-5 h-5 stroke-[2]" />
                 </button>
                 {/*
-                 * Este botón de "Escanear QR" escribía `$lujyyctz` en el campo: un
-                 * tag inventado, de la lista de contactos de mentira que hay dos
-                 * pantallas más abajo. Tampoco escaneaba, y el escaneo de verdad no
+                 * Este botón de "Escanear QR" escribía un tag inventado en el
+                 * campo, de la lista de contactos de mentira que esta pantalla
+                 * tenía dos veces. Tampoco escaneaba, y el escaneo de verdad no
                  * existe todavía en la app. Se saca.
                  */}
               </div>
@@ -1550,72 +1682,74 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
               </button>
             </div>
 
-            {/* Lista de Contactos según la imagen adjunta */}
+            {/* La agenda: sólo a quién le mandaste plata por tag, y sólo eso. */}
             <div className="bg-white rounded-[32px] p-2 shadow-[0_4px_25px_rgba(0,0,0,0.04)] border border-slate-200/80 divide-y divide-slate-100 overflow-hidden">
-              {[
-                {
-                  name: 'Luján Del Rosario Cortez',
-                  tag: '$lujyyctz',
-                  avatarBg: 'bg-emerald-500',
-                  avatarImg: '👾',
-                },
-                {
-                  name: 'Nicolas Facundo Chaves',
-                  tag: '$faccha20',
-                  avatarBg: 'bg-yellow-400',
-                  avatarImg: '🤠',
-                },
-                {
-                  name: 'Steven Antonio Galeano Bañol',
-                  tag: '$rapsesino',
-                  avatarBg: 'bg-orange-300',
-                  avatarImg: '🧑‍💻',
-                },
-                {
-                  name: 'Santiago Fernando Diaz Arak...',
-                  tag: '$santiagodiazdj2',
-                  avatarBg: 'bg-indigo-500',
-                  avatarImg: '⚡',
-                },
-                {
-                  name: 'Taiel Miranda',
-                  tag: '$taiel.miranda.okkk',
-                  avatarBg: 'bg-emerald-500',
-                  avatarImg: '🐼',
-                },
-              ]
-                .filter((contact) =>
-                  lemontagSearch.trim()
-                    ? contact.name.toLowerCase().includes(lemontagSearch.toLowerCase()) ||
-                      contact.tag.toLowerCase().includes(lemontagSearch.toLowerCase())
-                    : true
-                )
-                .map((contact) => (
-                  <div
-                    key={contact.tag}
-                    onClick={() => {
-                      setSelectedRecipient(contact);
-                      setKeypadAmount('0');
-                      setCurrentStep('send_lemon_amount');
-                    }}
-                    className="p-3.5 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all rounded-2xl"
-                  >
-                    <div className="flex items-center gap-3.5">
-                      <div className={`w-11 h-11 rounded-full ${contact.avatarBg} p-0.5 flex items-center justify-center overflow-hidden shadow-xs shrink-0`}>
-                        <span className="text-xl">{contact.avatarImg}</span>
-                      </div>
-                      <div>
-                        <span className="text-sm font-bold text-black block leading-tight">
-                          {contact.name}
-                        </span>
-                        <span className="text-xs text-slate-400 font-medium block mt-0.5">
-                          {contact.tag}
-                        </span>
-                      </div>
+              {contacts.status === 'loading' && (
+                <p className="p-4 text-sm font-medium text-slate-400">Cargando a quién le enviaste…</p>
+              )}
+
+              {contacts.status === 'error' && (
+                /*
+                 * No se pudo leer la agenda. La alternativa —una lista vacía—
+                 * diría "nunca enviaste a nadie", que es un hecho distinto del
+                 * que sabemos, así que esto es una ausencia declarada.
+                 */
+                <div className="p-4 space-y-1">
+                  <p className="text-sm font-bold text-black">No pudimos leer tus contactos.</p>
+                  <p className="text-xs font-medium text-slate-500 leading-snug">
+                    Podés igual buscar el tag arriba y escribirlo a mano.
+                  </p>
+                </div>
+              )}
+
+              {contacts.status === 'ready' && filteredContacts.length === 0 && (
+                <div className="p-4 space-y-1">
+                  <p className="text-sm font-bold text-black">
+                    {lemontagSearch.trim().length > 0
+                      ? 'Nadie coincide con esa búsqueda.'
+                      : 'Todavía no le enviaste plata a nadie.'}
+                  </p>
+                  <p className="text-xs font-medium text-slate-500 leading-snug">
+                    {lemontagSearch.trim().length > 0
+                      ? 'Probá con otro tag.'
+                      : 'Cada $reWALLET a quien le envíes aparece acá, para no tener que escribir su tag.'}
+                  </p>
+                </div>
+              )}
+
+              {filteredContacts.map((contact) => (
+                <div
+                  key={contact.tag}
+                  onClick={() => {
+                    setSelectedRecipient({ name: contact.name, tag: contact.tag });
+                    setKeypadAmount('0');
+                    setCurrentStep('send_lemon_amount');
+                  }}
+                  className="p-3.5 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all rounded-2xl"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {/*
+                      El avatar es la inicial del tag: la foto real de la otra
+                      persona no existe todavía, y un emoji de adorno en una fila
+                      que manda plata es una mentira barata. La inicial es un
+                      hecho —la primera letra de su handle— y no finge ser más.
+                    */}
+                    <div className="w-11 h-11 rounded-full bg-slate-900 text-[#ccff00] font-display font-extrabold text-base flex items-center justify-center shrink-0">
+                      {contact.tag.replace(/^@/, '').slice(0, 1).toUpperCase()}
                     </div>
-                    <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5]" />
+                    <div className="min-w-0">
+                      <span className="text-sm font-bold text-black block leading-tight truncate">
+                        {contact.name ?? `$${contact.tag}`}
+                      </span>
+                      <span className="text-xs text-slate-400 font-medium block mt-0.5 truncate">
+                        {contact.name === null ? '' : `$${contact.tag}`}
+                        {contact.sends > 1 ? ` · ${contact.sends} envíos` : ''}
+                      </span>
+                    </div>
                   </div>
-                ))}
+                  <ChevronDown className="w-4 h-4 text-slate-300 -rotate-90 stroke-[2.5] shrink-0" />
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -1629,7 +1763,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
            borde inferior, y el sobrante lo absorbe el teclado. */
         <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#f3f4f6] select-none">
           {/* Header */}
-          <div className="p-4 pt-5 flex items-center justify-between shrink-0">
+          <div className="p-4 pt-5 max-[360px]:p-3 max-[360px]:pt-3 max-[360px]:pb-2 [@media(max-height:620px)]:pt-2 [@media(max-height:620px)]:pb-1 flex items-center justify-between shrink-0">
             <button
               onClick={() => setCurrentStep('send_lemon_account')}
               type="button"
@@ -1647,13 +1781,28 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
             {/* Destinatario seleccionado */}
             {selectedRecipient && (
               <div className="bg-white rounded-2xl p-3 border border-slate-200/80 flex items-center gap-3 shadow-2xs">
-                <div className={`w-10 h-10 rounded-full ${selectedRecipient.avatarBg} flex items-center justify-center shrink-0`}>
-                  <span className="text-lg">{selectedRecipient.avatarImg}</span>
+                {/*
+                  La inicial del tag, como en la agenda: un dato derivado del
+                  handle, no un avatar inventado de otra persona.
+                */}
+                <div className="w-10 h-10 rounded-full bg-slate-900 text-[#ccff00] font-display font-extrabold flex items-center justify-center shrink-0">
+                  {selectedRecipient.tag.replace(/^@/, '').slice(0, 1).toUpperCase()}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <span className="text-xs text-slate-400 font-medium block">Destinatario</span>
-                  <span className="text-sm font-bold text-black block leading-tight">{selectedRecipient.name}</span>
-                  <span className="text-xs font-semibold text-emerald-600">{selectedRecipient.tag}</span>
+                  {/*
+                    Si la persona no tiene nombre de perfil, el lugar del nombre
+                    lo ocupa su tag: un título vacío arriba del handle se ve
+                    como un dato que no llegó.
+                  */}
+                  {selectedRecipient.name !== null && (
+                    <span className="text-sm font-bold text-black block leading-tight truncate">
+                      {selectedRecipient.name}
+                    </span>
+                  )}
+                  <span className="text-xs font-semibold text-emerald-600">
+                    {selectedRecipient.name === null ? selectedRecipient.tag : `$${selectedRecipient.tag}`}
+                  </span>
                 </div>
               </div>
             )}
@@ -1670,7 +1819,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                 </span>
               </div>
               <span className="text-[11px] text-slate-400 block pt-1 font-medium">
-                Sin comisión · Transferencia instantánea por ReWALLET
+                Comisión y tiempo según la red.
               </span>
             </div>
 
@@ -1772,11 +1921,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
                   >
                     <div className="flex items-center gap-3.5">
-                      <div
-                        className={`w-10 h-10 rounded-full ${known?.iconBg ?? 'bg-slate-200'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                      >
-                        {known?.glyph ?? coin.symbol.slice(0, 1)}
-                      </div>
+                      <AssetIcon
+                        ticker={coin.symbol}
+                        glyph={known?.glyph ?? coin.symbol.slice(0, 1)}
+                        iconBg={known?.iconBg ?? 'bg-slate-200'}
+                        sizeClass="w-10 h-10"
+                      />
                       <div>
                         <span className="text-base font-bold text-black block">{coin.symbol}</span>
                         <span className="text-xs text-slate-400 font-medium block">{coin.name}</span>
@@ -1978,7 +2128,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
          ===================================================================== */}
       {currentStep === 'send_amount' && (
         <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#f3f4f6] select-none">
-          <div className="p-4 pt-5 flex items-center justify-between shrink-0">
+          <div className="p-4 pt-5 max-[360px]:p-3 max-[360px]:pt-3 max-[360px]:pb-2 [@media(max-height:620px)]:pt-2 [@media(max-height:620px)]:pb-1 flex items-center justify-between shrink-0">
             <button
               onClick={() => setCurrentStep('send_dest_input')}
               type="button"
@@ -2011,9 +2161,42 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                 <span className="text-5xl font-black text-black tracking-tight">{keypadAmount}</span>
               </div>
               <span className="text-[11px] text-slate-400 block pt-1 font-medium">
-                {sendAsset === null
-                  ? 'No pudimos leer este activo en la red elegida.'
-                  : `Tu saldo disponible se descuenta de ${sendChainResolved?.label}.`}
+                {/*
+                  El saldo real de esta billetera en la red elegida, y no una
+                  frase que lo mencionaba sin decir cuánto. "Tus saldos se
+                  descontarán de tu cuenta" era verdad sin información: la
+                  pregunta de esta pantalla es cuánto queda, y la respuesta cabe
+                  en una línea.
+
+                  Las dos cifras salen de la misma pieza leída del portfolio: la
+                  cantidad del activo y su valor en dólares. Si esa pieza no se
+                  pudo leer, no se inventa ninguna de las dos.
+                */}
+                {sendBalanceUnit === null ? (
+                  sendAsset === null ? (
+                    'No pudimos leer este activo en la red elegida.'
+                  ) : (
+                    'No pudimos leer tu saldo en esta red.'
+                  )
+                ) : (
+                  <span className="inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+                    <span>
+                      Tu saldo disponible en {sendAsset?.symbol} es{' '}
+                      <span className="font-bold text-slate-600">
+                        {sendBalanceInUsd
+                          ? `U$ ${sendBalanceUnit.usd}`
+                          : sendBalanceUnit.quantity}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSendBalanceInUsd((previous) => !previous)}
+                      className="text-[11px] font-bold text-black underline underline-offset-2 hover:opacity-70 active:scale-95 transition-all cursor-pointer"
+                    >
+                      {sendBalanceInUsd ? 'Ver en unidades' : 'Ver en USD'}
+                    </button>
+                  </span>
+                )}
               </span>
             </div>
 
@@ -2057,7 +2240,7 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
          ===================================================================== */}
       {currentStep === 'send_result' && (
         <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#f3f4f6]">
-          <div className="p-4 pt-5 flex items-center justify-between shrink-0">
+          <div className="p-4 pt-5 max-[360px]:p-3 max-[360px]:pt-3 max-[360px]:pb-2 [@media(max-height:620px)]:pt-2 [@media(max-height:620px)]:pb-1 flex items-center justify-between shrink-0">
             <button
               onClick={() => {
                 if (sendFlow.phase === 'signing' || sendFlow.phase === 'preparing') return;
@@ -2137,6 +2320,38 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     Ver la transacción en la exploradora
                   </a>
                 )}
+              </div>
+            )}
+
+            {/*
+              Los motivos de la politica, cuando los hubo.
+              Van **debajo** del corte y no dentro de el, y el texto no se reescribe
+              aca: lo escribio la regla, en el backend, pensando en la persona que
+              lo va a leer. Esta pantalla solo lo muestra.
+
+              Se muestran tambien cuando el veredicto fue `confirm` y el envio
+              siguio: en ese caso la persona confirmo, el envio lleva el gesto
+              explícito, y el aviso queda como registro de lo que la politica dijo
+              antes de dejarla pasar.
+            */}
+            {sendFlow.policyReasons.length > 0 && (
+              <div className="bg-white rounded-3xl border border-amber-200 p-4 space-y-2 shadow-xs">
+                <span className="text-xs font-bold uppercase text-amber-600 font-display block">
+                  {sendFlow.policyVerdict === 'confirm'
+                    ? 'La política reviso este envio y lo confirmaste'
+                    : 'Por que no se pudo'}
+                </span>
+                {sendFlow.policyReasons.map((reason) => (
+                  <p
+                    key={reason}
+                    className="text-sm font-semibold text-black leading-relaxed flex gap-2"
+                  >
+                    <span aria-hidden className="text-amber-500 shrink-0">
+                      ·
+                    </span>
+                    <span>{reason}</span>
+                  </p>
+                ))}
               </div>
             )}
 
@@ -2228,11 +2443,12 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
                     className="p-4 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all"
                   >
                     <div className="flex items-center gap-3.5">
-                      <div
-                        className={`w-10 h-10 rounded-full ${known?.iconBg ?? 'bg-slate-200'} text-white font-extrabold flex items-center justify-center text-sm shadow-xs`}
-                      >
-                        {known?.glyph ?? c.symbol.slice(0, 1)}
-                      </div>
+                      <AssetIcon
+                        ticker={c.symbol}
+                        glyph={known?.glyph ?? c.symbol.slice(0, 1)}
+                        iconBg={known?.iconBg ?? 'bg-slate-200'}
+                        sizeClass="w-10 h-10"
+                      />
                       <div>
                         {/* Nombre arriba y símbolo abajo, como en *Bitcoin & Crypto*. */}
                         <span className="text-sm font-extrabold text-black block leading-none">{c.name}</span>
@@ -2275,145 +2491,23 @@ export const ActionFlowModal: React.FC<ActionFlowModalProps> = ({
       )}
 
       {/* =====================================================================
-          FLUJO USAR: COMPRAR CRYPTO (ESTILO REUTILIZABLE A CAMBIAR SIN INVERTIR)
+          FLUJO USAR: COMPRAR / VENDER — LA PANTALLA DEL SWAP
          ===================================================================== */}
       {/*
-        FLUJO USAR: COMPRAR / VENDER — ESTACIONADO A PROPOSITO.
-
-        Esta pantalla y la de `use_sell` ya no tienen puerta de entrada: el botón
-        "Usar" de la billetera se sacó porque su menú era exactamente este
-        compraventa, y sin motor de swap una acción que no puede ejecutarse no se
-        ofrece.
-
-        No es código muerto por olvido: es la Fase 2 de
-        `odd/tasks/comprar-o-vender.md`, ya decidida —1inch para EVM, Jupiter
-        para Solana— y ya terminada del lado de la lista real (el mismo
-        `useTradeCatalog`, los mismos saldos, la misma `AssetTradeCard`). Lo que
-        falta es el motor. Cuando exista, la puerta vuelve y estas dos pantallas
-        son las que la reciben.
+        Una sola pantalla para las dos direcciones, con la disposición del
+        estándar de Uniswap. El componente es `SwapScreen`: acá sólo se decide
+        la dirección inicial, y el `key` monta una instancia nueva por
+        dirección, para que el par y el monto de "comprar" no viajen a "vender".
       */}
-      {currentStep === 'use_buy' && (
-        /*
-         * `justify-between` empujaba el bloque entero contra el borde inferior y dejaba
-         * un hueco muerto entre el header y la tarjeta. Ahora la tarjeta vive pegada al
-         * header y el grupo aviso + teclado va justo debajo: no queda espacio basura ni
-         * arriba ni en el medio.
-         *
-         * Lo que sobra de la pantalla lo absorbe el TECLADO (`flex-1 auto-rows-fr`),
-         * no un hueco: en un teléfono alto las teclas crecen hasta llenar la pantalla y
-         * quedan al alcance del pulgar; en uno bajo caen a su tamaño natural
-         * (`min-h-[212px]`, 4 filas de 48px más gaps) y la pantalla scrollea en vez de
-         * recortar. `pb-6` evita que la última fila quede pegada al borde o debajo de
-         * la barra del teléfono.
-         */
-        <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#f8f9fa] select-none">
-          {/* Header */}
-          <div className="p-4 pt-5 flex items-center justify-between shrink-0">
-            <button
-              onClick={() => setCurrentStep('initial')}
-              type="button"
-              className="w-11 h-11 rounded-full bg-white flex items-center justify-center text-black shadow-2xs hover:bg-slate-50 cursor-pointer border border-slate-200/60"
-            >
-              <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
-            </button>
-            <h2 className="text-base font-extrabold font-display text-black">Comprar</h2>
-            <div className="w-9" />
-          </div>
-
-          <div className="px-5 pt-1 max-w-sm mx-auto w-full">
-            <AssetTradeCard
-              trade={buyTrade}
-              sourceTitle="Quiero usar"
-              destinationTitle="Para comprar"
-              sourcePickerLabel="Elegir la moneda de la que querés salir"
-              destinationPickerLabel="Elegir la moneda que querés comprar"
-            />
-          </div>
-
-          <div className="flex-1 flex flex-col px-5 pt-3 pb-6 space-y-3 max-w-sm mx-auto w-full">
-            {/*
-              Sin botón, y a propósito.
-
-              El que estaba acá pintaba confeti y un `alert` de compra
-              completada sin haber hecho ninguna llamada. Un control que no
-              ejecuta nada no debe tener la forma de un control: se dice que la
-              operación no existe y la pantalla sigue sirviendo para elegir
-              activos y ver saldos, que eso sí es real.
-            */}
-            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
-              {TRADE_UNAVAILABLE_TEXT}
-            </p>
-
-            {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
-            <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] auto-rows-fr">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'backspace'].map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => handleKeypadPress(k)}
-                  className="h-full py-3 bg-white hover:bg-slate-100 rounded-xl font-display font-extrabold text-base text-black active:scale-95 transition-all shadow-2xs flex items-center justify-center cursor-pointer"
-                >
-                  {k === 'backspace' ? <ArrowLeft className="w-4 h-4 stroke-[2.5]" /> : k}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-          FLUJO USAR: VENDER CRYPTO (ESTILO REUTILIZABLE A CAMBIAR SIN INVERTIR)
-         ===================================================================== */}
-      {currentStep === 'use_sell' && (
-        /* Mismo reparto que en `use_buy`: la tarjeta arriba, el teclado abajo. */
-        <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#f8f9fa] select-none">
-          {/* Header */}
-          <div className="p-4 pt-5 flex items-center justify-between shrink-0">
-            <button
-              onClick={() => setCurrentStep('initial')}
-              type="button"
-              className="w-11 h-11 rounded-full bg-white flex items-center justify-center text-black shadow-2xs hover:bg-slate-50 cursor-pointer border border-slate-200/60"
-            >
-              <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
-            </button>
-            <h2 className="text-base font-extrabold font-display text-black">Vender</h2>
-            <div className="w-9" />
-          </div>
-
-          <div className="px-5 pt-1 max-w-sm mx-auto w-full">
-            <AssetTradeCard
-              trade={sellTrade}
-              sourceTitle="Quiero vender"
-              destinationTitle="Para recibir"
-              sourcePickerLabel="Elegir la moneda que querés vender"
-              destinationPickerLabel="Elegir la moneda que querés recibir"
-            />
-          </div>
-
-          <div className="flex-1 flex flex-col px-5 pt-3 pb-6 space-y-3 max-w-sm mx-auto w-full">
-            {/*
-              Sin botón, y por lo mismo que en "Comprar": el de acá pintaba
-              confeti y anunciaba una venta completada que nadie ejecutó.
-            */}
-            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
-              {TRADE_UNAVAILABLE_TEXT}
-            </p>
-
-            {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
-            <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] auto-rows-fr">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'backspace'].map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => handleKeypadPress(k)}
-                  className="h-full py-3 bg-white hover:bg-slate-100 rounded-xl font-display font-extrabold text-base text-black active:scale-95 transition-all shadow-2xs flex items-center justify-center cursor-pointer"
-                >
-                  {k === 'backspace' ? <ArrowLeft className="w-4 h-4 stroke-[2.5]" /> : k}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+      {(currentStep === 'use_buy' || currentStep === 'use_sell') && (
+        <SwapScreen
+          key={currentStep}
+          direction={currentStep === 'use_sell' ? 'sell' : 'buy'}
+          onBack={() => setCurrentStep('initial')}
+          depositInfo={depositInfo}
+          holdings={holdings}
+          balance={balance}
+        />
       )}
     </div>
   );

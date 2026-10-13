@@ -32,6 +32,9 @@ const store = (behaviour: { readonly duplicate?: boolean } = {}) => {
     async listForPerson() {
       return [];
     },
+    async metrics() {
+      return { walletsCreated: 0, activeUsers24h: 0, signIns: 0 };
+    },
   };
   return { stored, webhookStore };
 };
@@ -44,6 +47,9 @@ const unusableStore = (): WebhookEventStore => ({
   async listForPerson() {
     return [];
   },
+    async metrics() {
+      return { walletsCreated: 0, activeUsers24h: 0, signIns: 0 };
+    },
 });
 
 const ingest = (webhookStore: WebhookEventStore, toleranceSeconds?: number) =>

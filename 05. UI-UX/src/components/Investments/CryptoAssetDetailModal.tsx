@@ -1,11 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Heart,
   ArrowDown,
   ArrowUp,
   ChevronRight,
-  QrCode,
+  /*
+   * El ícono de la librería de íconos y el componente que dibuja un QR de
+   * verdad se llaman casi igual, y por eso el primero entra con otro nombre.
+   * Un ícono es un dibujo: ninguna cámara lo lee.
+   */
+  QrCode as QrCodeIcon,
   Copy,
   Check,
   CheckCircle2,
@@ -13,15 +18,26 @@ import {
   Clipboard,
   Layers,
   Sparkles,
+  TrendingUp,
+  TrendingDown,
 } from 'lucide-react';
 import { AssetTradeCard } from '../common';
-import { defaultDisplayCurrency } from '../../config/displayCurrency';
+import { QrCode } from '../common/QrCode';
+import { PriceChart } from './PriceChart';
+import { usePriceHistory } from '../../hooks/usePriceHistory';
 import {
   TRADE_UNAVAILABLE_TEXT,
   useAssetTrade,
   useTradeCatalog,
 } from '../../hooks/useAssetTrade';
 import { assetOrDefault } from '../../config/markets';
+import { isSwapMockEnabled, quoteSwapMock } from '../../services/swap';
+import {
+  readContacts as fetchContacts,
+  EMPTY_CONTACTS,
+  type ContactsView,
+  type RewalletContact,
+} from '../../services/contacts';
 import type { PortfolioHolding } from '../../services/portfolio';
 import type { DepositInfoView } from '../../hooks/useDepositInfo';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
@@ -144,25 +160,36 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
   balance,
 }) => {
   const [currentView, setCurrentView] = useState<ModalView>('overview');
-  /*
-   * El interruptor USD | ARS sigue siendo una decisión de la persona, y lo que
-   * decide acá es por dónde se abre. Esa apertura no está escrita en esta línea
-   * a propósito: sale de `config/displayCurrency`, que es donde vive la decisión
-   * de qué moneda muestra la app y que hoy está atada a que no hay rampas.
-   */
-  const [currencyMode, setCurrencyMode] = useState<'USD' | 'ARS'>(defaultDisplayCurrency);
   const [timeframe, setTimeframe] = useState<'24H' | '7D' | '1M' | '1A' | 'MAX'>('24H');
   const [isFavorite, setIsFavorite] = useState(false);
   const [keypadAmount, setKeypadAmount] = useState('0');
   const [lemontagSearch, setLemontagSearch] = useState('');
+  /*
+   * El destinatario son **datos del contacto real** que se acaba de elegir: su
+   * nombre de perfil si lo tiene, y su tag siempre. El nombre puede venir `null`
+   * desde la API, porque es un dato de perfil que no está garantizado.
+   */
   const [selectedRecipient, setSelectedRecipient] = useState<{
-    name: string;
+    name: string | null;
     tag: string;
-    avatarBg: string;
-    avatarImg: string;
   } | null>(null);
+  /*
+   * La agenda: quién recibió plata **desde esta billetera**. Antes eran cinco
+   * contactos escritos en el JSX, con nombres y tags de personas reales, y
+   * tocar una fila mandaba el envío a una de ellas: una lista que no sale de tus
+   * envíos es una lista de destinos, no una agenda. Ahora sale de la misma fuente
+   * que usa el modal de acción, y sus estados son honestos —cargando, error y
+   * lista vacía son tres hechos distintos y se muestran distinto.
+   */
+  const [contacts, setContacts] = useState<ContactsView>(EMPTY_CONTACTS);
   const [destinationAddress, setDestinationAddress] = useState('');
   const [copied, setCopied] = useState(false);
+
+  // Price history from CoinGecko
+  const { data: priceHistory, marketData, loading: priceLoading, error: priceError } = usePriceHistory(
+    asset?.ticker,
+    timeframe
+  );
 
   /*
    * El par de conversión de las dos pantallas de teclado.
@@ -195,6 +222,45 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
   const tradeCatalog = useTradeCatalog({ depositInfo, holdings, balance });
 
   /*
+   * La agenda se lee cuando se abre la pantalla de "Ingresá el $ReTag", no antes.
+   *
+   * Es una lectura de lo que **esta** billetera ya mandó, así que no tiene sentido
+   * pagarla al abrir el modal: se pide cuando alguien la va a mirar.
+   */
+  useEffect(() => {
+    if (currentView !== 'send_lemon' || contacts.status !== 'idle') return;
+
+    let alive = true;
+    setContacts({ status: 'loading', contacts: [] });
+    fetchContacts()
+      .then((view) => {
+        if (alive) setContacts(view);
+      })
+      .catch(() => {
+        if (alive) setContacts({ status: 'error', contacts: [] });
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [currentView, contacts.status]);
+
+  /*
+   * Los contactos que se ven: los reales, filtrados por lo que se escribió en el
+   * buscador. Se filtra por nombre **y** por tag, porque el campo dice "Buscá por
+   * $ReTag": lo que la persona tiene a mano es el handle.
+   */
+  const filteredContacts: readonly RewalletContact[] = useMemo(() => {
+    const needle = lemontagSearch.trim().toLowerCase();
+    if (needle.length === 0) return contacts.contacts;
+    return contacts.contacts.filter(
+      (contact) =>
+        contact.tag.toLowerCase().includes(needle) ||
+        (contact.name ?? '').toLowerCase().includes(needle),
+    );
+  }, [contacts.contacts, lemontagSearch]);
+
+  /*
    * Comprar sale de los Dólares Digitales y llega al activo que se está viendo;
    * vender y cambiar salen de ese activo y llegan a los dólares.
    *
@@ -209,12 +275,29 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
     initialSource: assetOrDefault('USDC'),
     initialDestination: assetForTrade,
   });
+  /*
+   * Si la cotización simulada está puesta, esta pantalla lo dice y lo muestra.
+   *
+   * Se lee una sola vez para que la bandera no pueda valer una cosa al pedir la
+   * cotización y otra al dibujarla: con dos lecturas, un bundle partido en
+   * pedazos podría mostrar el precio simulado sin el cartel que lo delata, que
+   * es exactamente el estado que hay que volver imposible.
+   */
+  const swapIsSimulated = isSwapMockEnabled();
+
   const swapTrade = useAssetTrade({
     amountText: keypadAmount,
     setAmountText: setKeypadAmount,
     catalog: tradeCatalog,
     initialSource: assetForTrade,
     initialDestination: assetOrDefault('USDC'),
+    /*
+     * La simulación entra sólo si la bandera está encendida, y va acá y no en
+     * las otras dos hojas a propósito: `swapTrade` es la única que puede mostrar
+     * el precio, y habilitar el mock en más de un lugar multiplica los sitios
+     * donde alguien puede olvidarse de apagarlo.
+     */
+    quoteSwap: swapIsSimulated ? quoteSwapMock : undefined,
   });
   const sellTrade = useAssetTrade({
     amountText: keypadAmount,
@@ -293,6 +376,17 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
       : (networksForAsset[Math.min(selectedNetworkIndex, networksForAsset.length - 1)] ?? null);
   const selectedNetwork = selectedNetworkEntry?.name ?? null;
   const depositAddress = selectedNetworkEntry?.address ?? null;
+
+  /**
+   * Lo que se codifica en el QR de $ReTag: el tag de esta persona, el mismo
+   * que está escrito debajo del código.
+   *
+   * Es el identificador que el flujo de envío acepta como destino, y viene por
+   * prop desde la agenda de la app. Sin tag no hay nada que codificar, y un QR
+   * de una cadena vacía no es un QR: es un rectángulo blanco que se presenta
+   * como si se pudiera escanear.
+   */
+  const retagValue = (userTag ?? '').trim();
 
   return (
     <div className="absolute inset-0 z-50 bg-[#f3f4f6] text-black flex flex-col justify-between safe-top-0 safe-bottom-0 select-none animate-in fade-in duration-200 overflow-hidden font-sans w-full max-w-md mx-auto">
@@ -412,92 +506,84 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </div>
             </div>
 
-            {/* Toggle de Moneda [ USD | ARS ] */}
-            <div className="flex justify-center pt-2">
-              <div className="bg-slate-200/80 p-1 rounded-2xl flex items-center gap-1 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setCurrencyMode('USD')}
-                  className={`px-6 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                    currencyMode === 'USD'
-                      ? 'bg-white text-black shadow-xs'
-                      : 'text-slate-500 hover:text-black'
-                  }`}
-                >
-                  USD
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCurrencyMode('ARS')}
-                  className={`px-6 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                    currencyMode === 'ARS'
-                      ? 'bg-white text-black shadow-xs'
-                      : 'text-slate-500 hover:text-black'
-                  }`}
-                >
-                  ARS
-                </button>
-              </div>
-            </div>
+            
 
-            {/*
-              Precio y variación.
-
-              Antes esta fila pintaba `formatFiat(currentPriceUsd, currencyMode)`
-              con el precio de la tabla de `config/markets` —y su
-              `'-1,15%'` de repuesto cuando no venía nada— así que un activo sin
-              precio de tabla se veía en cero, y la variación era un número fijo
-              para todos. `/api/portfolio` no trae precios ni variaciones, así que
-              acá se dice que no hay dato: el precio queda en blanco y la
-              variación **no se pinta**, en lugar de inventarla para llenar.
-            */}
+{/* Precio actual y variación 24h — datos reales de CoinGecko */}
             <div className="text-center space-y-0.5 pt-1">
               <div className="flex items-baseline justify-center gap-1.5 font-display">
-                <span className="text-2xl font-black text-slate-300">—</span>
-                <span className="text-xs font-bold text-slate-400">
-                  {currencyMode}
-                </span>
+                {marketData !== null && marketData.currentPrice > 0 ? (
+                  <>
+                    <span className="text-2xl font-black text-black tracking-tight">
+                      U${marketData.currentPrice.toLocaleString('en-US', {
+                        minimumFractionDigits: marketData.currentPrice >= 1 ? 2 : 6,
+                        maximumFractionDigits: marketData.currentPrice >= 1 ? 2 : 6,
+                      })}
+                    </span>
+                    <span className="text-xs font-bold text-slate-400">USD</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-2xl font-black text-slate-300">—</span>
+                    <span className="text-xs font-bold text-slate-400">USD</span>
+                  </>
+                )}
               </div>
-              {asset.change24h.length > 0 && (
-                <span
-                  className={`text-xs font-bold ${
-                    asset.isPositive ? 'text-emerald-500' : 'text-red-500'
-                  }`}
-                >
-                  {asset.change24h}
+              {marketData?.change24h !== null && marketData?.change24h !== undefined && (
+                <div className="flex items-center justify-center gap-1">
+                  {marketData.change24h >= 0 ? (
+                    <TrendingUp className="w-3 h-3 text-emerald-500 stroke-[2]" />
+                  ) : (
+                    <TrendingDown className="w-3 h-3 text-red-500 stroke-[2]" />
+                  )}
+                  <span className={`text-xs font-bold ${marketData.change24h >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                    {marketData.change24h >= 0 ? '+' : ''}{marketData.change24h.toFixed(2)}%
+                  </span>
+                </div>
+              )}
+              {priceError && (
+                <span className="text-[11px] text-amber-600 font-medium">
+                  {priceError}
                 </span>
               )}
             </div>
 
-            {/*
-              Aquí ya no hay gráfico.
-
-              Antes dibujaba una curva púrpura fija en el SVG —la misma para todos los
-              activos, idéntica para Bitcoin y para el activo que saliera al
-             azar— y sin ninguna serie de precios detrás. Una curva ascendente
-              dibujada sin datos no es decoración: es la forma de una ganancia.
-              La persona la lee como “esto subió” y no hay nada medido detrás.
-
-              `/api/portfolio` no trae precios ni variaciones, y este archivo ya
-              lo decía arriba: el precio se muestra como guion. El gráfico se
-              va con la misma regla —si no hay serie, no hay curva— y en su lugar
-              queda el mismo espacio con un estado vacío que forma parte de la
-              pantalla en vez de una apology.
-
-              Los selectores de período quedan: son una elección de la persona y no
-              son un dato. Cuando exista la serie, la curva vuelve a este mismo
-              lugar.
+{/*
+              Aquí ya no hay gráfico fijo: ahora usamos datos reales de CoinGecko.
+              
+              Cuando exista la serie, la curva vuelve a este mismo lugar.
             */}
-            <div className="w-full h-44 relative flex items-center justify-center overflow-hidden">
-              <div className="space-y-1.5 text-center px-8">
-                <span className="text-sm font-bold text-slate-500 block">
-                  Todavía no hay gráfico
-                </span>
-                <span className="text-[11px] text-slate-400 font-medium block leading-snug">
-                  No estamos leyendo precios, así que no hay nada honesto que dibujar
-                  acá.
-                </span>
-              </div>
+            <div className="w-full h-44 relative flex items-center justify-center overflow-hidden bg-white rounded-xl border border-slate-100">
+              {priceLoading ? (
+                <div className="space-y-1.5 text-center px-8">
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm font-bold text-slate-500">Cargando gráfico…</span>
+                  </div>
+                </div>
+              ) : priceError ? (
+                <div className="space-y-1.5 text-center px-8">
+                  <span className="text-sm font-bold text-amber-600 block">No se pudo cargar el gráfico</span>
+                  <span className="text-[11px] text-slate-400 font-medium block leading-snug">
+                    {priceError}
+                  </span>
+                </div>
+              ) : priceHistory.length > 0 ? (
+                <PriceChart
+                  data={priceHistory}
+                  strokeColor="#1a1a2e"
+                  fillColor="rgba(26, 26, 46, 0.15)"
+                  showArea
+                  showGrid
+                />
+              ) : (
+                <div className="space-y-1.5 text-center px-8">
+                  <span className="text-sm font-bold text-slate-500 block">Sin datos de precio</span>
+                  <span className="text-[11px] text-slate-400 font-medium block leading-snug">
+                    No hay serie histórica disponible para este activo
+                  </span>
+                </div>
+              )}
+            </div>
             </div>
 
             {/* Selector de Periodo [ 24H | 7D | 1M | 1A | MAX ] */}
@@ -516,20 +602,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                   {tf}
                 </button>
               ))}
-            </div>
-          </div>
-
-          {/*
-            ACÁ ESTABA LA HOJA DE COMPRAVENTA: "Comprá" y "Vendé".
-
-            Es el mismo menú que "Usar" tenía en la billetera, y se va por la
-            misma razón: las dos opciones son cambio de activo y no hay motor
-            de swap que las ejecute. Una acción que no se puede hacer no se
-            ofrece. Las dos pantallas que abría —`buy_keypad` y `sell_keypad`—
-            quedan más abajo, estacionadas a propósito: son la Fase 2 ya
-            decidida, con el catálogo real y los saldos reales ya resueltos.
-            Falta el motor, no la pantalla.
-          */}
+</div>
         </div>
       )}
 
@@ -569,7 +642,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                     $ReTag
                   </span>
                   <span className="text-xs text-slate-400 font-medium block mt-0.5 leading-snug">
-                    Recibí criptomonedas de tus amigos que utilizan ReWALLET. ¡Es instantáneo y gratuito!
+                    Recibí de tus amigos que utilizan ReWALLET sin que ReWALLET te cobre nada.
                   </span>
                 </div>
               </div>
@@ -655,12 +728,28 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 </div>
               </div>
 
+              {/*
+                EL QR DE $ReTag.
+
+                Antes esto no era un QR: era el ícono de un QR de la librería de
+                íconos, que es un dibujo y ninguna cámara lo leía. Ahora los
+                módulos se calculan del tag real de esta persona —el mismo que
+                está escrito abajo y el mismo que copia "Compartir datos"— y si
+                no hay tag, en lugar del código aparece el aviso: un código en
+                blanco es peor que un aviso, porque se presenta como escaneable.
+              */}
               <div className="relative w-60 h-60 mx-auto bg-black p-3.5 rounded-[32px] flex items-center justify-center shadow-xs">
-                <div className="w-full h-full bg-white rounded-2xl flex items-center justify-center p-3 relative overflow-hidden">
-                  <QrCode className="w-full h-full text-black stroke-[1.15]" />
-                  <div className="w-13 h-13 rounded-full border-[3px] border-white bg-slate-900 shadow-md flex items-center justify-center text-base text-[#ccff00] absolute">
-                    👾
-                  </div>
+                <QrCode
+                  value={retagValue}
+                  label="Código QR de tu $ReTag para recibir en ReWALLET"
+                  size={186}
+                  className="w-full"
+                  fallback="No tenemos un $ReTag tuyo para dibujar el código."
+                />
+                {/* El avatar va por encima, como el diseño, pero no tapa los
+                    datos: los lectores del QR siguen leyendo los módulos. */}
+                <div className="w-13 h-13 rounded-full border-[3px] border-white bg-slate-900 shadow-md flex items-center justify-center text-base text-[#ccff00] absolute pointer-events-none">
+                  👾
                 </div>
               </div>
 
@@ -691,11 +780,11 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               <h3 className="text-base font-extrabold text-black">Información Importante</h3>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">Comisión</span>
-                <p className="text-base font-black text-black">Sin comisiones</p>
+                <p className="text-base font-black text-black">ReWALLET no te cobra nada</p>
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">En tu cuenta</span>
-                <p className="text-base font-black text-black">Instantánea</p>
+                <p className="text-base font-black text-black">1 a 3 minutos</p>
               </div>
             </div>
           </div>
@@ -744,12 +833,28 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 </div>
               </div>
 
+              {/*
+                EL QR DE LA DIRECCIÓN DE DEPÓSITO.
+
+                Lo mismo que arriba y por lo mismo: el ícono era un dibujo, no un
+                código. La dirección sale de `networks[].address`, que es la de
+                esta persona en la red elegida, y el aviso aparece cuando esa
+                cadena no trajo dirección.
+              */}
               <div className="relative w-60 h-60 mx-auto bg-black p-3.5 rounded-[32px] flex items-center justify-center shadow-xs">
-                <div className="w-full h-full bg-white rounded-2xl flex items-center justify-center p-3 relative">
-                  <QrCode className="w-full h-full text-black stroke-[1.15]" />
-                  <div className={`w-10 h-10 rounded-xl ${asset.iconBg} text-white flex items-center justify-center font-bold text-xs absolute shadow-md`}>
-                    {asset.iconText}
-                  </div>
+                <QrCode
+                  value={depositAddress ?? ''}
+                  label={`Código QR de tu dirección de ${asset.ticker} en ${selectedNetwork ?? 'la red elegida'}`}
+                  size={186}
+                  className="w-full"
+                  fallback={
+                    depositAddress === null
+                      ? `No hay una dirección de depósito de ${asset.ticker} en ${selectedNetwork ?? 'esta red'}. Elegí otra red para recibir.`
+                      : 'No pudimos dibujar el código. La dirección de abajo sirve igual.'
+                  }
+                />
+                <div className={`w-10 h-10 rounded-xl ${asset.iconBg} text-white flex items-center justify-center font-bold text-xs absolute shadow-md pointer-events-none`}>
+                  {asset.iconText}
                 </div>
               </div>
 
@@ -777,20 +882,20 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 </div>
               </div>
 
-              <button
-                type="button"
-                disabled={depositAddress === null}
-                onClick={() => depositAddress !== null && handleCopy(depositAddress)}
-                className="w-full py-4 rounded-2xl bg-black text-white font-bold text-sm cursor-pointer active:scale-98 transition-transform disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Compartir datos
-              </button>
-            </div>
+              {/*
+                SE FUERON DOS COSAS DE ESTA PANTALLA, y son las mismas que se
+                sacaron del depósito de la billetera.
 
-            {/* Advertencia */}
-            <p className="text-xs text-slate-500 text-center leading-relaxed px-2 font-medium">
-              Asegurate de depositar {asset.ticker} desde la red {selectedNetwork ?? 'elegida'}. De lo contrario, podrías perder tus fondos.
-            </p>
+                El botón "Compartir datos" y el aviso "Asegurate de depositar…".
+                El botón repetía el ícono de copiar que está al lado de la
+                dirección, y el aviso competía con la red y el código, que ya
+                están arriba.
+
+                Como todo lo de acá sale de variables —el activo, la red, la
+                dirección—, este cambio es **uno solo** para todo el catálogo de
+                criptoactivos. No hay una pantalla por activo.
+              */}
+            </div>
 
             {/* Card Verde Lima: Información Importante */}
             <div className="bg-[#ccff00] rounded-[28px] p-5 space-y-3 shadow-sm text-black">
@@ -807,7 +912,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">Comisión</span>
-                <p className="text-base font-black text-black">Sin comisiones</p>
+                <p className="text-base font-black text-black">ReWALLET no te cobra nada</p>
               </div>
               <div>
                 <span className="text-xs text-black/70 font-semibold block">En tu cuenta</span>
@@ -1003,14 +1108,67 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
 
           <div className="flex-1 flex flex-col px-5 pt-3 pb-6 space-y-3 max-w-sm mx-auto w-full">
             {/*
-              Sin botón, y por la misma decisión del flujo "Usar": no hay motor,
-              así que la acción no existe y no se ofrece. El texto es el mismo de
-              las otras pantallas —vive en `useAssetTrade`— porque cinco pantallas
-              diciendo la verdad con cinco palabras distintas vuelven a mentir.
+              Sin motor no hay precio, y sin precio no hay nada que ofrecer. El
+              texto es el mismo de las otras pantallas —vive en `useAssetTrade`—
+              porque cinco pantallas diciendo la verdad con cinco palabras
+              distintas vuelven a mentir.
+
+              El número simulado aparece **sólo** con la bandera encendida, y
+              aparece junto al cartel que lo delata, en la misma pantalla. Un
+              precio inventado sin la palabra "simulado" al lado es la forma
+              más convincente de mentir, así que los dos viajan juntos o no
+              viaja ninguno.
             */}
-            <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
-              {TRADE_UNAVAILABLE_TEXT}
-            </p>
+            {swapIsSimulated && swapTrade.equivalentText !== '' ? (
+              <>
+                <p className="text-center text-xs font-extrabold uppercase tracking-wide leading-relaxed text-amber-900 bg-amber-100 rounded-2xl border-2 border-amber-500 px-4 py-3">
+                  Cotización simulada: datos falsos, no mueve dinero
+                </p>
+                <div className="text-center space-y-2">
+                  {/* `equivalentText` ya trae el par adentro: prefijarlo otra vez duplicaba el símbolo. */}
+                  <p className="font-medium text-black">{swapTrade.equivalentText}</p>
+                  <p className="text-sm text-slate-500">
+                    {swapTrade.sourceAmountText} de {swapTrade.source.ticker} →{' '}
+                    {swapTrade.destinationAmountText} de {swapTrade.destination.ticker}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      /*
+                       * No hay firma y no hay transacción: lo único que pasa es
+                       * un aviso para quien esté mirando.
+                       *
+                       * El identificador sale con el prefijo `simulado-` y no
+                       * como 64 caracteres hexadecimales. Uno que empiece con
+                       * `0x` ya se lee como una transacción, y acá no hubo
+                       * ninguna: una billetera no muestra el comprobante de algo
+                       * que no ocurrió.
+                       */
+                      const simulatedId = `simulado-${Math.random().toString(36).slice(2, 10)}`;
+                      window.dispatchEvent(
+                        new CustomEvent('mock-swap-executed', {
+                          /*
+                           * Sin `quoteId`: el hook no lo expone, y el que arma el
+                           * mock lo inventa él mismo. Un identificador de
+                           * cotización que no salió de ninguna cotización no tiene
+                           * por qué viajar a ningún lado.
+                           */
+                          detail: { simulated: true, simulatedId },
+                        }),
+                      );
+                      setCurrentView('overview');
+                    }}
+                    className="w-full py-3 rounded-2xl bg-black text-white font-bold text-sm cursor-pointer active:scale-95 transition-all shadow-md hover:bg-slate-900"
+                  >
+                    Simular el swap (no mueve dinero)
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="text-center text-xs font-semibold leading-relaxed text-slate-500 bg-white rounded-2xl border border-slate-200 px-4 py-3">
+                {TRADE_UNAVAILABLE_TEXT}
+              </p>
+            )}
 
             {/* TECLADO NUMÉRICO: crece con la pantalla para no dejar hueco muerto */}
             <div className="grid grid-cols-3 gap-1.5 pt-1 flex-1 min-h-[212px] auto-rows-fr">
@@ -1066,7 +1224,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                       $ReTag
                     </span>
                     <span className="text-xs text-slate-400 font-medium block mt-1 leading-snug">
-                      Enviá criptomonedas a tus amigos que utilizan ReWALLET. Gratis e instantánea.
+                      Enviá criptomonedas a tus amigos que utilizan ReWALLET. Se mueve en la red: paga la comisión y llega según la cadena.
                     </span>
                   </div>
                 </div>
@@ -1140,13 +1298,12 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 >
                   <Copy className="w-5 h-5 stroke-[2]" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setLemontagSearch('$lujyyctz')}
-                  className="p-1 hover:opacity-70 active:scale-90"
-                >
-                  <QrCode className="w-5 h-5 stroke-[2]" />
-                </button>
+                {/*
+                  El botón de "Escanear QR" escribía un tag inventado en el campo.
+                  Tampoco escaneaba: en esta pantalla no hay lector de QR, así que
+                  su única función era la demo y se saca en vez de dejarla
+                  escribiendo un destino falso.
+                */}
               </div>
             </div>
 
@@ -1162,42 +1319,69 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
               </button>
             </div>
 
-            <div className="bg-white rounded-[32px] p-2 shadow-sm border border-slate-200/80 divide-y divide-slate-100 overflow-hidden">
-              {[
-                { name: 'Luján Del Rosario Cortez', tag: '$lujyyctz', avatarBg: 'bg-emerald-500', avatarImg: '👾' },
-                { name: 'Nicolas Facundo Chaves', tag: '$faccha20', avatarBg: 'bg-yellow-400', avatarImg: '🤠' },
-                { name: 'Steven Antonio Galeano Bañol', tag: '$rapsesino', avatarBg: 'bg-orange-300', avatarImg: '🧑‍💻' },
-                { name: 'Santiago Fernando Diaz Arak...', tag: '$santiagodiazdj2', avatarBg: 'bg-indigo-500', avatarImg: '⚡' },
-                { name: 'Taiel Miranda', tag: '$taiel.miranda.okkk', avatarBg: 'bg-emerald-500', avatarImg: '🐼' },
-              ]
-                .filter((c) =>
-                  lemontagSearch.trim()
-                    ? c.name.toLowerCase().includes(lemontagSearch.toLowerCase()) ||
-                      c.tag.toLowerCase().includes(lemontagSearch.toLowerCase())
-                    : true
-                )
-                .map((contact) => (
-                  <div
-                    key={contact.tag}
-                    onClick={() => {
-                      setSelectedRecipient(contact);
-                      setKeypadAmount('0');
-                      setCurrentView('send_lemon_amount');
-                    }}
-                    className="p-3.5 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all rounded-2xl"
-                  >
-                    <div className="flex items-center gap-3.5">
-                      <div className={`w-11 h-11 rounded-full ${contact.avatarBg} p-0.5 flex items-center justify-center overflow-hidden shadow-xs shrink-0`}>
-                        <span className="text-xl">{contact.avatarImg}</span>
-                      </div>
-                      <div>
-                        <span className="text-sm font-bold text-black block leading-tight">{contact.name}</span>
-                        <span className="text-xs text-slate-400 font-medium block mt-0.5">{contact.tag}</span>
-                      </div>
+<div className="bg-white rounded-[32px] p-2 shadow-sm border border-slate-200/80 divide-y divide-slate-100 overflow-hidden">
+              {contacts.status === 'loading' && (
+                <p className="p-4 text-sm font-medium text-slate-400">Cargando a quién le enviaste…</p>
+              )}
+
+              {contacts.status === 'error' && (
+                /*
+                 * No se pudo leer la agenda. La alternativa —una lista vacía—
+                 * diría "nunca enviaste a nadie", que es un hecho distinto del que
+                 * sabemos, así que esto es una ausencia declarada.
+                 */
+                <div className="p-4 space-y-1">
+                  <p className="text-sm font-bold text-black">No pudimos leer tus contactos.</p>
+                  <p className="text-xs font-medium text-slate-500 leading-snug">
+                    Podés igual escribir el $ReTag de arriba y enviarle.
+                  </p>
+                </div>
+              )}
+
+              {contacts.status === 'ready' && filteredContacts.length === 0 && (
+                <div className="p-4 space-y-1">
+                  <p className="text-sm font-bold text-black">
+                    {lemontagSearch.trim().length > 0
+                      ? 'Nadie coincide con esa búsqueda.'
+                      : 'Todavía no le enviaste plata a nadie.'}
+                  </p>
+                  <p className="text-xs font-medium text-slate-500 leading-snug">
+                    {lemontagSearch.trim().length > 0
+                      ? 'Probá con otro tag.'
+                      : 'Cada $reWALLET a quien le envíes aparece acá, para no tener que escribir su tag.'}
+                  </p>
+                </div>
+              )}
+
+              {filteredContacts.map((contact) => (
+                <div
+                  key={contact.tag}
+                  onClick={() => {
+                    setSelectedRecipient({ name: contact.name, tag: contact.tag });
+                    setKeypadAmount('0');
+                    setCurrentView('send_lemon_amount');
+                  }}
+                  className="p-3.5 flex items-center justify-between hover:bg-slate-50 cursor-pointer active:scale-99 transition-all rounded-2xl"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {/* La inicial del tag: un dato derivado del handle, no un avatar inventado. */}
+                    <div className="w-11 h-11 rounded-full bg-slate-900 text-[#ccff00] font-display font-extrabold text-base flex items-center justify-center shrink-0">
+                      {contact.tag.replace(/^@/, '').slice(0, 1).toUpperCase()}
                     </div>
-                    <ChevronRight className="w-4 h-4 text-slate-300 stroke-[2.5]" />
+                    <div className="min-w-0">
+                      {/* Sin nombre de perfil, el lugar del nombre lo ocupa el tag. */}
+                      <span className="text-sm font-bold text-black block leading-tight truncate">
+                        {contact.name ?? `$${contact.tag}`}
+                      </span>
+                      <span className="text-xs text-slate-400 font-medium block mt-0.5 truncate">
+                        {contact.name === null ? '' : `$${contact.tag}`}
+                        {contact.sends > 1 ? ` · ${contact.sends} envíos` : ''}
+                      </span>
+                    </div>
                   </div>
-                ))}
+                  <ChevronRight className="w-4 h-4 text-slate-300 stroke-[2.5]" />
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -1227,13 +1411,19 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
           <div className="flex-1 flex flex-col px-5 pb-6 space-y-4 max-w-sm mx-auto w-full">
             {selectedRecipient && (
               <div className="bg-white rounded-2xl p-3 border border-slate-200/80 flex items-center gap-3 shadow-2xs">
-                <div className={`w-10 h-10 rounded-full ${selectedRecipient.avatarBg} flex items-center justify-center shrink-0`}>
-                  <span className="text-lg">{selectedRecipient.avatarImg}</span>
+                {/* La inicial del tag, como en la agenda: dato derivado del handle. */}
+                <div className="w-10 h-10 rounded-full bg-slate-900 text-[#ccff00] font-display font-extrabold flex items-center justify-center shrink-0">
+                  {selectedRecipient.tag.replace(/^@/, '').slice(0, 1).toUpperCase()}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <span className="text-xs text-slate-400 font-medium block">Destinatario</span>
-                  <span className="text-sm font-bold text-black block leading-tight">{selectedRecipient.name}</span>
-                  <span className="text-xs font-semibold text-emerald-600">{selectedRecipient.tag}</span>
+                  {/* Sin nombre de perfil, el lugar del nombre lo ocupa el tag. */}
+                  <span className="text-sm font-bold text-black block leading-tight truncate">
+                    {selectedRecipient.name ?? `$${selectedRecipient.tag}`}
+                  </span>
+                  <span className="text-xs font-semibold text-emerald-600 truncate">
+                    {selectedRecipient.name === null ? '' : `$${selectedRecipient.tag}`}
+                  </span>
                 </div>
               </div>
             )}
@@ -1249,7 +1439,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                 <span className="text-lg font-bold text-slate-400 ml-1.5">{asset.ticker}</span>
               </div>
               <span className="text-[11px] text-slate-400 block pt-1 font-medium">
-                Sin comisión · Transferencia instantánea por ReWALLET
+                Comisión y tiempo según la red.
               </span>
             </div>
 
@@ -1327,7 +1517,7 @@ export const CryptoAssetDetailModal: React.FC<CryptoAssetDetailModalProps> = ({
                   onClick={() => setDestinationAddress('0xCcBe254009A4e82B96cD3105B89B2EA68f267a6')}
                   className="p-1.5 rounded-lg text-slate-600 hover:text-black"
                 >
-                  <QrCode className="w-5 h-5" />
+                  <QrCodeIcon className="w-5 h-5" />
                 </button>
               </div>
             </div>

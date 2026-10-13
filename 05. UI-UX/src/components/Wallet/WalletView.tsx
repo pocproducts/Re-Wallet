@@ -1,19 +1,18 @@
 import React, { useMemo, useState } from 'react';
 
+import { Bug, Bell, Eye, EyeOff, ArrowDown, ArrowUp, ArrowLeftRight, ChevronRight } from 'lucide-react';
+import { UserProfileData } from '../../types';
 import { splitUsdDisplay } from '../../services/portfolio';
 import { formatVenueRate } from '../../services/walletBalance';
-import { usePortfolio, type PortfolioView } from '../../hooks/usePortfolio';
+/*
+ * Los dos tipos de las props de datos salen de los hooks que las producen, no
+ * de los servicios: `usePortfolio` devuelve `PortfolioView` y `useWalletBalance`
+ * devuelve `WalletBalanceScreenView`. Antes esta pantalla no los importaba y
+ * TS los daba por no definidos; el `any` implícito de `.find(...)` más abajo
+ * era la consecuencia, no una causa aparte.
+ */
+import type { PortfolioView } from '../../hooks/usePortfolio';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
-import {
-  Bug,
-  Bell,
-  Eye,
-  EyeOff,
-  ArrowDown,
-  ArrowUp,
-  ChevronRight,
-} from 'lucide-react';
-import { UserProfileData } from '../../types';
 
 /**
  * El lugar de Aave V3 en Monad, por la **key** que publica el backend.
@@ -46,13 +45,15 @@ interface WalletViewProps {
   /**
    * Qué acción abre la persona desde la fila de abajo.
    *
-   * `'usar'` salió de acá y de `ActionModalType`: su menú sólo ofrecía Comprar y
-   * Vender, y las dos son cambio de activo. Hoy no hay motor de swap, así que
-   * una acción que no se puede ejecutar no se ofrece. Las pantallas de compra y
-   * venta **no se borraron** — están estacionadas a propósito y son la base de
-   * la Fase 2, que ya está decidida; sólo se les cerró la puerta de entrada.
+   * `'usar'` volvió a la unión. Se había ido porque su menú —Comprar/Vender—
+   * prometía un cambio de activo que no tenía motor. El motor existe: el
+   * backend cotiza en `/api/wallet/swap/quote` y la pantalla que abre sigue la
+   * disposición documentada por Uniswap. Lo que falta es la firma real de la
+   * ejecución, y por eso en este estado la operación es una simulación que la
+   * pantalla nombra como tal.
    */
-  onOpenAction?: (action: 'depositar' | 'enviar') => void;
+  onOpenAction?: (action: 'depositar' | 'usar' | 'enviar') => void;
+  onOpenChargeModal?: () => void;
   onOpenSearch?: () => void;
   onOpenScanner?: () => void;
   onOpenBugModal?: () => void;
@@ -74,6 +75,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
   onOpenProfile,
   onNavigateToInvestments,
   onOpenAction,
+  onOpenChargeModal,
   onOpenSearch,
   onOpenScanner,
   onOpenBugModal,
@@ -311,17 +313,16 @@ export const WalletView: React.FC<WalletViewProps> = ({
             </div>
 
             {/*
-              Dos botones, no tres.
+              Tres acciones: Depositar, Usar y Enviar.
 
-              La fila era `grid-cols-3` porque había tres acciones. Sacado "Usar"
-              —que era la puerta a Comprar y Vender, y no hay motor de swap— la
-              grilla queda en dos columnas y el hueco que dejó la tercera no se
-              rellena con nada: las dos acciones que quedan miden lo mismo y
-              siguen leyéndose como una fila de acciones, no como dos botones
-              descolgados. No se rediseña la fila; se le sacan las tres
-              columnas que ya no tiene contenido.
+              "Usar" volvió con el motor afuera todavía sin firma: su pantalla
+              cotiza de verdad contra `/api/wallet/swap/quote` y ejecuta una
+              simulación etiquetada como simulación hasta que la firma real
+              exista (Permit2 + `/api/wallet/swap/execute`). Un botón que no
+              puede hacer lo que promete no se ofrece; uno que hace sólo de
+              demostración se ofrece diciéndolo.
             */}
-            <div className="grid grid-cols-2 gap-3 pt-4">
+            <div className="grid grid-cols-3 gap-3 pt-4">
               {/* Depositar */}
               <div className="flex flex-col items-center">
                 <button
@@ -336,17 +337,19 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 </span>
               </div>
 
-              {/*
-                ACÁ ESTABA "USAR", LA PUERTA A LAS PANTALLAS DE COMPRA Y VENTA.
-
-                No se borran esas pantallas: quedan en `ActionFlowModal`
-                (`use_buy` y `use_sell`), que son la base de la Fase 2 ya
-                decidida —1inch para EVM, Jupiter para Solana— y están
-                terminadas a falta del motor. Lo que se sacó fue la puerta,
-                porque una acción que no se puede ejecutar no se ofrece. Cuando
-                el motor exista, la puerta vuelve y las pantallas siguen ahí,
-                con el mismo catálogo y los mismos saldos.
-              */}
+              {/* Usar (swap) */}
+              <div className="flex flex-col items-center">
+                <button
+                  onClick={() => onOpenAction?.('usar')}
+                  type="button"
+                  className="w-14 h-14 rounded-full bg-black flex items-center justify-center text-[#ccff00] shadow-md hover:bg-slate-900 active:scale-90 transition-transform cursor-pointer"
+                >
+                  <ArrowLeftRight className="w-5 h-5 stroke-[2.5]" />
+                </button>
+                <span className="text-xs font-semibold text-black mt-2">
+                  Usar
+                </span>
+              </div>
 
               {/* Enviar */}
               <div className="flex flex-col items-center">

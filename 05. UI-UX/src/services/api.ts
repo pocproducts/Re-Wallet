@@ -19,6 +19,31 @@
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
 
 /**
+ * La URL final de una llamada, con el prefijo `/api` **una sola vez**.
+ *
+ * ── El bug que esta función existe para que no vuelva ───────────────────────
+ *
+ * La base y la ruta pueden traer las dos el prefijo: en un despliegue de un solo
+ * origen la base vale `/api`, y `policy.ts` y `swap.ts` escriben rutas que ya lo
+ * incluyen porque así las lee el contrato del backend. El resultado era
+ * `POST /api/api/wallet/policy/evaluate` — un 404 que la pantalla mostraba como
+ * "no pudimos revisar la política de seguridad" y que dejaba cualquier envío sin
+ * poder firmarse, en cualquier red.
+ *
+ * ── Por qué se colapsa acá y no en cada llamador ────────────────────────────
+ *
+ * Porque este es el único lugar del front que arma una URL. Veinte servicios
+ * pasan rutas sin el prefijo y dos lo pasan: la regla va donde se junta, no
+ * repartida en veintidós lugares donde la próxima ruta rota vuelve a fallar en
+ * silencio.
+ *
+ * No toca una ruta que no esté duplicada: con base vacía y ruta `/api/…` queda
+ * igual, y con base `/api` y ruta `/wallet/…` también.
+ */
+export const apiUrlWith = (base: string, path: string): string =>
+  `${base}${path}`.replace(/\/api\/api(?=\/|$)/, '/api');
+
+/**
  * Error del backend con su **código**, nunca con su texto.
  *
  * Se crea con `new ApiError(code)`, y el mensaje de la clase es técnico a
@@ -60,8 +85,10 @@ const readErrorCode = (body: unknown): string | null => {
 const request = async (path: string, init: RequestInit): Promise<unknown> => {
   let response: Response;
 
+  const url = apiUrlWith(API_BASE_URL, path);
+
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, init);
+    response = await fetch(url, init);
   } catch {
     // La red no llegó. No hay código del servidor, así que el error es de este
     // lado y el que lo muestra decide qué mensaje pone.

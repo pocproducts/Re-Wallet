@@ -1,14 +1,21 @@
 /**
  * ADAPTER: the `rewallet.payment_requests` rows.
  *
- * ── The table already existed, and this adapter adds nothing to it ────────────
+ * ── The table, and the three columns that say what a charge is for ───────────
  *
- * `id text PRIMARY KEY`, `user_id uuid`, `amount numeric(20,6)`, `note text`,
+ * `id text PRIMARY KEY`, `user_id uuid`, `amount numeric(38,18)`, `note text`,
  * `status text`, `paid_by_user_id uuid`, `paid_movement_id uuid`, `created_at`,
- * `paid_at`, `expires_at`. No column is created, no constraint is changed, and the
- * three indexes the table ships with are what these statements use:
- * `idx_payment_requests_user`, `idx_payment_requests_status` and
- * `idx_payment_requests_expires`.
+ * `paid_at`, `expires_at`, plus `chain`, `asset_symbol` and `asset_decimals`
+ * since `sql/0005`. The three indexes the table ships with are what these
+ * statements use: `idx_payment_requests_user`, `idx_payment_requests_status`
+ * and `idx_payment_requests_expires`.
+ *
+ * The three new columns are written on the insert and selected on both reads, in
+ * the same statements as everything else: a charge that is written without them
+ * cannot be read back, and one round trip that returns an incomplete row is worse
+ * than two that each return the whole of it. `asset_decimals` is the one that
+ * matters most to keep in step — it is the scale the stored amount is converted
+ * at, and it was resolved by the server from the catalog, never from a body.
  *
  * ── The insert: `ON CONFLICT (id) DO NOTHING` ────────────────────────────────
  *
@@ -78,6 +85,17 @@ import type {
 } from '../../domain/ports/payment-request-store';
 import type { Database } from './client';
 
+/**
+ * The three columns that say what the charge is a charge for, selected by every
+ * statement that reads the row.
+ *
+ * `chain` and `asset_symbol` are plain text: the table's CHECKs assert their
+ * shape, not their membership in the catalog, so a row can only be trusted about
+ * the shape here. `asset_decimals` is an `INTEGER` the server resolved from the
+ * catalog when the charge was created.
+ */
+const CHARGE_ASSET_COLUMNS = 'p.chain, p.asset_symbol, p.asset_decimals';
+
 interface PaymentRequestRow {
   readonly id: string;
   readonly user_id: string;
@@ -85,6 +103,9 @@ interface PaymentRequestRow {
   readonly amount: string;
   readonly note: string | null;
   readonly status: string;
+  readonly chain?: string;
+  readonly asset_symbol?: string;
+  readonly asset_decimals?: number | string;
   readonly created_at: string | Date;
   readonly expires_at: string | Date;
   readonly paid_by_user_id?: string | null;
@@ -104,10 +125,21 @@ const REQUESTER_TAG = `(SELECT u.tag FROM rewallet.users u WHERE u.id = payment_
 
 const asDate = (value: string | Date): Date => (value instanceof Date ? value : new Date(value));
 
+/**
+ * The read shape, from one row.
+ *
+ * `Number(asset_decimals)` and not `row.asset_decimals as number`: the column is
+ * `INTEGER`, and a driver is free to hand it back as a string, so the conversion
+ * is stated rather than assumed. It is the only float in this adapter and it is
+ * exact — `asset_decimals` is between 0 and 18 by the table's own CHECK.
+ */
 const toStored = (row: PaymentRequestRow): StoredPaymentRequest => ({
   id: row.id,
   userId: row.user_id,
   amount: row.amount,
+  chain: row.chain ?? '',
+  assetSymbol: row.asset_symbol ?? '',
+  assetDecimals: Number(row.asset_decimals ?? 0),
   note: row.note,
   status: row.status as PaymentRequestStatus,
   createdAt: asDate(row.created_at),
@@ -122,10 +154,11 @@ export const createPostgresPaymentRequestStore = (db: Database): PaymentRequestS
     const rows = (await db.query(
       `
         INSERT INTO rewallet.payment_requests
-          (id, user_id, amount, note, status, created_at, expires_at)
-        VALUES ($1, $2, $3, $4, 'pending', $5, $6)
+          (id, user_id, amount, note, status, chain, asset_symbol, asset_decimals, created_at, expires_at)
+        VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9)
         ON CONFLICT (id) DO NOTHING
         RETURNING id, user_id, amount, note, status, created_at, expires_at,
+                  chain, asset_symbol, asset_decimals,
                   ${REQUESTER_TAG}
       `,
       [
@@ -133,6 +166,9 @@ export const createPostgresPaymentRequestStore = (db: Database): PaymentRequestS
         request.userId,
         request.amount,
         request.note,
+        request.chain,
+        request.assetSymbol,
+        request.assetDecimals,
         request.createdAt.toISOString(),
         request.expiresAt.toISOString(),
       ],
@@ -148,6 +184,7 @@ export const createPostgresPaymentRequestStore = (db: Database): PaymentRequestS
       `
         SELECT p.id, p.user_id, p.amount, p.note, p.status,
                p.created_at, p.expires_at, p.paid_by_user_id, p.paid_at,
+               ${CHARGE_ASSET_COLUMNS},
                u.tag AS requester_tag
           FROM rewallet.payment_requests p
           JOIN rewallet.users u ON u.id = p.user_id
@@ -173,6 +210,7 @@ export const createPostgresPaymentRequestStore = (db: Database): PaymentRequestS
            AND expires_at > $4
         RETURNING id, user_id, amount, note, status, created_at, expires_at,
                   paid_by_user_id, paid_at,
+                  chain, asset_symbol, asset_decimals,
                   ${REQUESTER_TAG}
       `,
       [id, paidByUserId, paidMovementId, paidAt.toISOString()],

@@ -60,6 +60,9 @@ const fakeStore = (
         (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
       );
     },
+    async metrics() {
+      return { walletsCreated: 0, activeUsers24h: 0, signIns: 0 };
+    },
   };
 };
 
@@ -248,6 +251,7 @@ describe('GET /api/notifications — when the rows cannot be read', () => {
       listForPerson: async () => {
         throw new Error('connection terminated unexpectedly');
       },
+      metrics: async () => ({ walletsCreated: 0, activeUsers24h: 0, signIns: 0 }),
     };
 
     const response = await get(app(failing), { cookie: SESSION_COOKIE });

@@ -63,6 +63,7 @@
  */
 import type { EvmNetworkId } from '../wallet/evmNetwork';
 import type { PortfolioChain } from '../portfolio/networks';
+import { activeSolanaCluster } from '../solana/cluster';
 
 /**
  * Las redes en las que se puede recibir. Es el mismo conjunto de cadenas que el
@@ -181,6 +182,142 @@ export const DEPOSIT_NETWORKS: readonly DepositNetworkSpec[] = [
         // **Otro** contrato. El USDC de Ethereum no es el de Monad: usar el de
         // Monad acá lee un saldo de un contrato que no existe en esta red.
         token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        balanceReadable: true,
+      },
+      {
+        symbol: 'OUSD',
+        name: 'Dólares digitales',
+        // Es un stablecoin que rinde solo: entra por el camino de dólares, y su
+        // diferencia con USDC no es la categoría sino que el saldo **crece**.
+        kind: 'dollar',
+        // **18, no 6.** Verificado por `decimals()` contra la RPC de Ethereum:
+        // OUSD es un token rebase de 18 decimales, y poner 6 haría que el saldo
+        // leído fuera mil millones de veces más chico que el real. Un error de
+        // escala acá no se ve como error: se ve como una persona con muy poco.
+        decimals: 18,
+        native: false,
+        // Registry oficial de Origin, sección "Ethereum":
+        // https://docs.originprotocol.com/registry/contracts/ousd-registry
+        // Verificado por `symbol()` = OUSD y `decimals()` = 18.
+        //
+        // ── Por qué sólo Ethereum ────────────────────────────────────────────
+        //
+        // Porque **en Monad no existe**, y declararlo ahí sería la forma más
+        // cara de mentir: la app affirmaría "se puede tener OUSD en Monad" sobre
+        // una red donde no hay contrato que leer.
+        //
+        // El registry tiene una sola sección de token, Ethereum. Lo que aparece
+        // como "Cross-Chain Strategy (Base)" es una *estrategia* de rendimiento
+        // con contrato en las dos redes, no el token: OUSD manda su USDC a Base
+        // para prestar contra Morpho, pero el token que la persona tiene vive
+        // en Ethereum. Los "OUSD" que aparecen en el explorador de Base tienen
+        // un solo holder y un supply máximo de 500 millones: son despliegues de
+        // prueba, no el token.
+        token: '0x2A8e1E676Ec238d8A992307B495b45B3fEAa5e86',
+        balanceReadable: true,
+      },
+    ],
+  },
+  {
+    chain: 'base',
+    label: 'Base',
+    evmNetwork: 'eip155:8453',
+    assets: [
+      { symbol: 'ETH', name: 'Base', kind: 'crypto', decimals: 18, native: true, token: null, balanceReadable: true },
+      {
+        symbol: 'USDC',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        // Verificado en chain (bytecode + symbol + decimals), ver el doc de la tarea.
+        token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        balanceReadable: true,
+      },
+      {
+        symbol: 'USDT',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        token: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+        balanceReadable: true,
+      },
+    ],
+  },
+  {
+    chain: 'arbitrum',
+    label: 'Arbitrum One',
+    evmNetwork: 'eip155:42161',
+    assets: [
+      { symbol: 'ETH', name: 'Arbitrum One', kind: 'crypto', decimals: 18, native: true, token: null, balanceReadable: true },
+      {
+        symbol: 'USDC',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        token: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+        balanceReadable: true,
+      },
+      {
+        symbol: 'USDT',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        token: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+        balanceReadable: true,
+      },
+    ],
+  },
+  {
+    chain: 'optimism',
+    label: 'OP Mainnet',
+    evmNetwork: 'eip155:10',
+    assets: [
+      { symbol: 'ETH', name: 'OP Mainnet', kind: 'crypto', decimals: 18, native: true, token: null, balanceReadable: true },
+      {
+        symbol: 'USDC',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        token: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
+        balanceReadable: true,
+      },
+      {
+        symbol: 'USDT',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        token: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58',
+        balanceReadable: true,
+      },
+    ],
+  },
+  {
+    chain: 'polygon',
+    label: 'Polygon',
+    evmNetwork: 'eip155:137',
+    assets: [
+      {
+        symbol: 'USDC',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        token: '0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359',
+        balanceReadable: true,
+      },
+      {
+        symbol: 'USDT',
+        name: 'Dólares digitales',
+        kind: 'dollar',
+        decimals: 6,
+        native: false,
+        token: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
         balanceReadable: true,
       },
     ],

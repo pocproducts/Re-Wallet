@@ -40,10 +40,15 @@ jobs:
       # lugar soportado para `hashFiles`, y los dos proyectos se corren en el
       # mismo job para no duplicar la instalación de Node.
       #
-      # Las guardas existen porque estas pruebas aterrizan en `main` **antes** que
-      # la app: `main` todavía no tiene `07.PockBackend` ni `05. UI-UX`, y un paso
-      # que corre sobre un directorio inexistente falla siempre. Cuando la app
-      # llegue, empiezan a trabajar solas, sin que nadie las active.
+      # Las guardas existen porque estas pruebas aterrizaron en `main` **antes**
+      # que la app: durante un tiempo `main` no tuvo ni backend ni front, y un
+      # paso que corre sobre un directorio inexistente falla siempre. Siguen
+      # puestas porque una rama puede nacer de cualquiera de esos commits.
+      #
+      # Las rutas son las de la reorganización: `07.PockBackend` y `05. UI-UX`. Las
+      # carpetas antiguas (`apps/api` y `apps/web`) ya no existen; un
+      # `if` que apunte a una de ellas da `false` para siempre y el paso queda
+      # en verde sin haber corrido nada, que es la peor forma de fallar.
 
       - name: backend — dependencias
         if: ${{ hashFiles('07.PockBackend/package.json') != '' }}
@@ -77,6 +82,13 @@ jobs:
         if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
         working-directory: 05. UI-UX
         run: npm run lint
+
+      - name: front — tests
+        if: ${{ hashFiles('05. UI-UX/package.json') != '' }}
+        working-directory: 05. UI-UX
+        # Sin esto los tests del front son un adorno: pasan en la máquina de
+        # quien los escribió y nadie más se entera.
+        run: npm test
 
       - name: front — build
         if: ${{ hashFiles('05. UI-UX/package.json') != '' }}

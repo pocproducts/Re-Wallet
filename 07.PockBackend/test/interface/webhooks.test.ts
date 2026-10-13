@@ -64,6 +64,9 @@ const fakeStore = (): WebhookEventStore & { readonly rows: VerifiedWebhookEvent[
     async listForPerson() {
       return [];
     },
+    async metrics() {
+      return { walletsCreated: 0, activeUsers24h: 0, signIns: 0 };
+    },
   };
 };
 
@@ -366,6 +369,9 @@ describe('POST /api/webhooks/privy — what it does not accept', () => {
       async listForPerson() {
         return [];
       },
+    async metrics() {
+      return { walletsCreated: 0, activeUsers24h: 0, signIns: 0 };
+    },
     };
 
     const response = await signed(app(failing), { id: 'evt_1', type: 'user.created', user_did: DID });

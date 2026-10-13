@@ -36,12 +36,16 @@ import type {
 } from '../types/deposit.types';
 
 /** Las redes que el backend sirve. Una red desconocida no se dibuja. */
-const KNOWN_CHAIN_IDS: readonly DepositChainId[] = ['monad', 'ethereum', 'solana'];
+const KNOWN_CHAIN_IDS: readonly DepositChainId[] = ['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'solana'];
 
 /** El nombre visible de cada red. */
 const CHAIN_LABELS: Readonly<Record<DepositChainId, string>> = {
   monad: 'Monad',
   ethereum: 'Ethereum',
+  base: 'Base',
+  arbitrum: 'Arbitrum One',
+  optimism: 'OP Mainnet',
+  polygon: 'Polygon',
   solana: 'Solana',
 };
 

@@ -14,18 +14,22 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_EVM_NETWORK,
+  ARBITRUM_MAINNET_NETWORK_ID,
+  BASE_MAINNET_NETWORK_ID,
   ETHEREUM_MAINNET_NETWORK_ID,
   MONAD_MAINNET_NETWORK_ID,
+  OPTIMISM_MAINNET_NETWORK_ID,
+  POLYGON_MAINNET_NETWORK_ID,
   SUPPORTED_EVM_NETWORK_IDS,
   isSupportedEvmNetworkId,
   toEvmNetworkId,
 } from '../../src/domain/wallet/evmNetwork';
 
 describe('the EVM network in use', () => {
-  it('is CAIP-2, and the two ids are the chains verified on chain today', () => {
+  it('is CAIP-2, and the ids are the chains verified on chain today', () => {
     expect(ETHEREUM_MAINNET_NETWORK_ID).toBe('eip155:1');
     expect(MONAD_MAINNET_NETWORK_ID).toBe('eip155:143');
-    expect([...SUPPORTED_EVM_NETWORK_IDS]).toEqual(['eip155:1', 'eip155:143']);
+    expect([...SUPPORTED_EVM_NETWORK_IDS]).toEqual(['eip155:1', 'eip155:143', 'eip155:8453', 'eip155:42161', 'eip155:10', 'eip155:137']);
   });
 
   it('defaults to Ethereum mainnet, on purpose', () => {
@@ -39,13 +43,17 @@ describe('the EVM network in use', () => {
   it('accepts a supported id as it is', () => {
     expect(toEvmNetworkId(MONAD_MAINNET_NETWORK_ID)).toBe(MONAD_MAINNET_NETWORK_ID);
     expect(toEvmNetworkId(ETHEREUM_MAINNET_NETWORK_ID)).toBe(ETHEREUM_MAINNET_NETWORK_ID);
+    expect(toEvmNetworkId(BASE_MAINNET_NETWORK_ID)).toBe(BASE_MAINNET_NETWORK_ID);
+    expect(toEvmNetworkId(ARBITRUM_MAINNET_NETWORK_ID)).toBe(ARBITRUM_MAINNET_NETWORK_ID);
+    expect(toEvmNetworkId(OPTIMISM_MAINNET_NETWORK_ID)).toBe(OPTIMISM_MAINNET_NETWORK_ID);
+    expect(toEvmNetworkId(POLYGON_MAINNET_NETWORK_ID)).toBe(POLYGON_MAINNET_NETWORK_ID);
   });
 
   it('refuses an id it does not support instead of falling back to one', () => {
     // Falling back silently would send a transaction to a network nobody chose,
     // which is the one outcome this whole column exists to prevent. `null` lets
     // the caller refuse; a default would let it proceed.
-    expect(toEvmNetworkId('eip155:10')).toBeNull();
+    expect(toEvmNetworkId('eip155:56')).toBeNull();
     expect(toEvmNetworkId('1')).toBeNull();
     expect(toEvmNetworkId('eip155:143 ')).toBeNull();
     expect(toEvmNetworkId(null)).toBeNull();
@@ -55,6 +63,7 @@ describe('the EVM network in use', () => {
 
   it('answers the same question the read path asks', () => {
     expect(isSupportedEvmNetworkId(MONAD_MAINNET_NETWORK_ID)).toBe(true);
-    expect(isSupportedEvmNetworkId('eip155:137')).toBe(false);
+    expect(isSupportedEvmNetworkId(POLYGON_MAINNET_NETWORK_ID)).toBe(true);
+    expect(isSupportedEvmNetworkId('eip155:56')).toBe(false);
   });
 });

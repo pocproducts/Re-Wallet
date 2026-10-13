@@ -128,6 +128,29 @@ export const newSendRequestId = (): string => {
 export type PrepareSendInput = Omit<SendPreparationBody, 'requestId'>;
 
 /**
+ * El cuerpo del envío, con el gesto que la política puede exigir.
+ *
+ * Es el cuerpo de siempre **más un campo**: la política se aplica adentro del
+ * servidor, contra el monto y el destino resueltos, y cuando responde `confirm`
+ * no sigue sin que alguien haya dicho que sí. Lo que viaja es ese "alguien dijo
+ * que sí", y nada más: el gesto no decide nada, sólo deja seguir.
+ *
+ * Se declara acá y no en `types/send.types.ts` porque el tipo del cuerpo le
+ * pertenece al backend, y éste es un campo que sólo existe en el borde: si
+ * mañana el gesto tiene otra forma, se cambia acá y en ningún otro lado.
+ */
+export interface PrepareSendBody extends SendPreparationBody {
+  /**
+   * El gesto explícito. El servidor sólo acepta exactamente `true`.
+   *
+   * No es `boolean` a propósito: es lo que manda quien llama, y la única
+   * autoridad sobre qué es un gesto es el servidor. Mandar `"true"` o `1` es
+   * mandar algo que no es un gesto, y la respuesta correcta es el freno.
+   */
+  readonly policyConfirmed?: unknown;
+}
+
+/**
  * ¿Lo que volvió es una preparación?
  *
  * Se lee defensivo, como `normalizePool`: una respuesta con una forma que no se
@@ -178,7 +201,7 @@ const isPreparation = (body: unknown): body is SendPreparationResponse => {
  * @throws `ApiError` con el código del backend. El texto lo pone quien lo
  *         muestra; acá no se traduce ni un error.
  */
-export const prepareSend = async (body: SendPreparationBody): Promise<SendPreparationResponse | null> => {
+export const prepareSend = async (body: PrepareSendBody): Promise<SendPreparationResponse | null> => {
   try {
     const response = await postJson<SendPreparationResponse>('/send/prepare', body);
     return isPreparation(response) ? response : null;

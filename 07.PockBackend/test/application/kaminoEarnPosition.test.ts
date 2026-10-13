@@ -625,6 +625,8 @@ describe('the second venue in the composed balance', () => {
     // nine decimals against an eighteen-decimal feed, so the headline is at 27 and
     // the Kamino value at 25 was scaled up to it exactly.
     expect(balance.investedValue.complete).toBe(true);
+    // Polygon declara solo sus dolares: no hay pieza POL que valuar, asi que la
+    // lectura entera es la verdad completa y el total lo declara asi.
     expect(balance.total.complete).toBe(true);
     expect(balance.investedValue.total.decimals).toBe(25);
     expect(balance.total.usd.decimals).toBe(27);
@@ -708,6 +710,7 @@ describe('the second venue in the composed balance', () => {
 
     expect(balance.investedValue.pieces.map((piece) => piece.key)).toEqual([AAVE_V3_USDC_MONAD_KEY]);
     expect(balance.investedValue.total.raw).toBe('820428');
+    // Mismo detalle honesto: no hay pieza sin valuar, asi que el total es entero.
     expect(balance.total.complete).toBe(true);
   });
 });
@@ -772,23 +775,34 @@ describe('the one combined yield across both venues', () => {
 
     // Each venue carries its own rate **and its own balance**, at the scales they
     // were read at, so the screen explains the figure from this object instead of
-    // recomputing it.
+    // recomputing it. And each venue carries **its own chain's free USDC** as the
+    // origin it can be deposited into: Aave's is the empty Monad wallet of this
+    // fixture (a real zero, and an `ok`), Kamino's is the $2 free on Solana. Not
+    // the other way round, ever.
     expect(combined.venues).toEqual([
       {
         key: AAVE_V3_USDC_MONAD_KEY,
         label: 'Aave V3 · USDC en Monad',
         status: 'ok',
         exclusion: null,
+        chain: 'monad',
         balance: { raw: '60000000', amount: '60', decimals: 6, unit: 'USD' },
         rate: { raw: '41200', decimals: 6, text: '0.0412' },
+        depositable: { status: 'ok', amount: { raw: '0', amount: '0', decimals: 6, unit: 'USDC' } },
+        depositReady: { status: 'ready' },
       },
       {
         key: KAMINO_EARN_USDC_SOLANA_KEY,
         label: 'Kamino Earn · USDC en Solana',
         status: 'ok',
         exclusion: null,
+        chain: 'solana',
         balance: { raw: '40000000', amount: '40', decimals: 6, unit: 'USD' },
         rate: { raw: '418', decimals: 4, text: '0.0418' },
+        depositable: { status: 'ok', amount: { raw: '2000000', amount: '2', decimals: 6, unit: 'USDC' } },
+        // Tener plata libre y **no** poder recibir el depósito son dos hechos
+        // distintos: los dos viajan, y ninguno borra al otro.
+        depositReady: { status: 'not_ready', reason: 'DEPOSIT_INSTRUCTIONS_UNVERIFIED', missingSteps: 2, message: expect.any(String) },
       },
     ]);
   });

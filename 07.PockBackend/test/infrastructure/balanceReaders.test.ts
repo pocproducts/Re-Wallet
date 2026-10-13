@@ -18,7 +18,14 @@ import type { DeadlinePolicy } from '../../src/infrastructure/rpc/httpDeadline';
 const ADDRESS = '0x1234567890abcdef1234567890abcdef12345678';
 const OWNER = '5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9';
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-const ENDPOINTS = { monad: ['https://monad.invalid'], ethereum: ['https://ethereum.invalid'] };
+const ENDPOINTS = {
+  monad: ['https://monad.invalid'],
+  ethereum: ['https://ethereum.invalid'],
+  base: ['https://base.invalid'],
+  arbitrum: ['https://arbitrum.invalid'],
+  optimism: ['https://optimism.invalid'],
+  polygon: ['https://polygon.invalid'],
+};
 
 /** A `fetch` that answers with whatever the test hands it, and records the calls. */
 const answering = (
@@ -61,14 +68,14 @@ describe('jsonRpcEvmBalanceReader', () => {
     // Un endpoint público caído es martes, no una excepción: se prueba el
     // siguiente. Depender de una sola URL convierte una caída externa en una
     // cadena rota en pantalla.
-    const candidates = { monad: ['https://primero.invalid'], ethereum: ['https://primero.invalid'] };
+    const candidates = { monad: ['https://primero.invalid'], ethereum: ['https://primero.invalid'], base: [], arbitrum: [], optimism: [], polygon: [] };
     const { fetchImpl, calls } = answering((url) =>
       url === 'https://primero.invalid'
         ? { status: 503, text: 'down' }
         : { text: json('0x2a') },
     );
     const reader = createJsonRpcEvmBalanceReader({
-      endpoints: { monad: [...candidates.monad, 'https://segundo.invalid'], ethereum: [...candidates.ethereum, 'https://segundo.invalid'] },
+      endpoints: { monad: [...candidates.monad, 'https://segundo.invalid'], ethereum: [...candidates.ethereum, 'https://segundo.invalid'], base: [], arbitrum: [], optimism: [], polygon: [] },
       fetchImpl,
     });
 
@@ -79,7 +86,7 @@ describe('jsonRpcEvmBalanceReader', () => {
   it('reports the failure when every candidate endpoint is down', async () => {
     const { fetchImpl, calls } = answering(() => ({ status: 500, text: 'down' }));
     const reader = createJsonRpcEvmBalanceReader({
-      endpoints: { monad: ['https://a.invalid', 'https://b.invalid'], ethereum: ['https://a.invalid'] },
+      endpoints: { monad: ['https://a.invalid', 'https://b.invalid'], ethereum: ['https://a.invalid'], base: [], arbitrum: [], optimism: [], polygon: [] },
       fetchImpl,
     });
 

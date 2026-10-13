@@ -142,7 +142,7 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
     const body = (await response.json()) as DepositBody;
 
     expect(body.generatedAt).toBe('2025-01-01T00:00:00.000Z');
-    expect(body.networks.map((network) => network.chain)).toEqual(['monad', 'ethereum', 'solana']);
+    expect(body.networks.map((network) => network.chain)).toEqual(['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'solana']);
 
     const monad = at(body.networks, 0);
     expect(monad.label).toBe('Monad');
@@ -152,7 +152,7 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
     expect(monad.address).toBe(EVM_ADDRESS);
     expect(at(body.networks, 1).address).toBe(EVM_ADDRESS);
 
-    const solana = at(body.networks, 2);
+    const solana = at(body.networks, 6);
     expect(solana.label).toBe('Solana');
     expect(solana.evmNetwork).toBeNull();
     expect(solana.address).toBe(SOLANA_ADDRESS);
@@ -164,7 +164,11 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
 
     expect(body.networks.map((network) => network.assets.map((asset) => asset.symbol))).toEqual([
       ['MON', 'USDC'],
-      ['ETH', 'USDC'],
+      ['ETH', 'USDC', 'OUSD'],
+      ['ETH', 'USDC', 'USDT'],
+      ['ETH', 'USDC', 'USDT'],
+      ['ETH', 'USDC', 'USDT'],
+      ['USDC', 'USDT'],
       ['SOL', 'USDC'],
     ]);
 
@@ -176,7 +180,7 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
     expect(second.networks.map((n) => n.assets.map((a) => a.symbol))).toEqual(
       body.networks.map((n) => n.assets.map((a) => a.symbol)),
     );
-    expect(DEPOSIT_NETWORKS.map((network) => network.chain)).toEqual(['monad', 'ethereum', 'solana']);
+    expect(DEPOSIT_NETWORKS.map((network) => network.chain)).toEqual(['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'solana']);
   });
 
   it('declara el contrato de cada token, y los nativos sin contrato', async () => {
@@ -198,7 +202,7 @@ describe('GET /api/deposit-info — el catálogo y las direcciones', () => {
 
     // El USDC de Ethereum NO es el de Monad: mismo símbolo, otro contrato.
     expect(at(at(body.networks, 1).assets, 1).token).toBe('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
-    expect(at(body.networks, 2).assets).toEqual([
+    expect(at(body.networks, 6).assets).toEqual([
       { symbol: 'SOL', name: 'Solana', kind: 'crypto', decimals: 9, native: true, token: null, balanceReadable: true },
       {
         symbol: 'USDC',
@@ -255,6 +259,18 @@ describe('GET /api/deposit-info — la clasificación viaja con cada activo', ()
       { chain: 'monad', symbol: 'USDC', kind: 'dollar' },
       { chain: 'ethereum', symbol: 'ETH', kind: 'crypto' },
       { chain: 'ethereum', symbol: 'USDC', kind: 'dollar' },
+      { chain: 'ethereum', symbol: 'OUSD', kind: 'dollar' },
+      { chain: 'base', symbol: 'ETH', kind: 'crypto' },
+      { chain: 'base', symbol: 'USDC', kind: 'dollar' },
+      { chain: 'base', symbol: 'USDT', kind: 'dollar' },
+      { chain: 'arbitrum', symbol: 'ETH', kind: 'crypto' },
+      { chain: 'arbitrum', symbol: 'USDC', kind: 'dollar' },
+      { chain: 'arbitrum', symbol: 'USDT', kind: 'dollar' },
+      { chain: 'optimism', symbol: 'ETH', kind: 'crypto' },
+      { chain: 'optimism', symbol: 'USDC', kind: 'dollar' },
+      { chain: 'optimism', symbol: 'USDT', kind: 'dollar' },
+      { chain: 'polygon', symbol: 'USDC', kind: 'dollar' },
+      { chain: 'polygon', symbol: 'USDT', kind: 'dollar' },
       { chain: 'solana', symbol: 'SOL', kind: 'crypto' },
       { chain: 'solana', symbol: 'USDC', kind: 'dollar' },
     ]);
@@ -383,7 +399,7 @@ describe('GET /api/deposit-info — la dirección nunca viene del pedido', () =>
       expect(network.address).not.toBe(other);
     }
     expect(at(body.networks, 0).address).toBe(EVM_ADDRESS);
-    expect(at(body.networks, 2).address).toBe(SOLANA_ADDRESS);
+    expect(at(body.networks, 6).address).toBe(SOLANA_ADDRESS);
   });
 
   it('responde por la persona que la cookie probó, no por la que el pedido dice', async () => {
@@ -490,8 +506,8 @@ describe('readDepositInfo — el caso de uso por separado', () => {
     const addressesOf = (info: Awaited<ReturnType<ReadDepositInfo>>) =>
       info.networks.flatMap((network) => (network.address === undefined ? [] : [network.address]));
 
-    expect(addressesOf(mine)).toEqual([EVM_ADDRESS, EVM_ADDRESS, SOLANA_ADDRESS]);
-    expect(addressesOf(theirs)).toEqual([OTHER_EVM, OTHER_EVM, OTHER_SOLANA]);
+    expect(addressesOf(mine)).toEqual([EVM_ADDRESS, EVM_ADDRESS, EVM_ADDRESS, EVM_ADDRESS, EVM_ADDRESS, EVM_ADDRESS, SOLANA_ADDRESS]);
+    expect(addressesOf(theirs)).toEqual([OTHER_EVM, OTHER_EVM, OTHER_EVM, OTHER_EVM, OTHER_EVM, OTHER_EVM, OTHER_SOLANA]);
     // Y el identificador del proveedor de Privy no viaja nunca a la respuesta.
     expect(JSON.stringify(mine)).not.toContain('wallet-evm-1');
   });
@@ -503,6 +519,6 @@ describe('readDepositInfo — el caso de uso por separado', () => {
     // —ni nada más— pueda entrar: la llamada entera no lo tiene.
     const info = await useCase(USER_ID);
 
-    expect(info.networks.map((network) => network.chain)).toEqual(['monad', 'ethereum', 'solana']);
+    expect(info.networks.map((network) => network.chain)).toEqual(['monad', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'solana']);
   });
 });

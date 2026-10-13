@@ -37,10 +37,11 @@
  * refs ni trucos: el hook no es dueño del monto porque no es lo único que lo usa.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { identityOf } from '../services/portfolioIdentity';
 import { formatUnitPrice, type WalletBalancePart } from '../services/walletBalance';
+import { quoteSwap, type QuoteFailure, type QuoteResult } from '../services/swap';
 import { sendChainByKey } from '../config/send';
 import type { PortfolioHolding } from '../services/portfolio';
 import type { DepositInfoView } from './useDepositInfo';
@@ -95,7 +96,77 @@ export interface UseAssetTradeOptions {
   readonly initialSource?: TradeAssetIdentity;
   /** Identidad del activo al que se llega, si la pantalla no tiene catálogo. */
   readonly initialDestination?: TradeAssetIdentity;
+  /**
+   * La tolerancia al deslizamiento en puntos básicos.
+   *
+   * Default 50 (0,5%), como el "Auto" de Uniswap. Vive como opción porque el
+   * slippage es parte de la protección que la cotización promete: si la request
+   * no la llevara, el número en pantalla y el número que firma la operación
+   * podrían haberse calculado con tolerancias distintas, y eso es dos cifras
+   * distintas del mismo contrato.
+   */
+  readonly slippageBips?: number;
 }
+
+/**
+ * Una red, con las filas que están en ella.
+ *
+ * El encabezado va **dentro** del grupo y no aparte, para que quien lo consume
+ * no pueda dibujar un título sin sus filas al lado. Un encabezado suelto es un
+ * título que puede quedar pegado a la sección equivocada si la lista se
+ * filtra.
+ */
+export interface TradeChainGroup {
+  /** La red, tal como la nombra el backend. `null` para una fila sin red. */
+  readonly chainLabel: string | null;
+  readonly rows: readonly TradeAssetRow[];
+}
+
+/**
+ * Agrupa las filas por red, en el orden en que ya venían.
+ *
+ * ── Por qué agrupar y no dejar la lista plana ───────────────────────────────
+ *
+ * Porque USDC vive en cuatro redes y una persona puede tenerlo en más de una.
+ * En una lista plana aparecen cuatro filas casi iguales que se distinguen solo
+ * por un texto chico, y elegir la equivocada es el error más fácil de cometer en
+ * una pantalla de conversión. Con la red como encabezado, el ojo va a "Monad" o
+ * a "Base" y elige dentro.
+ *
+ * ── Por qué el orden es el de entrada y no alfabético ──────────────────────
+ *
+ * Porque el catálogo ya viene en un orden que el backend eligió, y cambiarlo acá
+ * sería una segunda fuente de verdad sobre el mismo dato. La red que aparece
+ * primero es la primera del catálogo, no la alfabéticamente menor.
+ *
+ * Una fila sin red —el respaldo sin catálogo— va en su propio grupo al final, con
+ * el mismo criterio: no hay red que la nombre, así que no se la inventa.
+ */
+export const groupAssetsByChain = (rows: readonly TradeAssetRow[]): readonly TradeChainGroup[] => {
+  /*
+   * Un `Map` y no un objeto: el orden de inserción del `Map` es el de la
+   * primera vez que se vio cada clave, que es exactamente el orden de entrada.
+   * Un objeto plano tambien lo preserve, pero convierte el encabezado a clave
+   * string —y un encabezado `null` se volveria `"null"`, que es un titulo
+   * mentiroso.
+   */
+  const byLabel = new Map<string, TradeAssetRow[]>();
+
+  for (const row of rows) {
+    const key = row.chainLabel ?? '';
+    const bucket = byLabel.get(key);
+    if (bucket === undefined) {
+      byLabel.set(key, [row]);
+    } else {
+      bucket.push(row);
+    }
+  }
+
+  return [...byLabel.entries()].map(([key, groupRows]) => ({
+    chainLabel: key === '' ? null : key,
+    rows: groupRows,
+  }));
+};
 
 export interface AssetTrade {
   /** Las filas que la hoja muestra. Vacías si la pantalla no pasó catálogo. */
@@ -135,6 +206,23 @@ export interface AssetTrade {
    * que había salía de una tabla de precios escrita a mano.
    */
   readonly equivalentText: string;
+  /**
+   * Por qué no hay precio, o `null` si hay precio o todavía no se preguntó.
+   *
+   * Es un discriminante cerrado a propósito. "No hay precio" tiene causas muy
+   * distintas —la red se cayó, ese par no tiene mercado, o no hay liquidity
+   * para ese monto— y colapsarlas en un guion le diría a la persona que el
+   * mercado no existe cuando en realidad no pudimos preguntar.
+   */
+  readonly quoteFailure: QuoteFailure | null;
+  /**
+   * Lo mínimo que la cotización promete entregar, o el guion de "no lo sé".
+   *
+   * El motor lo calcula aplicando el slippage elegido. Cuando el backend no lo
+   * declara (`amountOutMin: null`) se muestra el guion: una protección
+   * redonda e inventada es peor que una ausencia declarada.
+   */
+  readonly minimumReceivedText: string;
   /** El saldo de cada lado, ya formateado, o el guion de "no lo sé". */
   readonly sourceBalanceText: string;
   readonly destinationBalanceText: string;
@@ -313,7 +401,16 @@ export function useAssetTrade({
   catalog = [],
   initialSource,
   initialDestination,
-}: UseAssetTradeOptions): AssetTrade {
+  /*
+   * La cotización es inyectable para poder probar el hook sin motor y sin red.
+   *
+   * El valor por defecto sigue siendo el servicio real: inyectar otra cosa es
+   * una decisión explícita de quien llama, y ninguna pantalla de la app inyecta
+   * nada salvo que la simulación esté habilitada a propósito.
+   */
+  quoteSwap: customQuoteSwap,
+  slippageBips = 50,
+}: UseAssetTradeOptions & { readonly quoteSwap?: typeof quoteSwap }): AssetTrade {
   /*
    * El par se guarda por clave, no por objeto.
    *
@@ -404,8 +501,134 @@ export function useAssetTrade({
   const amount = amountText === '0' ? 0 : parseFloat(amountText.replace(',', '.')) || 0;
 
   const sourceAmountText = amount === 0 ? '0' : formatTradeAmount(amount, displayDecimals);
-  const destinationAmountText = amount === 0 ? '0' : NOTHING_TO_SHOW;
-  const equivalentText = '';
+
+  /*
+   * ── La cotización real ────────────────────────────────────────────────────
+   *
+   * Antes esto devolvía un guion fijo y el equivalente era una tabla escrita a
+   * mano. Ahora pregunta al backend, que a su vez pregunta al Trading API de
+   * Uniswap, y devuelve un `amountOut` que se puede verificar contra la cadena.
+   *
+   * Tres decisiones que no son obvias:
+   *
+   * 1. **Solo se pregunta cuando hay monto y ambos lados son de la misma red.**
+   *    El backend solo sirve Monad por ahora; preguntar por un par cruzado
+   *    gastaría una ida y volvería con "no hay ruta" por una razón que no es
+   *    de mercado sino de alcance. Un guion dice la verdad sin gastar nada.
+   *
+   * 2. **El monto va en unidades mínimas.** `formatTradeAmount` produce un
+   *    string con los decimales del activo; mandar ese string tal cual sería
+   *    mandar dólares donde el endpoint espera unidades mínimas, y la cotización
+   *    sería de otra operación.
+   *
+   * 3. **La respuesta vieja no se muestra mientras llega la nueva.** Con un
+   *    estado de carga se evita el parpadeo del precio de la última tecla, que
+   *    es un número que ya no corresponde a lo que la persona está escribiendo.
+   */
+  const sourceChain = source.key.includes(':') ? source.key.split(':')[0] : null;
+  const destinationChain = destination.key.includes(':')
+    ? destination.key.split(':')[0]
+    : null;
+
+  const canQuote =
+    amount > 0 &&
+    sourceChain !== null &&
+    sourceChain === destinationChain &&
+    sourceChain === 'monad';
+
+  const [quote, setQuote] = useState<QuoteResult | null>(null);
+
+  /*
+   * Cada cambio de estos invalida la respuesta anterior. Sin esta referencia, el
+   * `amountRaw` del efecto anterior podría escribirse después del nuevo y dejar
+   * un precio que corresponde a otra tecla.
+   */
+  const quoteSeq = useRef(0);
+
+  useEffect(() => {
+    if (!canQuote) {
+      setQuote(null);
+      return;
+    }
+
+    // Se escala a unidades mínimas con aritmética de texto: un `number` no
+    // alcanza para 6 decimales de un saldo grande sin redondear el centavo.
+    const scaled = BigInt(Math.round(amount * 10 ** source.decimals)).toString();
+
+    /*
+     * El mismo patrón de `seq` sirve para las dos, la inyectada y la real: una
+     * respuesta vieja que llega tarde no tiene que pisar el precio de lo que la
+     * persona está escribiendo ahora, venga de donde venga.
+     */
+    const quoteFn = customQuoteSwap ?? quoteSwap;
+    const seq = quoteSeq.current + 1;
+    quoteSeq.current = seq;
+    setQuote(null);
+
+    void quoteFn({
+      sourceSymbol: source.ticker,
+      destinationSymbol: destination.ticker,
+      chain: sourceChain,
+      amountRaw: scaled,
+      slippageBips,
+    }).then((result) => {
+      // Solo la última respuesta escribe: las viejas llegan tarde y no deben
+      // pisar el precio de lo que la persona está escribiendo ahora.
+      if (quoteSeq.current === seq) setQuote(result);
+    });
+  }, [
+    amount,
+    canQuote,
+    sourceChain,
+    source.ticker,
+    destination.ticker,
+    source.decimals,
+    customQuoteSwap,
+    slippageBips,
+  ]);
+
+  const destinationAmountText =
+    amount === 0
+      ? '0'
+      : quote === null
+        ? NOTHING_TO_SHOW
+        : quote.availability === 'available'
+          ? formatTradeAmount(
+              Number(quote.quote.amountOut) / 10 ** destination.decimals,
+              Math.min(destination.decimals, MAX_DISPLAY_DECIMALS),
+            )
+          : NOTHING_TO_SHOW;
+
+  /*
+   * El equivalente es el precio que dice el API, no uno derivado del `amountOut`
+   * que ya se está mostrando: son el mismo número con otro redondeo, y mostrar
+   * dos cifras distintas del mismo precio es una forma de sembrar dudas.
+   */
+  const equivalentText =
+    quote !== null && quote.availability === 'available'
+      ? `1 ${source.ticker} ≈ ${quote.quote.price} ${destination.ticker}`
+      : '';
+
+  /*
+   * El mínimo recibido es la otra cara de la misma cotización: lo que se
+   * promete entregar aun si el precio se moviera contra la persona el máximo
+   * tolerable.
+   *
+   * Se deriva del mismo `quote` que ya dibuja el monto destino, nunca de una
+   * cuenta aparte: dos cifras del mismo precio calculadas en dos lugares es el
+   * desajuste que este hook existe para que no vuelva.
+   */
+  const minimumReceivedText =
+    amount === 0
+      ? '0'
+      : quote === null
+        ? NOTHING_TO_SHOW
+        : quote.availability === 'available' && quote.quote.amountOutMin !== null
+          ? formatTradeAmount(
+              Number(quote.quote.amountOutMin) / 10 ** destination.decimals,
+              Math.min(destination.decimals, MAX_DISPLAY_DECIMALS),
+            )
+          : NOTHING_TO_SHOW;
 
   return useMemo(
     () => ({
@@ -422,6 +645,8 @@ export function useAssetTrade({
       sourceAmountText,
       destinationAmountText,
       equivalentText,
+      minimumReceivedText,
+      quoteFailure: quote !== null && quote.availability === 'unavailable' ? quote.failure : null,
       sourceBalanceText: source.balanceText ?? NOTHING_TO_SHOW,
       destinationBalanceText: destination.balanceText ?? NOTHING_TO_SHOW,
     }),
@@ -439,6 +664,7 @@ export function useAssetTrade({
       sourceAmountText,
       destinationAmountText,
       equivalentText,
+      minimumReceivedText,
     ],
   );
 }

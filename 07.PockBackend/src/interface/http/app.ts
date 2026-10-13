@@ -29,6 +29,9 @@ import type { PayPaymentRequest } from '../../application/payment-requests/payPa
 import type { ClaimWalletsFor } from '../../application/wallet-claim/claimWalletsFor';
 import type { IngestPrivyWebhook } from '../../application/webhooks/ingestPrivyWebhook';
 import type { ReadNotifications } from '../../application/webhooks/readNotifications';
+import type { ReadPrivyMetrics } from '../../application/webhooks/readPrivyMetrics';
+import type { ReadContacts } from '../../application/contacts/readContacts';
+import { createContactsRoutes } from './routes/contacts';
 import type { Logger } from '../../domain/ports/logger';
 import { noopLogger } from '../../domain/ports/logger';
 import type { SessionCodec } from '../../domain/ports/session-codec';
@@ -39,13 +42,18 @@ import { createDepositInfoRoutes } from './routes/depositInfo';
 import { createDigitalDollarsRoutes } from './routes/digitalDollars';
 import { createDiagnosticsRoutes } from './routes/diagnostics';
 import { createNotificationsRoutes } from './routes/notifications';
+import { createTransactionsRoutes } from './routes/transactions';
 import { createPortfolioRoutes } from './routes/portfolio';
 import { createSendRoutes } from './routes/send';
 import { createPaymentRequestsRoutes } from './routes/paymentRequests';
 import { createPoolRoutes } from './routes/pool';
 import { createWalletBalanceRoutes } from './routes/walletBalance';
+import { createSwapRoutes } from './routes/swap';
 import { createWalletsRoutes } from './routes/wallets';
 import { createWebhookRoutes } from './routes/webhooks';
+import { createMetricsRoutes } from './routes/metrics';
+import { createFeedbackRoutes } from './routes/feedback';
+import type { SubmitFeedback } from '../../application/feedback/submitFeedback';
 
 export interface AppDeps {
   readonly mint: MintSession;
@@ -103,6 +111,21 @@ export interface AppDeps {
    * between "this deployment cannot send" and "your send was refused".
    */
   readonly prepareSend?: PrepareSend;
+
+  /**
+   * Swap routes: quote, execute, and list supported pairs.
+   *
+   * Only mounted when the swap use case is wired. A swap screen without a route
+   * behind it is a screen that promises conversions it cannot do.
+   */
+  readonly swapRoutes?: ReturnType<typeof import('./routes/swap').createSwapRoutes>;
+
+  /**
+   * La politica de gasto. Va en su propio grupo porque responde **antes** de
+   * que la persona firme: la pantalla necesita el veredicto para no ofrecer un
+   * botón que no va a llevar a la red.
+   */
+  readonly policyRoutes?: ReturnType<typeof import('./routes/policy').createPolicyRoutes>;
   /**
    * The charge surface: create, read by id, and pay.
    *
@@ -118,6 +141,17 @@ export interface AppDeps {
   /** Absent when no signing secret is wired: the intake is then not there. */
   readonly ingestWebhook?: IngestPrivyWebhook;
   readonly readNotifications?: ReadNotifications;
+  /** Transactions route: get the person's financial movement history. */
+  readonly getTransactions?: GetTransactions;
+  /** Absent when the webhook store is not wired: the metrics route is then not there. */
+  readonly readMetrics?: ReadPrivyMetrics;
+  /** Absent when the contacts store is not wired: the route is then not there. */
+  readonly readContacts?: ReadContacts;
+  /**
+   * Absent when no GitHub token is configured: the feedback route is then not
+   * there — a report button that answered 500 would lie about having a tracker.
+   */
+  readonly submitFeedback?: SubmitFeedback;
   readonly cookieName?: string;
   readonly now?: () => Date;
   readonly log?: Logger;
@@ -273,6 +307,18 @@ export const createApp = (deps: AppDeps) => {
   }
 
   /*
+   * `/api/wallet/swap`. Mounted only when the swap use case is wired.
+   * A swap screen without a route is a screen that promises conversions it cannot do.
+   */
+  if (deps.swapRoutes) {
+    app.route('/api/wallet/swap', deps.swapRoutes);
+  }
+
+  if (deps.policyRoutes) {
+    app.route('/api/wallet/policy', deps.policyRoutes);
+  }
+
+  /*
    * `/api/payment-requests`. Mounted when all three use cases exist, for the same
    * reason the claim route is mounted on its dependencies: the honest answer to
    * "this deployment cannot charge" is that the route does not exist, not a 404
@@ -302,6 +348,37 @@ export const createApp = (deps: AppDeps) => {
    * *not* mounted without it is an endpoint that would accept anything anybody on
    * the internet sends.
    */
+  if (deps.readMetrics) {
+    // Counts over the whole table, nothing per person: a status-page fact, public by nature.
+    app.route('/api/metrics/privy', createMetricsRoutes({ readMetrics: deps.readMetrics }));
+  }
+
+  if (deps.submitFeedback) {
+    app.route(
+      '/api/feedback',
+      createFeedbackRoutes({
+        sessions: deps.sessions,
+        submit: deps.submitFeedback,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
+  if (deps.readContacts) {
+    app.route(
+      '/api/contacts',
+      createContactsRoutes({
+        sessions: deps.sessions,
+        readContacts: deps.readContacts,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+
   if (deps.ingestWebhook) {
     app.route('/api/webhooks/privy', createWebhookRoutes({ ingest: deps.ingestWebhook, now: deps.now, log }));
   }
@@ -312,6 +389,19 @@ export const createApp = (deps: AppDeps) => {
       createNotificationsRoutes({
         sessions: deps.sessions,
         readNotifications: deps.readNotifications,
+        cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
+        now: deps.now,
+        log,
+      }),
+    );
+  }
+  
+  if (deps.getTransactions) {
+    app.route(
+      '/api/transactions',
+      createTransactionsRoutes({
+        sessions: deps.sessions,
+        getTransactions: deps.getTransactions,
         cookieName: deps.cookieName ?? SESSION_COOKIE_NAME,
         now: deps.now,
         log,

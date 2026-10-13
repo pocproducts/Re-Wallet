@@ -167,8 +167,11 @@ export const projectYearlyGain = (
   if (percent === null) return null;
 
   const aprScaled = percentToScaled(percent, 4); // 1e-4 de punto
-  // gain = raw x apr% / 100, en enteros.
-  const gain = (raw * aprScaled) / (1_000_000n * 100n);
+  // gain = raw x apr% / 100, en enteros. El `aprScaled` ya lleva su 1e-4, así
+  // que el divisor es 1e4 x 100 = 1e6 y no 1e6 x 100 = 1e8: con 1e8 la
+  // proyección salía cien veces abajo —100 USDC al 100% se leían 1,00— y esa
+  // cifra se pintaba como "estimación en un año" en dos pantallas de plata real.
+  const gain = (raw * aprScaled) / (10_000n * 100n);
 
   return { gain, label: formatAmount(gain, decimals) };
 };

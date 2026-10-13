@@ -54,6 +54,7 @@
    */
   html {
     height: 100%;
+    background-color: var(--color-page);
     /*
      * iOS Safari infla los textos cuando la página rota a horizontal, y eso
      * rompe los layouts con altura fija. `100%` le dice que use el tamaño que

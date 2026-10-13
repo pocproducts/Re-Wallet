@@ -204,47 +204,15 @@ export default function App() {
    * aquella persona había movido plata que nunca movió.
    *
    * Hoy la lista es exactamente lo que el backend conoce: nada. El array sigue
-   * viviendo acá porque los cobros que la persona **crea** en la app sí son un
-   * hecho —uno lo generó ella y lo puede ver—, pero ya no se siembra con
-   * ejemplos.
-   */
-  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
-
-  useEffect(() => {
-    try {
-      const storedTx = localStorage.getItem(TRANSACTIONS_STORAGE_KEY);
-      if (storedTx) {
-        const parsedTx = JSON.parse(storedTx);
-        if (Array.isArray(parsedTx) && parsedTx.length > 0) {
-          setTransactions(parsedTx);
-        }
-      }
-    } catch (e) {
-      console.warn('Error reading stored transactions:', e);
-    }
-  }, []);
-
-  // Agregar nueva transacción / cobro a la actividad
-  const handleAddTransaction = (newTx: TransactionItem) => {
-    setTransactions((prev) => {
-      const updated = [newTx, ...prev];
-      try {
-        localStorage.setItem(TRANSACTIONS_STORAGE_KEY, JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Error saving transactions:', e);
-      }
-      return updated;
-    });
-  };
-
   /*
-   * La dirección de cobro: la primera red real que el backend reportó.
+   * El feed de transacciones financieras, leído una vez por sesión.
    *
-   * Antes el modal de cobrar usaba un saldo de Bitcoin escrito a mano y un
-   * `@user` como destino. Ahora usa la dirección que devolvió
-   * `GET /api/portfolio`, y si no hay ninguna no genera el cobro: es preferible
-   * no poder cobrar antes que mostrar un QR que no lleva a ninguna parte.
+   * En lugar de mantener un estado local de transacciones, usamos un hook que
+   * lee las transacciones financieras desde el backend una vez por sesión,
+   * exactamente como hacemos con el portfolio y los avisos.
    */
+  const transactionsHook = useTransactions(sessionStatus === 'authenticated');
+ 
   const receiveAddress = useMemo<ChargeReceiveAddress | null>(() => {
     const first = portfolio.receiveAddresses[0];
     return first ? { label: first.label, address: first.address } : null;
@@ -325,6 +293,17 @@ export default function App() {
    */
   const [restarting, setRestarting] = useState(false);
 
+  /*
+   * La marca de arranque del shell (`index.html`, `#boot-marker`) se borra con
+   * el primer render de la app —sólo cuando ya se renderizó algo— y nadie más
+   * la toca: si llega a quedarse, el JavaScript en este navegador murió antes
+   * del primer frame de React, y eso es el diagnóstico exacto de la "pantalla
+   * negra" desde el teléfono.
+   */
+  useEffect(() => {
+    document.getElementById('boot-marker')?.remove();
+  }, []);
+
   return (
     /*
      * `min-h-dvh` y no `min-h-screen`: `min-h-screen` es 100vh, que en Android
@@ -335,7 +314,7 @@ export default function App() {
      */
     <div className="min-h-dvh w-full bg-[#f3f4f6] text-black flex justify-center selection:bg-[#ccff00] selection:text-black">
       {/* Contenedor Responsivo para Teléfonos */}
-      <main className="relative w-full max-w-md h-dvh flex flex-col overflow-hidden bg-[#f3f4f6] shadow-2xl">
+      <main className="relative w-full max-w-md min-h-dvh flex flex-col bg-[#f3f4f6] shadow-2xl">
         {/* =========================================================================
             LA PUERTA DE INGRESO, O NADA:
             `checking` (Privy arranca), `checking_session` (vuela el `GET`) y
@@ -459,6 +438,7 @@ export default function App() {
                         onOpenAction={(act) => setActiveActionModal(act)}
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenScanner={() => setIsScannerOpen(true)}
+                        onOpenChargeModal={() => setIsChargeModalOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
                         onOpenNotifications={() => setIsNotificationsOpen(true)}
                         hasUnreadNotifications={notifications.hasUnread}
@@ -490,7 +470,7 @@ export default function App() {
                     <div className="absolute inset-0 z-20 bg-[#f3f4f6] safe-top-0 animate-in fade-in duration-200">
                       <ActivityView
                         profile={profile}
-                        transactions={transactions}
+                        transactions={transactionsHook.transactions}
                         onOpenProfile={() => setIsProfileOpen(true)}
                         onOpenSearch={() => setIsSearchOpen(true)}
                         onOpenBugModal={() => setIsBugModalOpen(true)}
@@ -505,7 +485,7 @@ export default function App() {
 
             {/* DIV 2: Navbar mobile abajo (Oculto en layouts de 3er nivel) */}
             {!isAnyThirdLevelOpen && !activeActionModal && (
-              <div id="mobile-navbar-container" className="w-full shrink-0">
+              <div id="mobile-navbar-container" className="w-full shrink-0 relative">
                 <BottomNavbar
                   currentTab={currentTab}
                   onTabChange={(tab) => {
@@ -513,8 +493,7 @@ export default function App() {
                     setActiveActionModal(null);
                     setCurrentTab(tab);
                   }}
-                  onOpenChargeModal={() => setIsChargeModalOpen(true)}
-                  onOpenBugModal={() => setIsChargeModalOpen(true)}
+                  onScanQr={() => setIsChargeModalOpen(true)}
                 />
               </div>
             )}
@@ -528,9 +507,9 @@ export default function App() {
           receiveAddress={receiveAddress}
           /*
            * El mismo origen que recibe `CreateChargeView`, y por el mismo
-           * motivo: el link del cobro se arma en el navegador, no con una
+           * motivo: el link del cobro se arma en el navegador, no con una *
            * constante escrita a mano acá.
-           */
+ 
           origin={typeof window === 'undefined' ? '' : window.location.origin}
           onAddTransaction={handleAddTransaction}
           onNavigateToActivity={() => {
@@ -539,16 +518,6 @@ export default function App() {
           }}
         />
 
-        {/*
-          MODAL DE ACCIÓN A PANTALLA COMPLETA VERDE LIMA (DEPOSITAR, ENVIAR).
-
-          'usar' ya no se puede pasar: se sacó su único llamador —el botón
-          "Usar" de la billetera— porque su menú era compra y venta, y no hay
-          motor de swap.
-        */}
-        <ActionFullscreenModal
-          action={activeActionModal}
-          onClose={() => setActiveActionModal(null)}
           userTag={userTag}
           depositInfo={depositInfo}
           holdings={portfolio.holdings}
@@ -582,7 +551,7 @@ export default function App() {
           />
         )}
 
-        {/* 3. Bitcoin & Crypto (3er nivel desde Inversiones -> Bitcoin & Crypto, sumatoria + 10 assets) */}
+        {/* 3. Criptoactivos (3er nivel desde Inversiones -> Criptoactivos, sumatoria + 10 assets) */}
         {isCryptoListOpen && (
           <CryptoAssetsListView
             onBack={() => setIsCryptoListOpen(false)}
@@ -683,7 +652,7 @@ export default function App() {
                   }}
                   className="p-2.5 rounded-xl hover:bg-slate-50 flex items-center justify-between cursor-pointer transition-colors"
                 >
-                  <span className="font-bold text-black">Bitcoin & Crypto</span>
+                  <span className="font-bold text-black">Criptoactivos</span>
                   <span className="text-[11px] text-[#00c076] font-bold">Ver cartera</span>
                 </div>
                 <div

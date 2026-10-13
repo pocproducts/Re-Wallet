@@ -1,5 +1,5 @@
 import { defineChain } from 'viem';
-import { mainnet } from 'viem/chains';
+import { arbitrum, base, mainnet, optimism, polygon } from 'viem/chains';
 
 /**
  * LAS REDES EVM QUE SOPORTA LA APP.
@@ -72,6 +72,23 @@ export const monad = defineChain({
 /** Ethereum mainnet: la red por defecto, y la que no se reemplaza. */
 export const ethereumMainnet = mainnet;
 
+export const baseMainnet = base;
+export const arbitrumMainnet = arbitrum;
+export const optimismMainnet = optimism;
+export const polygonMainnet = polygon;
+
+/**
+ * Todas las redes EVM soportadas, en el orden en que se ofrecen. Ethereum primero.
+ *
+ * Monad está acá —y no queda fuera en un `defineChain` huérfano— porque el
+ * envío deriva sus redes firmables de esta lista: quien no está, no aparece en
+ * `Enviar → Criptoactivos` aunque el catálogo y el backend sí la sirvan. Es el
+ * bug del reporte #35: MON desaparecía de la lista por faltar en esta fila.
+ * La app ya la leía para saldos y el backend ya arma su transacción; lo que
+ * faltaba era la puerta.
+ */
+export const SUPPORTED_EVM_CHAINS = [ethereumMainnet, monad, baseMainnet, arbitrumMainnet, optimismMainnet, polygonMainnet] as const;
+
 /**
  * LAS REDES QUE NO SON EVM QUE LA APP CONFIGURA.
  *
@@ -103,15 +120,30 @@ export const ethereumMainnet = mainnet;
  * (`solana:mainnet`), que no es CAIP-2: son dos vocabularios del mismo clúster y
  * no hay forma de que uno signifique el otro sin decirlo.
  */
+/*
+ * El clúster de Solana donde esta build firma, leído del env.
+ *
+ * `VITE_SOLANA_CLUSTER=devnet` sólo para demos o entornos descartables: la
+ * config de producción no lleva la variable y firma en mainnet. Un bundle
+ * cuyo clúster no coincide con el del backend corta el envío con
+ * `CHAIN_MISMATCH` en vez de firmar contra la red de otro.
+ */
+const SOLANA_CLUSTER_ENV = import.meta.env.VITE_SOLANA_CLUSTER === 'devnet';
+
 export const SOLANA_MAINNET = {
   key: 'solana',
   label: 'Solana',
-  network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
-  cluster: 'solana:mainnet',
+  /*
+   * Los valores de las dos redes vienen de `domain/solana/cluster.ts` del
+   * backend, donde están verificados contra el RPC de cada clúster. CAIP-2 es
+   * el prefijo del genesis hash del clúster; `cluster` es la forma que usa
+   * la wallet.
+   */
+  network: SOLANA_CLUSTER_ENV
+    ? 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
+    : 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+  cluster: SOLANA_CLUSTER_ENV ? 'solana:devnet' : 'solana:mainnet',
 } as const;
-
-/** Todas las redes EVM soportadas, en el orden en que se ofrecen. Ethereum primero. */
-export const SUPPORTED_EVM_CHAINS = [ethereumMainnet, monad] as const;
 
 /** La red en la que se inicializa la wallet embebida. Ethereum, a propósito. */
 export const DEFAULT_EVM_CHAIN = ethereumMainnet;
@@ -126,6 +158,10 @@ export const DEFAULT_EVM_CHAIN = ethereumMainnet;
 export const EVM_CHAIN_BY_ID: Readonly<Record<number, (typeof SUPPORTED_EVM_CHAINS)[number]>> = {
   [ethereumMainnet.id]: ethereumMainnet,
   [monad.id]: monad,
+  [baseMainnet.id]: baseMainnet,
+  [arbitrumMainnet.id]: arbitrumMainnet,
+  [optimismMainnet.id]: optimismMainnet,
+  [polygonMainnet.id]: polygonMainnet,
 };
 
 /**

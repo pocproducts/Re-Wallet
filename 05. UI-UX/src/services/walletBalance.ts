@@ -39,6 +39,19 @@
  * is not unreadable, and that distinction survives here: a piece that arrives
  * `ok` with `raw: "0"` stays `ok` with `isZero: true`, so an empty wallet is
  * still allowed to look empty.
+ *
+ * ── `depositReady` y `depositable`: SI Y CUÁNTO, DICHO POR EL SERVIDOR ────
+ *
+ * El botón de depósito vive en la fila del venue, y la fila no puede decidir si
+ * ese botón existe: el destino de un depósito dejó de estar compilado en el
+ * cliente, y escribir acá una lista de venues con botón sería devolver el
+ * problema con otro nombre. Por eso la fila **pregunta** —`depositReady` si el
+ * venue puede recibir un depósito, `depositable` cuánto hay para mandarle— y esta
+ * archivo sólo traduce las dos respuestas a la forma que la pantalla pinta.
+ *
+ * Y la decisión de qué hacer con ellas vive en `venueRowActionOf`, que es lógica
+ * pura y no JSX: la fila que dibuja botón y la que no se pueden leer en una
+ * prueba, sin DOM y sin renderizar nada.
  */
 
 import { getJson } from './api';
@@ -167,7 +180,9 @@ const formatPriceText = (usd: string): string => {
 };
 
 const toChain = (value: unknown): WalletBalanceChain | null =>
-  value === 'monad' || value === 'ethereum' || value === 'solana' ? value : null;
+  value === 'monad' || value === 'ethereum' || value === 'solana' || value === 'base' || value === 'arbitrum' || value === 'optimism' || value === 'polygon'
+    ? value
+    : null;
 
 const toSource = (value: unknown): 'free_wallet' | 'pool_position' =>
   value === 'pool_position' ? 'pool_position' : 'free_wallet';
@@ -294,30 +309,128 @@ export interface YieldRatioView {
   readonly denominator: bigint;
 }
 
+/** El saldo de origen de un venue: el USDC libre de su cadena, exacto. */
+export type VenueDepositableView =
+  | { readonly status: 'ok'; readonly amount: AmountView }
+  | { readonly status: 'unreadable'; readonly reason: string };
+
+/**
+ * Si un venue puede recibir un depósito, y — cuando no— **por qué**.
+ *
+ * No es un `boolean` y no es una lista del front: es lo que respondió el
+ * servidor, que es el único que sabe si armó el mensaje o no. `not_ready` trae un
+ * motivo acotado y **la frase para pintar tal cual**: un `false` pelado dejaría
+ * que la pantalla inventara la explicación, y una explicación inventada es como
+ * alguien firma una transacción que va a fallar.
+ */
+export type VenueDepositReadinessView =
+  | { readonly status: 'ready' }
+  | {
+      readonly status: 'not_ready';
+      readonly reason: string;
+      readonly missingSteps: number;
+      readonly message: string;
+    };
+
+/** `not_ready` sin motivo ni frase no es un motivo: es el estado más vago posible. */
+const NOT_READY: VenueDepositReadinessView = {
+  status: 'not_ready',
+  reason: 'DEPOSIT_INSTRUCTIONS_UNVERIFIED',
+  missingSteps: 1,
+  message: 'Este lugar todavía no puede recibir depósitos.',
+};
+
+/**
+ * Lo que el servidor dice sobre el origen del depósito, leído sin confiar.
+ *
+ * Misma regla que en el resto del archivo: una forma que no se reconoce **degrada
+ * a `unreadable`**, nunca a `ok` con cero. Un `ok` con `raw: '0'` viene del
+ * servidor y es un cero verdadero; un `ok` que arma este normalizador porque no
+ * entendió el cuerpo sería un cero inventado, que es exactamente la cifra sobre la
+ * que alguien firmaría.
+ */
+const toDepositable = (value: unknown): VenueDepositableView => {
+  const field = value as { readonly status?: unknown; readonly amount?: unknown; readonly reason?: unknown } | null;
+  if (field === null || typeof field !== 'object' || field.status !== 'ok') {
+    return {
+      status: 'unreadable',
+      reason: typeof field?.reason === 'string' ? field.reason : 'UNREADABLE',
+    };
+  }
+
+  const amount = toQuantityView(field.amount);
+  if (amount === null) return { status: 'unreadable', reason: 'UNREADABLE' };
+  return { status: 'ok', amount };
+};
+
+/**
+ * `depositReady` del backend, o el refus más cercano que se puede pintar.
+ *
+ * Un `not_ready` bien formado viaja **entero**, con su motivo y su frase: la
+ * escribió quien sabe qué falta, y una pantalla que la reescribe termina
+ * explicando mal la plata. Lo que no se preserva es un cuerpo que no se entiende,
+ * y en ese caso el estado es `not_ready` y no `ready` —ausente es ilegible, y un
+ * ilegible no habilita una acción que mueve plata.
+ */
+const toDepositReady = (value: unknown): VenueDepositReadinessView => {
+  const ready = value as {
+    readonly status?: unknown;
+    readonly reason?: unknown;
+    readonly missingSteps?: unknown;
+    readonly message?: unknown;
+  } | null;
+  if (ready === null || typeof ready !== 'object') return NOT_READY;
+  if (ready.status === 'ready') return { status: 'ready' };
+
+  return {
+    status: 'not_ready',
+    reason: typeof ready.reason === 'string' && ready.reason.length > 0 ? ready.reason : NOT_READY.reason,
+    missingSteps:
+      Number.isInteger(ready.missingSteps) && (ready.missingSteps as number) > 0
+        ? (ready.missingSteps as number)
+        : NOT_READY.missingSteps,
+    message: typeof ready.message === 'string' && ready.message.trim().length > 0 ? ready.message : NOT_READY.message,
+  };
+};
+
 /**
  * One venue of the combined figure. A union, because "holds nothing" and
  * "could not be read" are different facts and a screen must not have to guess
  * which one it is painting: `status` decides, and an unreadable venue is
  * **typed** as carrying neither a balance nor a rate.
+ *
+ * `chain`, `depositable` y `depositReady` viajan en **los dos** brazos, y no por
+ * comodidad: si un `unreadable` los trajera ausentes, la fila tendría que
+ * inventar si el botón existe. Un venue cuya posición no se pudo leer igual puede
+ * tener plata libre y puede, o no, aceptar depósitos.
  */
 export type YieldVenueView =
   | {
       readonly key: string;
       readonly label: string;
       readonly status: 'ok';
+      /** The network this venue lives on. The screen never infers it from a label. */
+      readonly chain: WalletBalanceChain | null;
       /** `'zero_balance'` only: the venue holds nothing and carries no weight. */
       readonly exclusion: 'zero_balance' | null;
       readonly balance: AmountView;
       /** `null` only for a zero-balance venue: no rate is owed there. */
       readonly rate: YieldVenueRateView | null;
+      /** How much free USDC of **this venue's chain** could be deposited here. */
+      readonly depositable: VenueDepositableView;
+      /** Whether a deposit can be made here at all, and why not. */
+      readonly depositReady: VenueDepositReadinessView;
     }
   | {
       readonly key: string;
       readonly label: string;
       readonly status: 'unreadable';
       readonly reason: string;
+      readonly chain: WalletBalanceChain | null;
       readonly balance: null;
       readonly rate: null;
+      readonly depositable: VenueDepositableView;
+      readonly depositReady: VenueDepositReadinessView;
     };
 
 /**
@@ -412,6 +525,11 @@ const toVenueRate = (value: unknown): YieldVenueRateView | null => {
  * balance or a rate, whatever else the body carries — the same rule as
  * `normalizePart`, and for the same reason: a rate next to a failure is a
  * number the screen would paint.
+ *
+ * `chain`, `depositable` y `depositReady` se leen **en los dos brazos** y fuera
+ * de las ramas, porque no son cifras que se pintan: son hechos sobre la fila. La
+ * cadena se lee o vale `null` —nunca se deduce de la etiqueta, que es como se
+ * ofrece un depósito en la red equivocada— y los otros dos degradan por su cuenta.
  */
 const normalizeVenue = (raw: unknown): YieldVenueView => {
   /*
@@ -420,6 +538,11 @@ const normalizeVenue = (raw: unknown): YieldVenueView => {
    * stops existing as a property. At this boundary every field is untrusted
    * anyway, so the reader is spelled out structurally and each branch still
    * decides what it is willing to believe.
+   *
+   * Y por eso `chain`, `depositable` y `depositReady` se leen **estructuralmente**
+   * aunque no estén en `WalletBalanceVenuePayload`: en esta frontera el cuerpo es
+   * ajeno, y un tipo que declara campos que el servidor todavía no manda es un
+   * tipo al que el compilador le prestaría una confianza que acá no existe.
    */
   const venue = raw as {
     readonly key?: unknown;
@@ -429,13 +552,29 @@ const normalizeVenue = (raw: unknown): YieldVenueView => {
     readonly exclusion?: unknown;
     readonly balance?: unknown;
     readonly rate?: unknown;
+    readonly chain?: unknown;
+    readonly depositable?: unknown;
+    readonly depositReady?: unknown;
   } | null;
   if (venue === null || typeof venue !== 'object') {
-    return { key: 'desconocido', label: UNKNOWN_VENUE_LABEL, status: 'unreadable', reason: 'UNREADABLE', balance: null, rate: null };
+    return {
+      key: 'desconocido',
+      label: UNKNOWN_VENUE_LABEL,
+      status: 'unreadable',
+      reason: 'UNREADABLE',
+      chain: null,
+      balance: null,
+      rate: null,
+      depositable: { status: 'unreadable', reason: 'UNREADABLE' },
+      depositReady: toDepositReady(null),
+    };
   }
 
   const key = typeof venue.key === 'string' && venue.key.length > 0 ? venue.key : 'desconocido';
   const label = typeof venue.label === 'string' && venue.label.length > 0 ? venue.label : UNKNOWN_VENUE_LABEL;
+  const chain = toChain(venue.chain);
+  const depositable = toDepositable(venue.depositable);
+  const depositReady = toDepositReady(venue.depositReady);
 
   if (venue.status !== 'ok') {
     return {
@@ -443,8 +582,11 @@ const normalizeVenue = (raw: unknown): YieldVenueView => {
       label,
       status: 'unreadable',
       reason: typeof venue.reason === 'string' ? venue.reason : 'UNREADABLE',
+      chain,
       balance: null,
       rate: null,
+      depositable,
+      depositReady,
     };
   }
 
@@ -452,11 +594,21 @@ const normalizeVenue = (raw: unknown): YieldVenueView => {
   // A readable venue whose balance is not readable is not readable, and it is
   // never downgraded to a zero balance: a zero is a different, true claim.
   if (balance === null) {
-    return { key, label, status: 'unreadable', reason: 'UNREADABLE', balance: null, rate: null };
+    return {
+      key,
+      label,
+      status: 'unreadable',
+      reason: 'UNREADABLE',
+      chain,
+      balance: null,
+      rate: null,
+      depositable,
+      depositReady,
+    };
   }
 
   const exclusion = venue.exclusion === 'zero_balance' ? 'zero_balance' : null;
-  return { key, label, status: 'ok', exclusion, balance, rate: toVenueRate(venue.rate) };
+  return { key, label, status: 'ok', chain, exclusion, balance, rate: toVenueRate(venue.rate), depositable, depositReady };
 };
 
 /**
@@ -548,6 +700,205 @@ export const formatVenueRate = (
 
   return `${formatScaled(scaled, places, places)}%`;
 };
+
+/**
+ * `DEPOSIT_READY_NOTE`: lo que se dice cuando el destino todavía no acepta
+ * depósitos.
+ *
+ * La frase **del servidor** manda y esta sólo existe para cuando `depositReady`
+ * no trajo ninguna: un cuerpo viejo, o una lectura a medio hacer. Es un texto de
+ * último recurso y por eso está escrito para no mentir —no promete una fecha, no
+ * dice “casi”—, y no reemplaza al del backend cuando ese llega.
+ */
+export const DEPOSIT_READY_NOTE =
+  'Este lugar todavía no puede recibir depósitos. No te escondemos el botón: no hay uno que funcione.';
+
+/**
+ * POR QUÉ UNA FILA NO DIBUJA BOTÓN. Cerrado, porque una pantalla que inventa el
+ * motivo de una acción que no puede hacer termina explicando mal la plata.
+ */
+export type VenueRowAbsentReason =
+  /** La red todavía no tiene ningún lugar donde rendir esos dólares. */
+  | 'no_venue'
+  /** La fila del venue no se pudo leer. */
+  | 'venue_unreadable'
+  /** El servidor dice que ese depósito no se ejecuta todavía, y por qué. */
+  | 'deposit_not_ready'
+  /** No se pudo leer cuánto hay para depositar: no hay cifra sobre la que firmar. */
+  | 'origin_unreadable'
+  /** Se leyó y es cero: no hay nada que mandar. */
+  | 'origin_zero'
+  /** El venue puede recibir, pero la app todavía no tiene su flujo de depósito. */
+  | 'no_flow_yet';
+
+/**
+ * LO QUE UNA FILA HACE CON SU VENUE, DECIDIDO SIN DIBUJAR NADA.
+ *
+ * Es lógica pura a propósito. La regla de este repo —*lo que no se pudo leer no se
+ * muestra, y cuando se vuelve a poder leer aparece*— no necesita un DOM para ser
+ * una regla: necesita poder preguntarle a una función qué hace con cada fila y
+ * comparar la respuesta. Por eso la decisión vive acá y la vista sólo la pinta.
+ */
+export type VenueRowAction =
+  | {
+      readonly kind: 'deposit';
+      readonly venueKey: string;
+      /** El tope exacto que el servidor dijo que hay, en la unidad mínima. */
+      readonly maxAmountRaw: bigint;
+      readonly maxAmountFormatted: string;
+    }
+  | {
+      readonly kind: 'absent';
+      readonly reason: VenueRowAbsentReason;
+      /** La frase para pintar tal cual. Nunca un código en la vista. */
+      readonly message: string;
+    };
+
+/** La etiqueta de cada red, escrita una sola vez. */
+const CHAIN_LABELS: Readonly<Record<WalletBalanceChain, string>> = {
+  monad: 'Monad',
+  ethereum: 'Ethereum',
+  base: 'Base',
+  arbitrum: 'Arbitrum One',
+  optimism: 'OP Mainnet',
+  polygon: 'Polygon',
+  solana: 'Solana',
+};
+
+/**
+ * Las redes cuyas filas de destino se dibujan, en el orden en que se ven.
+ *
+ * Es la **misma** lista de redes que la app ya declara para recibir y para enviar
+ * (`KNOWN_CHAIN_IDS` en `portfolio.ts` y `depositInfo.ts`): la app no descubre
+ * redes nuevas por su cuenta. Lo que esta lista **no** dice es qué venues hay en
+ * cada una —eso lo responde el servidor—; por eso el cruce se arma acá y el
+ * destino de cada fila nunca se escribe a mano.
+ */
+export const YIELD_VENUE_CHAINS: readonly WalletBalanceChain[] = ['monad', 'solana'];
+
+/**
+ * ¿QUÉ HACE LA FILA DE ESTE VENUE?
+ *
+ * El orden de las guardas es el orden en que sevan descartando las razones, y
+ * importa: primero lo que **no existe** (no hay venue), después lo que **no se
+ * pudo leer**, después lo que **no se puede hacer** (el servidor dice que no), y
+ * recién al final lo que no hay para mandar. Al revés, una fila sin destino
+ * terminaría culpando a la plata.
+ *
+ * - **Sin venue** → la red todavía no tiene un lugar donde rendir. Se lo dice, con
+ *   su frase: es una carencia del producto, y esconderla es como si no existiera.
+ * - **Fila ilegible** → no se dibuja nada. Un lugar que no se pudo leer no puede
+ *   ofrecer una acción: la acción se apoya en lo que no se leyó.
+ * - **`depositReady: not_ready`** → no dibuja botón. Ni deshabilitado, ni gris,
+ *   ni un “próximamente”: un botón que falla en la red principal es peor que un
+ *   botón que todavía no existe. Y el motivo es el que dice el servidor.
+ * - **Origen ilegible** → no dibuja botón. Depositar sobre una cifra que nadie
+ *   pudo leer no es una acción que vaya a funcionar.
+ * - **Origen en cero real** → tampoco. Y es un hecho **distinto** del anterior: se
+ *   leyó y no hay nada, contra no se supó cuánto hay. Las dos frases lo dicen así,
+ *   porque confundirlas es exactamente el defecto.
+ *
+ * `flowVenueKey` es el venue para el que la app **sí** tiene un flujo de depósito
+ * ejecutable —hoy, el único— y no es una lista de venues con botón: es el flujo que
+ * existe. Un venue que el servidor declara listo pero cuyo flujo todavía no está
+ * en la app no dibuja nada, porque abrir el flujo de otro venue es mover plata en
+ * una cadena que no es la de la fila.
+ */
+export const venueRowActionOf = (
+  venue: YieldVenueView | null,
+  chainLabel: string,
+  flowVenueKey: string | null,
+): VenueRowAction => {
+  if (venue === null) {
+    return {
+      kind: 'absent',
+      reason: 'no_venue',
+      message: `En ${chainLabel} todavía no tenés un lugar donde rendir esos dólares.`,
+    };
+  }
+
+  if (venue.status !== 'ok') {
+    return {
+      kind: 'absent',
+      reason: 'venue_unreadable',
+      message: `No pudimos leer ${venue.label}, así que no te ofrecemos nada acá. No es que esté vacío: es que no lo supimos leer.`,
+    };
+  }
+
+  if (venue.depositReady.status !== 'ready') {
+    // La frase del servidor manda tal cual: la escribió quien sabe qué falta.
+    return {
+      kind: 'absent',
+      reason: 'deposit_not_ready',
+      message: venue.depositReady.message || DEPOSIT_READY_NOTE,
+    };
+  }
+
+  if (venue.depositable.status !== 'ok') {
+    return {
+      kind: 'absent',
+      reason: 'origin_unreadable',
+      message: `No pudimos leer cuánto USDC libre tenés en ${chainLabel}, así que no dibujamos el botón: no se depone sobre un número que nadie conoce.`,
+    };
+  }
+
+  if (venue.depositable.amount.isZero) {
+    return {
+      kind: 'absent',
+      reason: 'origin_zero',
+      message: `No tenés USDC libre en ${chainLabel} para depositar acá. Leímos la cuenta y está en cero.`,
+    };
+  }
+
+  if (flowVenueKey === null || venue.key !== flowVenueKey) {
+    return {
+      kind: 'absent',
+      reason: 'no_flow_yet',
+      message: `${venue.label} puede recibir depósitos, pero todavía no tenemos el paso a paso para hacértelo desde acá.`,
+    };
+  }
+
+  return {
+    kind: 'deposit',
+    venueKey: venue.key,
+    maxAmountRaw: venue.depositable.amount.raw,
+    maxAmountFormatted: venue.depositable.amount.formatted,
+  };
+};
+
+/**
+ * UNA FILA POR RED, con lo que el servidor contó y con lo que no contó.
+ *
+ * Las redes salen del catálogo de la app (`SUPPORTED_EVM_CHAINS` y Solana), que es
+ * donde ya vive la respuesta a “¿en qué redes puede funcionar esto?”. Las venues
+ * salen del balance. Cruzarlos es lo que permite que una red **sin** venue se
+ * dibuje igual, diciendo que no lo tiene: una fila que no aparece es una carencia
+ * del producto disfrazada de dato.
+ */
+export interface VenueRow {
+  readonly chain: WalletBalanceChain;
+  readonly chainLabel: string;
+  /** La venue de esa red, o `null` cuando todavía no hay ninguna. */
+  readonly venue: YieldVenueView | null;
+  readonly action: VenueRowAction;
+}
+
+export const venueRowsOf = (
+  venues: readonly YieldVenueView[],
+  chains: readonly WalletBalanceChain[],
+  flowVenueKey: string | null,
+): readonly VenueRow[] =>
+  chains.map((chain) => {
+    // La primera venue de la red que aparezca: la composición ya garantiza que un
+    // venue sólo pueda tener la suya, así que el cruce no puede dar dos filas.
+    const venue = venues.find((candidate) => candidate.chain === chain) ?? null;
+    return {
+      chain,
+      chainLabel: CHAIN_LABELS[chain],
+      venue,
+      action: venueRowActionOf(venue, CHAIN_LABELS[chain], flowVenueKey),
+    };
+  });
 
 /* ── The buckets, the total, and the sentences ─────────────────────────────── */
 

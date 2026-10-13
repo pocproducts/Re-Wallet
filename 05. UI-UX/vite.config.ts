@@ -5,6 +5,14 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    /*
+     * Los assets de la bienvenida viven en `src/public/` a propósito
+     * (imágenes de onboarding y el favicon), no en el `public/` por defecto.
+     * Este `publicDir` los publica en la raíz del deploy, sin mover los
+     * archivos de dónde el equipo los bajó: `/onbarding1.jpg`,
+     * `/onbarding2.jpg`, `/favicon.png`.
+     */
+    publicDir: 'src/public',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

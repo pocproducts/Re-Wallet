@@ -140,7 +140,7 @@ export interface PortfolioView {
  * `no_wallet` no aporta ninguna: no hay dirección que mostrar, y una dirección
  * de otra persona no es un plan B.
  */
-const RECEIVE_CHAIN_ORDER: readonly PortfolioChainId[] = ['ethereum', 'monad', 'solana'];
+const RECEIVE_CHAIN_ORDER: readonly PortfolioChainId[] = ['ethereum', 'monad', 'base', 'arbitrum', 'optimism', 'polygon', 'solana'];
 
 const receiveAddressesFrom = (portfolio: Portfolio | null): readonly PortfolioReceiveAddress[] => {
   if (portfolio === null) return [];

@@ -3,10 +3,39 @@ import { ArrowLeft, ShieldCheck, Loader2 } from 'lucide-react';
 
 import { DepositToPoolModal } from './DepositToPoolModal';
 import { formatAmount, formatPercent, projectYearlyGain } from '../../services/pool';
+import {
+  venueRowsOf,
+  YIELD_VENUE_CHAINS,
+  type WalletBalanceChain,
+  type YieldVenueView,
+} from '../../services/walletBalance';
 import type { WalletBalanceScreenView } from '../../hooks/useWalletBalance';
 import type { PoolScreenView } from '../../hooks/usePool';
 import type { PoolAmount, PoolField } from '../../services/pool';
 import { usePoolDeposit, type PoolDeposit } from '../../hooks/usePoolDeposit';
+
+/**
+ * EL VENUE PARA EL QUE ESTA PANTALLA TIENE UN FLUJO DE DEPÓSITO.
+ *
+ * No es una lista de venues con botón —esa lista la da el servidor, en
+ * `depositReady`, y por eso la fila no la escribe—: es el nombre del flujo que
+ * existe. Hoy hay un solo flujo (`usePoolDeposit` arma approve + deposit contra
+ * el pool de Aave en Monad), y su fila es la única que puede abrirlo. Cuando el
+ * servidor marque otro venue como listo, esta fila sigue de ser la única con
+ * botón hasta que ese flujo exista: abrir el flujo de otro venue es la forma
+ * corta de mover plata en una cadena que no es la de la fila.
+ */
+const DEPOSIT_FLOW_VENUE_KEY = 'invest.aave_v3_usdc_monad';
+
+/**
+ * Los pasos del flujo que piden una firma: aprobar y depositar.
+ *
+ * Se cuentan del propio flujo (`flow.steps`) y no de un número escrito acá, para
+ * que el aviso y el flujo no puedan desincronizarse: si mañana el depósito deja
+ * de pedir `approve` porque el allowance ya está dado, el rótulo baja solo.
+ */
+const signatureSteps = (flow: PoolDeposit): number =>
+  flow.steps.filter((entry) => entry.id === 'approve' || entry.id === 'deposit').length;
 
 interface AavePoolsViewProps {
   onBack: () => void;
@@ -68,7 +97,7 @@ const PoolAmountCell: React.FC<{
 };
 
 export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, balance, onReload }) => {
-  const [isDepositOpen, setIsDepositOpen] = useState(false);
+  const [depositVenueKey, setDepositVenueKey] = useState<string | null>(null);
   const flow: PoolDeposit = usePoolDeposit(onReload);
 
   const view = pool.pool;
@@ -77,7 +106,7 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, bala
   const position = view?.position.aTokenBalance;
 
   /*
-   * TU POSICIÓN ES DE TODOS LOS LUGARES, NO DE UNO.
+   * TU POSICIÓN ES DE TODOS LOS LUGARES, NO DE UNO, Y EL BOTÓN ES DE CADA FILA.
    *
    * Esta tarjeta se llama "Tu dinero" y antes listaba una sola fila: lo depositado
    * en Aave. El detalle de Aave tiene su propia lectura, y esa fila se queda como
@@ -85,15 +114,31 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, bala
    * dibujaría vacía por culpa de otra lectura que aún no terminó, y eso no es
    * verdad sobre el dinero de nadie.
    *
-   * El filtro deja pasar sólo lo que se pudo leer: un lugar ilegible no se
-   * dibuja, como en el resto de la app. Un lugar que se leyó y tiene **cero** sí
-   * se dibuja, porque el cero es un hecho verdadero y esconderlo haría creer que
-   * el dinero se perdió entre venues.
+   * El botón de depósito **no** está en la tarjeta de arriba: está acá, en la fila
+   * de su venue. La fila *es* el destino, y por eso no hay un paso de elegir
+   * destino: tocás donde está tu plata y sabés a dónde va. Antes había un botón
+   * de ancho completo con un destino compilado en el código, y nadie elegía nada.
+   *
+   * Y la fila **no** dibuja botón por decisión propia: `venueRowActionOf` pregunta
+   * al servidor (`depositReady`) y al saldo de origen (`depositable`), y lo que no
+   * se pudo leer no se dibuja. Esa decisión es lógica pura y tiene pruebas sin
+   * DOM; acá sólo se pinta lo que ella devuelve.
    */
-  const readableVenues = useMemo(
-    () => (balance?.yield?.venues ?? []).filter((venue) => venue.status === 'ok'),
-    [balance],
-  );
+  const yieldView = balance?.yield ?? null;
+  const rows = useMemo(() => {
+    if (yieldView === null) return [];
+    const all = venueRowsOf(yieldView.venues, YIELD_VENUE_CHAINS, DEPOSIT_FLOW_VENUE_KEY);
+    /*
+     * Un venue que no se pudo leer **no se dibuja**: es la regla de esta app —lo
+     * que no se pudo leer no se muestra, y cuando se vuelve a poder leer aparece—
+     * y la fila de un balance entero no es el lugar para escribir "no pudimos
+     * leer". Su decisión de botón tampoco dependería de él: no hay botón sin un
+     * saldo de origen legible.
+     */
+    return all.filter((row) => row.venue === null || row.venue.status === 'ok');
+  }, [yieldView]);
+
+  const signatures = signatureSteps(flow);
 
   /*
    * Lo que el depósito de esta persona rendería en un año, al ritmo de este
@@ -127,6 +172,14 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, bala
 
       <div className="flex-1 overflow-y-auto px-4 pb-10 space-y-3.5">
         {/* CARD 1: LA TASA REAL, O LA FRASE DE QUE NO SE PUDO LEER */}
+        {/*
+          ESTA TARJETA NO TIENE BOTÓN, Y ES A PROPÓSITO.
+          El depósito se hace desde la fila de su venue, en "TU POSICIÓN": la fila
+          *es* el destino. Un botón de ancho completo acá tenía el destino
+          compilado en el código —el servidor decidía a dónde iba la plata y nadie
+          preguntaba—, y además ponía el mismo botón a un lado de una lista donde
+          hay más de un lugar. La acción se mudó de tarjeta; no quedó una copia.
+        */}
         <div className="bg-white rounded-[28px] p-5 shadow-xs space-y-3 border border-slate-100">
           {pool.status === 'loading' || pool.status === 'idle' ? (
             <div className="flex items-center gap-2 text-sm text-slate-500 font-medium">
@@ -163,26 +216,6 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, bala
               </div>
             </>
           )}
-
-          {/*
-            El depósito, o su ausencia.
-
-            Si la posición no se pudo leer, el botón **no** aparece: depositar
-            sobre un saldo que no conocemos no es una acción que vaya a
-            funcionar. Esa guarda queda —es un hecho sobre la acción— pero deja
-            de gritar como si la pantalla entera estuviera rota.
-          */}
-          {view !== null &&
-            (position?.status === 'unreadable' ? null : (
-              <button
-                onClick={() => setIsDepositOpen(true)}
-                type="button"
-                disabled={busy}
-                className="w-full py-3 rounded-full bg-black text-[#ccff00] font-bold text-sm disabled:bg-slate-200 disabled:text-slate-400 active:scale-[0.99] transition-all"
-              >
-                {busy ? 'Esperando tu firma…' : 'Depositar USDC'}
-              </button>
-            ))}
         </div>
 
         {/* CARD 2: TU POSICIÓN */}
@@ -191,24 +224,80 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, bala
             TU POSICIÓN
           </span>
 
-          {readableVenues.length > 0 ? (
-            readableVenues.map((venue) => (
-              <div key={venue.key} className="flex items-center justify-between py-1">
-                <span className="text-xs font-medium text-slate-700">{venue.label}</span>
+          {/*
+            UNA FILA POR RED, Y CADA FILA CON SU PROPIA DECISIÓN.
+
+            Las redes salen del catálogo de la app, las venues del balance, y la
+            decisión de dibujar botón la toma `venueRowActionOf` a partir de lo que
+            dijo el servidor. El resultado de esa decisión es una frase que se
+            pinta **tal cual**: el motivo vive en el servicio y no en el JSX, para
+            que agregar un caso nuevo no sea agregar un texto suelto en una vista.
+          */}
+          {rows.length > 0 ? (
+            rows.map((row) => {
+              const action = row.action;
+              const venue = row.venue;
+              const venueBalance = venue !== null && venue.status === 'ok' ? venue.balance : null;
+              return (
+              <div key={row.chain} className="py-1 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-700">
+                    {venue === null ? row.chainLabel : venue.label}
+                  </span>
+                  {/*
+                    Una red sin venue no muestra cifra: no hay nada que valuar
+                    todavía. Decir `U$0,00` ahí sería una afirmación sobre plata que
+                    nadie depositó en ningún lado.
+                  */}
+                  {venueBalance === null ? (
+                    <span className="text-xs font-bold text-slate-400">sin destino</span>
+                  ) : (
+                    <span
+                      className={`text-xs font-bold ${
+                        venueBalance.isZero ? 'text-slate-400' : 'text-slate-800'
+                      }`}
+                    >
+                      {`U$${venueBalance.formatted}`}
+                    </span>
+                  )}
+                </div>
+
                 {/*
-                  El cero se pinta como cero, en el gris de las cifras que no
-                  están reclamando nada. Es un hecho verdadero: se leyó el lugar
-                  y ahí no hay nada.
+                  EL BOTÓN, O LA FRASE DE POR QUÉ NO.
+
+                  No hay una variante “deshabilitado” ni un “próximamente”: si la
+                  fila no puede recibir el depósito, no dibuja botón. Un botón que
+                  se pinta y después falla en la red principal es peor que un botón
+                  que todavía no existe —y eso lo decidió el owner cuando la
+                  instrucción del farm de Kamino quedó sin verificar—.
                 */}
-                <span
-                  className={`text-xs font-bold ${
-                    venue.balance.isZero ? 'text-slate-400' : 'text-slate-800'
-                  }`}
-                >
-                  {`U$${venue.balance.formatted}`}
-                </span>
+                {action.kind === 'deposit' ? (
+                  <div className="flex flex-col items-end gap-1">
+                    <button
+                      onClick={() => setDepositVenueKey(action.venueKey)}
+                      type="button"
+                      disabled={busy}
+                      className="px-4 py-2 rounded-full bg-black text-[#ccff00] font-bold text-xs disabled:bg-slate-200 disabled:text-slate-400 active:scale-[0.99] transition-all"
+                    >
+                      {busy ? 'Esperando tu firma…' : 'Depositar'}
+                    </button>
+                    {/*
+                      Las dos firmas se dicen **antes** de la primera. Nadie
+                      debería descubrir encima que el depósito necesita un approve y
+                      un deposit, y por eso el número sale del propio flujo.
+                    */}
+                    {signatures > 1 && (
+                      <span className="text-[10px] font-medium text-slate-500">
+                        Son {signatures} firmas: aprobar y depositar
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[10px] leading-relaxed text-slate-500">{action.message}</p>
+                )}
               </div>
-            ))
+              );
+            })
           ) : (
             <div className="flex items-center justify-between py-1">
               <span className="text-xs font-medium text-slate-700">Depositado (aMonUSDC)</span>
@@ -322,8 +411,18 @@ export const AavePoolsView: React.FC<AavePoolsViewProps> = ({ onBack, pool, bala
         </div>
       </div>
 
-      {isDepositOpen && view !== null && (
-        <DepositToPoolModal pool={view} flow={flow} onClose={() => setIsDepositOpen(false)} />
+      {/*
+        El modal se abre para la fila que se tocó, y sólo existe uno: el flujo de
+        depósito de esta pantalla. Que la fila haya sido la que lo abrió es lo que
+        hace que el destino sea el que la persona eligió, y no uno compilado.
+      */}
+      {depositVenueKey === DEPOSIT_FLOW_VENUE_KEY && view !== null && (
+        <DepositToPoolModal
+          pool={view}
+          venue={rows.find((row) => row.venue?.key === depositVenueKey)?.venue ?? null}
+          flow={flow}
+          onClose={() => setDepositVenueKey(null)}
+        />
       )}
     </div>
   );

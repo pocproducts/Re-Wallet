@@ -169,8 +169,22 @@ export const createPostgresWalletStore = (db: Database): WalletStore & Reachable
      * wallet de Solana está en Ethereum mainnet. No es un valor inútil, es una
      * respuesta falsa, y una base que miente se corrige con una migración.
      */
-    const evmNetwork =
-      wallet.chain === 'ethereum' ? (wallet.evmNetwork ?? DEFAULT_EVM_NETWORK) : null;
+    let evmNetwork: string | null = null;
+    if (wallet.chain === 'ethereum') {
+      // If Privy provides a chainId, use it to determine the network
+      if (wallet.chainId !== undefined && wallet.chainId !== null) {
+        // Convert chainId to CAIP-2 format: eip155:<chainId>
+        evmNetwork = `eip155:${wallet.chainId}`;
+      } 
+      // If no chainId from Privy, fall back to the evmNetwork that Privy might have sent
+      else if (wallet.evmNetwork && typeof wallet.evmNetwork === 'string') {
+        evmNetwork = wallet.evmNetwork;
+      }
+      // Finally, fallback to default (Ethereum mainnet) if neither is available
+      else {
+        evmNetwork = DEFAULT_EVM_NETWORK;
+      }
+    }
 
     await db`
       INSERT INTO rewallet.wallets (user_id, address, provider_wallet_id, chain_type, evm_network)

@@ -42,6 +42,7 @@
  * is for.
  */
 import { DEPOSIT_NETWORKS, type DepositChain } from '../deposit/catalog';
+import { activeSolanaCluster } from '../solana/cluster';
 import { asciiHex, keccak256 } from './keccak256';
 
 /** One unsigned transaction, in the order it has to be signed. */
@@ -140,7 +141,10 @@ export const chainIdentityFor = (chain: DepositChain): ChainIdentity => {
   if (spec === undefined) throw new RangeError(`the catalog does not know the chain: ${chain}`);
   if (spec.evmNetwork === null) {
     // No `chainId` key at all: the answer is the chain's own name, not a number.
-    return { network: SOLANA_MAINNET_NETWORK };
+    // El valor es el del clúster activo del despliegue (`domain/solana/cluster`),
+    // el mismo con el que se arma y se firma el mensaje: si difieran, la firma
+    // caería en un ledger donde la preparación no existe.
+    return { network: activeSolanaCluster().network };
   }
 
   const chainId = Number.parseInt(spec.evmNetwork.replace('eip155:', ''), 10);

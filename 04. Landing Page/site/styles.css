@@ -1,0 +1,688 @@
+/* ============================================================
+   ReWALLET Landing — misma estructura que la maqueta original.
+   Único cambio de paleta: el bronce `--bronze` pasa a ser el
+   neón de marca `--lemon: #ccff00`.
+   ============================================================ */
+:root {
+  --black: #0a0a0a;
+  --dark-gray: #424142;
+  --white: #ffffff;
+  --light-gray: #efefef;
+  --lemon: #ccff00;
+
+  --font-primary: "Montserrat", sans-serif;
+  --font-serif: "Playfair Display", serif;
+}
+
+/* Reset & Base */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--black);
+  color: var(--white);
+  font-family: var(--font-primary);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Typography */
+h1, h2, h3, h4 {
+  font-weight: 600;
+}
+
+em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  color: var(--lemon);
+}
+
+/* Liquid Glass & Chunky Clay Utility Classes */
+.liquid-glass {
+  background: rgba(239, 239, 239, 0.03);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.clay-border {
+  border-radius: 24px;
+  box-shadow: inset 2px 2px 5px rgba(255, 255, 255, 0.1),
+    inset -3px -3px 7px rgba(0, 0, 0, 0.5), 0 15px 35px rgba(0, 0, 0, 0.4);
+}
+
+.chunky-clay {
+  background: var(--dark-gray);
+  border-radius: 30px;
+  box-shadow: 10px 10px 20px rgba(10, 10, 10, 0.8),
+    -5px -5px 15px rgba(90, 90, 90, 0.2),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Navbar */
+.navbar {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 1400px;
+  height: 70px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 30px;
+  border-radius: 50px;
+  z-index: 100;
+}
+
+.logo {
+  font-weight: 700;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.logo-icon {
+  width: 20px;
+  height: 20px;
+  background: var(--lemon);
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.nav-links a {
+  color: var(--light-gray);
+  text-decoration: none;
+  margin: 0 20px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: color 0.3s ease;
+}
+
+.nav-links a:hover {
+  color: var(--white);
+}
+
+.btn-primary {
+  background-color: var(--lemon);
+  color: var(--black);
+  padding: 12px 28px;
+  border-radius: 30px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: background 0.3s ease, transform 0.2s ease;
+}
+
+.btn-primary:hover {
+  background-color: var(--white);
+  transform: translateY(-2px);
+}
+
+/* Hero Section */
+.hero {
+  position: relative;
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 80px;
+  background: linear-gradient(to bottom, var(--dark-gray) 0%, var(--black) 100%);
+  overflow: hidden;
+}
+
+.hero-bg-text {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 18vw;
+  font-weight: 700;
+  color: rgba(239, 239, 239, 0.04);
+  letter-spacing: -0.02em;
+  z-index: 1;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.hero-container {
+  position: relative;
+  z-index: 2;
+  width: 90%;
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 40px;
+}
+
+.hero-content {
+  max-width: 500px;
+  margin-bottom: 20px;
+}
+
+.hero-title {
+  font-size: clamp(3rem, 5vw, 4.5rem);
+  line-height: 1.1;
+  margin-bottom: 20px;
+  letter-spacing: -1px;
+}
+
+.hero-subtitle {
+  color: var(--light-gray);
+  font-size: 1.05rem;
+  line-height: 1.6;
+  opacity: 0.8;
+}
+
+/* 3D Carousel */
+.carousel-container {
+  perspective: 1200px;
+  width: 650px;
+  height: 400px;
+  position: relative;
+}
+
+.carousel-track {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+
+.carousel-card {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 320px;
+  height: 420px;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.8s cubic-bezier(0.25, 1, 0.5, 1);
+  transform-origin: center right;
+}
+
+/* Cards con imágenes blockchain (Unsplash CDN, verificadas 200 OK) */
+.card-image {
+  width: 100%;
+  height: 75%;
+  border-radius: 16px;
+  background-size: cover;
+  background-position: center;
+  margin-bottom: 15px;
+}
+
+.card-art-1 {
+  background-image: url('https://images.unsplash.com/photo-1518546305927-5a555bb7020d?w=900&q=80&auto=format&fit=max');
+}
+
+.card-art-2 {
+  background-image: url('https://images.unsplash.com/photo-1621761191319-c6fb62004040?w=900&q=80&auto=format&fit=max');
+}
+
+.card-art-3 {
+  background-image: url('https://images.unsplash.com/photo-1642104704074-907c0698cbd9?w=900&q=80&auto=format&fit=max');
+}
+
+.card-info h3 {
+  font-size: 1.2rem;
+  color: var(--white);
+  margin-bottom: 5px;
+}
+
+.card-info p {
+  font-size: 0.85rem;
+  color: var(--lemon);
+  font-weight: 500;
+}
+
+/* Discover Section */
+.discover {
+  background-color: var(--black);
+  padding: 120px 5%;
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 60px;
+}
+
+.discover-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 30px;
+}
+
+.discover-header h2 {
+  font-size: 3rem;
+  color: var(--white);
+}
+
+.discover-header p {
+  max-width: 400px;
+  color: var(--light-gray);
+  opacity: 0.7;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.discover-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 40px;
+}
+
+.grid-item {
+  position: relative;
+  height: 500px;
+  transition: transform 0.4s ease;
+  cursor: pointer;
+}
+
+.grid-item:hover {
+  transform: translateY(-10px);
+}
+
+.grid-art {
+  width: 100%;
+  height: 100%;
+  opacity: 0.85;
+  transition: opacity 0.3s;
+}
+
+.grid-item:hover .grid-art {
+  opacity: 1;
+}
+
+.grid-art-1 {
+  background-image:
+    linear-gradient(to top, rgba(10, 10, 10, 0.7) 0%, transparent 60%),
+    url('https://images.unsplash.com/photo-1621504450181-5d356f61d307?w=1200&q=80&auto=format&fit=max');
+  background-size: cover;
+  background-position: center;
+}
+
+.grid-art-2 {
+  background-image:
+    linear-gradient(to top, rgba(10, 10, 10, 0.7) 0%, transparent 60%),
+    url('https://images.unsplash.com/photo-1642790106117-e829e14a795f?w=1200&q=80&auto=format&fit=max');
+  background-size: cover;
+  background-position: center;
+}
+
+.grid-content {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  padding: 30px;
+  background: linear-gradient(to top, rgba(10, 10, 10, 0.9) 0%, transparent 100%);
+}
+
+.grid-content h4 {
+  font-size: 1.8rem;
+  color: var(--white);
+}
+
+/* Live Metrics */
+.metrics {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 60px 5%;
+}
+
+.metrics-header {
+  text-align: center;
+  margin-bottom: 36px;
+}
+
+.metrics-header h2 {
+  font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+  font-weight: 700;
+  color: var(--white);
+}
+
+.metrics-header p {
+  color: var(--light-gray);
+  opacity: 0.7;
+  margin-top: 8px;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px 20px;
+  border-radius: 20px;
+  text-align: center;
+}
+
+.metric-value {
+  font-size: clamp(2rem, 4.5vw, 3rem);
+  font-weight: 700;
+  color: var(--lemon);
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-label {
+  font-size: 0.9rem;
+  color: var(--light-gray);
+  opacity: 0.8;
+}
+
+/* Trust / Seguridad */
+.trust {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 100px 5%;
+}
+
+.trust-header {
+  max-width: 620px;
+  margin-bottom: 48px;
+}
+
+.trust-header h2 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 700;
+  color: var(--white);
+  margin-bottom: 16px;
+}
+
+.trust-header p {
+  color: var(--light-gray);
+  opacity: 0.7;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.trust-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+}
+
+.trust-card {
+  padding: 32px 28px;
+  border-radius: 20px;
+}
+
+.trust-card h3 {
+  font-size: 1.15rem;
+  color: var(--lemon);
+  margin-bottom: 10px;
+}
+
+.trust-card p {
+  font-size: 0.92rem;
+  color: var(--light-gray);
+  opacity: 0.75;
+  line-height: 1.6;
+}
+
+/* Preguntas frecuentes */
+.faq {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 40px 5% 100px;
+}
+
+.faq-header {
+  margin-bottom: 32px;
+}
+
+.faq-header h2 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 700;
+  color: var(--white);
+}
+
+.faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.faq-item {
+  border-radius: 16px;
+  padding: 20px 24px;
+}
+
+/*
+  El triángulo del `<summary>` nativo no se puede dar estilo consistente entre
+  navegadores, así que se oculta y el estado abierto se dibuja con el pseudo
+  `+` / `−` del propio `summary`.
+*/
+.faq-item summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--white);
+  list-style: none;
+  position: relative;
+  padding-right: 32px;
+}
+
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.faq-item summary::after {
+  content: "+";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--lemon);
+  font-weight: 700;
+  font-size: 1.2rem;
+  transition: transform 0.2s ease;
+}
+
+.faq-item[open] summary::after {
+  content: "−";
+}
+
+.faq-item p {
+  margin-top: 14px;
+  font-size: 0.92rem;
+  color: var(--light-gray);
+  opacity: 0.75;
+  line-height: 1.6;
+  max-width: 65ch;
+}
+
+/* Footer */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 40px 5%;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--light-gray);
+  opacity: 0.6;
+  font-size: 0.85rem;
+}
+
+.footer a {
+  color: var(--white);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.footer a:hover {
+  color: var(--lemon);
+}
+
+.footer-social {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.footer-social a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--white);
+  opacity: 1;
+  transition: color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.footer-social a:hover {
+  color: var(--lemon);
+  border-color: var(--lemon);
+  transform: translateY(-2px);
+}
+
+.footer-social a:focus-visible {
+  outline: 2px solid var(--lemon);
+  outline-offset: 2px;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .hero {
+    height: auto;
+    min-height: 100vh;
+    align-items: center;
+    padding-top: 130px;
+    padding-bottom: 60px;
+  }
+
+  .hero-container {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+  }
+
+  .hero-content {
+    max-width: 100%;
+    margin-bottom: 0;
+  }
+
+  .carousel-container {
+    width: 100%;
+    height: 380px;
+    margin-top: 40px;
+  }
+
+  .carousel-card {
+    right: auto;
+    left: 45%;
+    margin-left: -160px; /* centrar la card de 320px sin transform (GSAP pisa el x) */
+    transform-origin: center center;
+  }
+
+  .discover-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 20px;
+  }
+}
+
+@media (max-width: 768px) {
+  .nav-links {
+    display: none;
+  }
+
+  .hero-bg-text {
+    font-size: 24vw;
+    top: 32%;
+  }
+
+  .hero-title {
+    font-size: clamp(2.1rem, 9vw, 3rem);
+  }
+
+  .grid-item {
+    height: 320px;
+  }
+
+  /* La grilla pedía mínimo 400px por celda: en pantallas de ~375px desbordaba */
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .discover-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .discover {
+    padding: 80px 5%;
+    gap: 40px;
+  }
+
+  .discover-header h2 {
+    font-size: 2.1rem;
+  }
+
+  /* La grilla pedía mínimo 400px por celda: en pantallas de ~375px desbordaba */
+  .trust-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .trust {
+    padding: 60px 5% 80px;
+  }
+}
+
+@media (max-width: 420px) {
+  .navbar {
+    height: 60px;
+    padding: 0 18px;
+  }
+
+  .logo {
+    font-size: 0.95rem;
+  }
+
+  .btn-primary {
+    padding: 10px 18px;
+    font-size: 0.82rem;
+  }
+
+  .carousel-card {
+    width: 260px;
+    height: 340px;
+    margin-left: -130px;
+  }
+
+  .carousel-container {
+    height: 360px;
+  }
+
+  .footer {
+    flex-direction: column;
+    gap: 12px;
+    text-align: center;
+  }
+}

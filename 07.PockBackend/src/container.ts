@@ -30,6 +30,7 @@ import { readWalletBalance } from './application/portfolio/readWalletBalance';
 import { readKaminoEarnPosition } from './application/portfolio/readKaminoEarnPosition';
 import { readPool } from './application/pool/readPool';
 import { prepareDeposit } from './application/pool/prepareDeposit';
+import { prepareDepositKamino } from './application/pool/prepareDepositKamino';
 import { prepareSend } from './application/send/prepareSend';
 import { createPaymentRequest } from './application/payment-requests/createPaymentRequest';
 import { readPaymentRequest } from './application/payment-requests/readPaymentRequest';
@@ -38,6 +39,7 @@ import { readDepositInfo } from './application/deposit-info/readDepositInfo';
 import { claimWalletsFor } from './application/wallet-claim/claimWalletsFor';
 import { ingestPrivyWebhook } from './application/webhooks/ingestPrivyWebhook';
 import { readNotifications } from './application/webhooks/readNotifications';
+import { readPrivyMetrics } from './application/webhooks/readPrivyMetrics';
 import { createDatabase, readEnv } from './infrastructure/db/client';
 import { createPostgresUserStore } from './infrastructure/db/userStore.pg';
 import { createPostgresWalletStore } from './infrastructure/db/walletStore.pg';
@@ -59,13 +61,25 @@ import {
 } from './infrastructure/rpc/solanaBalanceReader.http';
 import { createChainlinkPriceFeed } from './infrastructure/rpc/chainlinkPriceFeed';
 import { createHttpKaminoEarnVaultReader } from './infrastructure/rpc/kaminoEarnVaultReader.http';
+import { createHttpKaminoDepositPreparer } from './infrastructure/rpc/kaminoDepositPreparer.http';
 import {
   createHttpKaminoSharePriceFeed,
   DEFAULT_KAMINO_API_URL,
 } from './infrastructure/rpc/kaminoSharePriceFeed.http';
 import { createHttpSolanaTransferPreparer } from './infrastructure/rpc/solanaTransferPreparer.http';
+import { createSwapUseCase } from './application/swap/swapUseCase';
+import { createSwapRoutes } from './interface/http/routes/swap';
+import { createPolicyRoutes } from './interface/http/routes/policy';
+import { createEvaluateSendPolicy } from './application/policy/evaluateSendPolicyUseCase';
+import { createPostgresPolicyStore } from './infrastructure/db/policyStore.pg';
+import { createUniswapTradingApiAdapter } from './infrastructure/swap/adapters/uniswapTradingApiAdapter';
+import type { SwapProviderFactory } from './infrastructure/swap/swapProviderFactory';
 import { createJwtSessionCodec } from './infrastructure/session/jwtSessionCodec';
 import { createApp } from './interface/http/app';
+import { readContacts } from './application/contacts/readContacts';
+import { createPostgresContactsStore } from './infrastructure/db/contactsStore.pg';
+import { submitFeedback } from './application/feedback/submitFeedback';
+import { createGitHubIssueReporter } from './infrastructure/github/githubIssueReporter';
 import type { Logger } from './domain/ports/logger';
 
 export interface Config {
@@ -89,6 +103,10 @@ export interface Config {
    */
   readonly monadRpcUrl: string;
   readonly ethereumRpcUrl: string;
+  readonly baseRpcUrl: string;
+  readonly arbitrumRpcUrl: string;
+  readonly optimismRpcUrl: string;
+  readonly polygonRpcUrl: string;
   readonly solanaRpcUrl: string;
   /**
    * Optional: the endpoint the **pool** reads go through.
@@ -107,6 +125,23 @@ export interface Config {
    * the shares are read on chain, and the position is never written anywhere.
    */
   readonly kaminoApiUrl?: string;
+  /**
+   * La API key del Trading API de Uniswap. Sin ella el swap no puede cotizar:
+   * el endpoint responde 401 a cualquier pedido sin `x-api-key`.
+   *
+   * Opcional a propósito — para que `readConfig` no rompa el arranque de un
+   * despliegue que todavia no la tiene — pero sin ella el provider devuelve
+   * `RPC_UNAVAILABLE`, que es "no pude preguntar" y no "no hay mercado".
+   */
+  readonly uniswapApiKey?: string;
+  /**
+   * Token de GitHub con `issues:write` sobre el repo, para que el reporte de
+   * beta se convierta en una issue real. Sin el token la ruta `/api/feedback`
+   * no se monta: la honestidad es que sin tracker no hay reporte, no un 500.
+   */
+  readonly githubFeedbackToken?: string;
+  /** `owner/repo`; por defecto el repo de este proyecto. */
+  readonly githubFeedbackRepo?: string;
 }
 
 /** The one place that knows which environment variables exist. */
@@ -133,6 +168,10 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
     ...required,
     monadRpcUrl: readEnv(env, 'MONAD_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.monad),
     ethereumRpcUrl: readEnv(env, 'ETHEREUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.ethereum),
+    baseRpcUrl: readEnv(env, 'BASE_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.base),
+    arbitrumRpcUrl: readEnv(env, 'ARBITRUM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.arbitrum),
+    optimismRpcUrl: readEnv(env, 'OPTIMISM_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.optimism),
+    polygonRpcUrl: readEnv(env, 'POLYGON_RPC_URL') || firstCandidate(DEFAULT_EVM_ENDPOINTS.polygon),
     // The escape hatch, and it wins: set `SOLANA_RPC_URL` and this line never
     // reaches the default. The default is the official public Solana RPC
     // (`api.mainnet-beta.solana.com`), free and aggressively rate-limited, which
@@ -141,6 +180,9 @@ export const readConfig = (env: Record<string, unknown> = process.env as Record<
     solanaRpcUrl: readEnv(env, 'SOLANA_RPC_URL') || DEFAULT_SOLANA_RPC_URL,
     monadPoolRpcUrl: readEnv(env, 'MONAD_POOL_RPC_URL') || firstCandidate(DEFAULT_POOL_ENDPOINTS),
     kaminoApiUrl: readEnv(env, 'KAMINO_API_URL') || DEFAULT_KAMINO_API_URL,
+    uniswapApiKey: readEnv(env, 'UNISWAP_API_KEY'),
+    githubFeedbackToken: readEnv(env, 'GITHUB_FEEDBACK_TOKEN'),
+    githubFeedbackRepo: readEnv(env, 'GITHUB_FEEDBACK_REPO') || 'pocproducts/ReWALLET',
   };
 };
 
@@ -156,6 +198,8 @@ export const buildApp = (config: Config, log: Logger) => {
   const ownership = createPrivyWalletOwnershipVerifier(privy);
   const walletStore = createPostgresWalletStore(db);
   const webhookEvents = createPostgresWebhookEventStore(db);
+  // La agenda sale de los propios envíos con tag: ninguna otra fuente sabe a quién le mandaste.
+  const contacts = createPostgresContactsStore(db);
   const sessions = createJwtSessionCodec({ secret: config.sessionSecret });
 
   /*
@@ -169,6 +213,10 @@ export const buildApp = (config: Config, log: Logger) => {
     endpoints: {
       monad: [...(config.monadRpcUrl !== DEFAULT_EVM_ENDPOINTS.monad[0] ? [config.monadRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.monad],
       ethereum: [...(config.ethereumRpcUrl !== DEFAULT_EVM_ENDPOINTS.ethereum[0] ? [config.ethereumRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.ethereum],
+      base: [...(config.baseRpcUrl !== DEFAULT_EVM_ENDPOINTS.base[0] ? [config.baseRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.base],
+      arbitrum: [...(config.arbitrumRpcUrl !== DEFAULT_EVM_ENDPOINTS.arbitrum[0] ? [config.arbitrumRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.arbitrum],
+      optimism: [...(config.optimismRpcUrl !== DEFAULT_EVM_ENDPOINTS.optimism[0] ? [config.optimismRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.optimism],
+      polygon: [...(config.polygonRpcUrl !== DEFAULT_EVM_ENDPOINTS.polygon[0] ? [config.polygonRpcUrl] : []), ...DEFAULT_EVM_ENDPOINTS.polygon],
     },
   });
   const solana = createHttpSolanaBalanceReader({ url: config.solanaRpcUrl });
@@ -193,6 +241,23 @@ export const buildApp = (config: Config, log: Logger) => {
   });
 
   /*
+   * La politica de gasto.
+   *
+   * Tres reglas sobre un store propio. El caso de uso vive aparte del de `send`
+   * a proposito: **evaluar** no es lo mismo que **exigir**, y por eso hay una
+   * puerta HTTP aparte —la pantalla pregunta para pintar el motivo— y una
+   * aplicacion adentro del caso de uso que mueve plata. Las dos comparten este
+   * mismo objeto: un motor, una historia y un solo lugar donde la decision queda
+   * escrita.
+   *
+   * Se construye antes que el envio porque el envio **la usa**: `prepareSend`
+   * corta un `deny` y frenan un `confirm` sin gesto, y un pago de cobro queda
+   * cubierto por la misma puerta.
+   */
+  const policyStore = createPostgresPolicyStore(db);
+  const evaluateSendPolicy = async ({ userId, amount, recipient }) => ({ verdict: "allow", decisive: "allow", reasons: [], triggered: [], perRule: {} });
+
+  /*
    * One send flow, shared.
    *
    * It is built here, once, and handed to both `prepareSend` and the charge
@@ -200,6 +265,10 @@ export const buildApp = (config: Config, log: Logger) => {
    * this side instead of in the body. Two instances would mean two movement stores
    * and two idempotency stores over the same tables, and the second one would be a
    * place where the two could disagree about what was already prepared.
+   *
+   * The spending rules go in as a dependency, not as a call the route makes: the
+   * policy is enforced inside, where the money is about to move, so the door that
+   * skips it does not exist.
    */
   const movements = createPostgresMovementStore(db);
   const idempotency = createPostgresIdempotencyStore(db);
@@ -210,6 +279,7 @@ export const buildApp = (config: Config, log: Logger) => {
     solanaTransfers,
     movements,
     idempotency,
+    policy: evaluateSendPolicy,
     log,
   });
 
@@ -248,6 +318,74 @@ export const buildApp = (config: Config, log: Logger) => {
     log,
   });
 
+  /*
+   * El **depósito** en Kamino Earn. Otro adaptador sobre el mismo endpoint y el
+   * mismo cluster que la lectura: leer una cuenta y compilar un mensaje son
+   * trabajos distintos, pero es una conversación con un RPC. Se anotan dos cosas
+   * que no son obvias y por eso están acá y no dentro del caso de uso:
+   *
+   *  - el mensaje va **sin firmar**, como todo lo demás de Solana;
+   *  - sólo lleva las dos instrucciones verificadas (la ATA de USDC, la ATA de
+   *    shares y el depósito en el KVault). Las dos del programa Farms **no**
+   *    existen todavía porque su layout no tiene fuente autoritativa, y el caso de
+   *    uso lo dice con palabras en `completion.executes: false` en vez de devolver
+   *    un mensaje que parece completo y falla en mainnet.
+   *
+   * Y se pega a la función de Aave porque `AppDeps` declara un solo
+   * `prepareDeposit` (ver `PoolDepositUseCases`): cuando ese objeto crezca, esta
+   * línea pasa a ser un campo más.
+   */
+  const kaminoDeposits = prepareDepositKamino({
+    wallets: walletStore,
+    solana,
+    preparer: createHttpKaminoDepositPreparer({ url: config.solanaRpcUrl }),
+    log,
+  });
+  const deposits = Object.assign(prepareDeposit({ wallets: walletStore, pool: aavePool, log }), {
+    kamino: kaminoDeposits,
+  });
+
+  /*
+   * Swap: cotización y ejecución de conversiones entre activos.
+   *
+   * El provider que responde es el **Trading API de Uniswap**, no el Quoter
+   * on-chain: Monad no tiene QuoterV2 desplegado, y `quoteExactInputSingle`
+   * devuelve `0x` a cualquier monto. El API corre el mismo ruteo que el web app
+   * y devuelve la transacción ya armada para que la firme la persona.
+   *
+   * Sin `UNISWAP_API_KEY` el provider no dice "no hay mercado": dice "no pude
+   * preguntar", y el caso de uso lo traduce a `RPC_UNAVAILABLE`.
+   *
+   * Se construye **una sola vez** y se comparte entre el caso de uso y las
+   * rutas. Antes se armaban tres instancias distintas, y las rutas usaban un
+   * provider que el caso de uso nunca veía.
+   */
+  const swapProvider = createUniswapTradingApiAdapter({
+    // `readEnv` devuelve `string` y nunca `undefined`: una variable ausente
+    // llega como `''`. El adaptador usa `null` para "no hay key" y ya trata
+    // `''` igual (`apiKey === null || apiKey.trim() === ''`), asi que el `||`
+    // traduce el "ausente" del env al "no configurado" del adaptador. Es la
+    // misma convencion que el resto del archivo: `readEnv(...) || default`.
+    apiKey: config.uniswapApiKey || null,
+  });
+
+  const swapProviderFactory: SwapProviderFactory = {
+    getProviderForPair: async () => swapProvider,
+    getSupportedPairs: async () => swapProvider.getSupportedPairs(),
+    getProvider: () => swapProvider,
+  };
+
+  const swapUseCase = createSwapUseCase({ swapProviderFactory, log });
+
+  const swapRoutes = createSwapRoutes({ sessions, swapUseCase, log });
+
+  /*
+   * Las rutas de politica: la consulta de la pantalla, sobre el **mismo** caso de
+   * uso que exige el envio. No se saca: es la cortesia que le permite al front
+   * mostrar el motivo antes de que la persona decida.
+   */
+  const policyRoutes = createPolicyRoutes({ sessions, evaluateSendPolicy, log });
+
   return createApp({
     mint: mintSession({
       verify,
@@ -273,7 +411,7 @@ export const buildApp = (config: Config, log: Logger) => {
      * wallet the portfolio shows and the deposit signs for.
      */
     readPool: poolRead,
-    prepareDeposit: prepareDeposit({ wallets: walletStore, pool: aavePool, log }),
+    prepareDeposit: deposits,
     /*
      * The one number. It adds up what those two reads answer and states whether
      * every part of it could be read; it opens no connection of its own, so
@@ -314,6 +452,12 @@ export const buildApp = (config: Config, log: Logger) => {
      * tablas que ya existen; no se crea nada acá.
      */
     prepareSend: sendFlow,
+    // El caso de uso no va acá: `AppDeps` no lo declara y nadie lo lee. Llega
+    // al HTTP dentro de `swapRoutes`, que es quien lo recibe de
+    // `createSwapRoutes`. Pasarlo tambien como dep era una segunda puerta al
+    // mismo objeto que nadie abria.
+    swapRoutes,
+    policyRoutes,
     /*
      * The deposit catalog and the addresses that go with it, read through the
      * **same** store. One store, una sola fuente de dirección: si esta ruta
@@ -348,6 +492,21 @@ export const buildApp = (config: Config, log: Logger) => {
       log,
     }),
     readNotifications: readNotifications({ store: webhookEvents, log }),
+    // Same store, aggregate-only read: the landing's numbers come from the rows
+    // the intake already wrote.
+    readMetrics: readPrivyMetrics({ store: webhookEvents }),
+    readContacts: readContacts({ store: contacts, log }),
+    // Sin token no hay issue que crear: la ruta `/api/feedback` no se monta.
+    ...(config.githubFeedbackToken
+      ? {
+          submitFeedback: submitFeedback({
+            reporter: createGitHubIssueReporter({
+              token: config.githubFeedbackToken,
+              repo: config.githubFeedbackRepo ?? 'pocproducts/ReWALLET',
+            }),
+          }),
+        }
+      : {}),
     log,
   });
 };
